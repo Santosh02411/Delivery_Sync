@@ -1,0 +1,102 @@
+/* Basic shared styling for Login/Signup pages. This is a quick, clean
+   baseline — the full "fleet ops console" visual redesign (dark theme,
+   sidebar, typography system) is a separate, later step, reviewed on its
+   own. This just makes the auth pages look presentable in the meantime. */
+
+.auth-page-wrapper {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #f4f6f8;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.auth-card {
+  background: white;
+  padding: 40px;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  width: 100%;
+  max-width: 380px;
+}
+
+.auth-card h2 {
+  margin: 0 0 24px 0;
+  font-size: 22px;
+  color: #1a1a1a;
+}
+
+.auth-field {
+  margin-bottom: 18px;
+}
+
+.auth-field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #555;
+  margin-bottom: 6px;
+}
+
+.auth-field input,
+.auth-field select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d5d9dd;
+  border-radius: 8px;
+  font-size: 14px;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease;
+}
+
+.auth-field input:focus,
+.auth-field select:focus {
+  outline: none;
+  border-color: #1565c0;
+}
+
+.auth-error {
+  color: #c62828;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.auth-submit-btn {
+  width: 100%;
+  padding: 12px;
+  background-color: #1565c0;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+.auth-submit-btn:hover:not(:disabled) {
+  background-color: #0d47a1;
+}
+
+.auth-submit-btn:disabled {
+  background-color: #90a4ae;
+  cursor: not-allowed;
+}
+
+.auth-switch-text {
+  margin-top: 20px;
+  text-align: center;
+  font-size: 14px;
+  color: #666;
+}
+
+.auth-switch-link {
+  background: none;
+  border: none;
+  color: #1565c0;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0;
+}
