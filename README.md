@@ -6,6 +6,7 @@ working in low-network areas (basements, elevators, rural zones, dense
 buildings, and rural regions with unreliable signal).
 
 ## Problem It Solves
+
 Delivery agents lose connectivity constantly during their routes. Most
 delivery apps either fail silently or block the agent from updating status
 until signal returns, causing delays and lost or duplicate updates. This
@@ -13,6 +14,7 @@ project solves that with local-first storage on the client and a
 conflict-aware sync engine on the backend.
 
 ## Key Features
+
 - Works with **zero internet connection** — agents can view and update
   deliveries fully offline
 - Automatic background sync — retries and reconciles pending changes once
@@ -26,15 +28,17 @@ conflict-aware sync engine on the backend.
   synced to the server
 
 ## Tech Stack
-| Layer | Technology | Why |
-|---|---|---|
-| Frontend | React + Vite | Modern, fast dev experience |
-| Offline Storage | IndexedDB | Structured local storage, works fully offline |
-| Backend | FastAPI | Async, auto-documented API, ideal for this API-only use case |
-| Database | SQLite | Zero-setup, keeps focus on sync logic over DB administration |
-| Sync Logic | Custom-built | Last-write-wins conflict resolution, hand-written for full understanding and control |
+
+| Layer           | Technology   | Why                                                                                  |
+| --------------- | ------------ | ------------------------------------------------------------------------------------ |
+| Frontend        | React + Vite | Modern, fast dev experience                                                          |
+| Offline Storage | IndexedDB    | Structured local storage, works fully offline                                        |
+| Backend         | FastAPI      | Async, auto-documented API, ideal for this API-only use case                         |
+| Database        | SQLite       | Zero-setup, keeps focus on sync logic over DB administration                         |
+| Sync Logic      | Custom-built | Last-write-wins conflict resolution, hand-written for full understanding and control |
 
 ## Architecture (High Level)
+
 ```
 [Agent's Browser]
    React UI → IndexedDB (offline-first local storage)
@@ -55,25 +59,30 @@ This project has two parts that must run at the same time, in two separate
 terminals.
 
 **1. Backend:**
+
 ```bash
 cd backend
 pip install -r requirements.txt
 uvicorn main:app --reload
 ```
+
 Runs at `http://127.0.0.1:8000` — visit `/docs` for the interactive API
 documentation (Swagger UI).
 
 **2. Frontend** (in a separate terminal):
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
+
 Runs at `http://localhost:3000`.
 
 Both must be running simultaneously for the app to work correctly.
 
 ## Project Structure
+
 ```
 delivery-sync-project/
 ├── backend/       # FastAPI app (models, routes, sync/conflict logic)
@@ -83,8 +92,10 @@ delivery-sync-project/
 ```
 
 ## Full Documentation
+
 This project is documented in more depth than a typical student project,
 intentionally — the `docs/` folder includes:
+
 - [`PROJECT_REQUIREMENTS.md`](docs/PROJECT_REQUIREMENTS.md) — functional and non-functional requirements
 - [`TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md) — architecture, data model, conflict resolution strategy
 - [`SECURITY_AND_ACCESS.md`](docs/SECURITY_AND_ACCESS.md) — auth model and known v1 limitations
@@ -94,6 +105,7 @@ intentionally — the `docs/` folder includes:
 - [`MEMORY.md`](docs/MEMORY.md) — key design decisions and the reasoning behind them
 
 ## Known Limitations (v1)
+
 - Last-write-wins conflict resolution can silently overwrite near-simultaneous
   edits — a future iteration could explore field-level merging
 - No authentication/authorization yet beyond a placeholder agent ID
@@ -101,5 +113,6 @@ intentionally — the `docs/` folder includes:
   PostgreSQL/MySQL
 
 ## Author
-Built by Santy as a portfolio project targeting Python Full Stack, Software
+
+Built by Santy targeting Python Full Stack, Software
 Developer, and Backend Developer roles.
