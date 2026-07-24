@@ -23,7 +23,8 @@ export async function createDeliveryOnServer(token, record) {
     body: JSON.stringify(record),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "Failed to create delivery on server");
+  if (!response.ok)
+    throw new Error(data.detail || "Failed to create delivery on server");
   return data;
 }
 
@@ -34,7 +35,8 @@ export async function updateDeliveryOnServer(token, id, update) {
     body: JSON.stringify(update),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "Failed to update delivery on server");
+  if (!response.ok)
+    throw new Error(data.detail || "Failed to update delivery on server");
   return data;
 }
 
@@ -43,7 +45,8 @@ export async function fetchAllDeliveriesFromServer(token) {
     headers: authHeaders(token),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "Failed to fetch deliveries from server");
+  if (!response.ok)
+    throw new Error(data.detail || "Failed to fetch deliveries from server");
   return data;
 }
 
@@ -52,7 +55,10 @@ export async function fetchMyDeliveriesFromServer(token) {
     headers: authHeaders(token),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "Failed to fetch your deliveries from server");
+  if (!response.ok)
+    throw new Error(
+      data.detail || "Failed to fetch your deliveries from server",
+    );
   return data;
 }
 
@@ -62,7 +68,8 @@ export async function deleteDeliveryOnServer(token, id) {
     headers: authHeaders(token),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "Failed to delete delivery on server");
+  if (!response.ok)
+    throw new Error(data.detail || "Failed to delete delivery on server");
   return data;
 }
 
@@ -71,7 +78,21 @@ export async function fetchAgentsList(token) {
     headers: authHeaders(token),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "Failed to fetch agents list");
+  if (!response.ok)
+    throw new Error(data.detail || "Failed to fetch agents list");
+  return data;
+}
+
+export async function fetchDeliveryHistory(token, deliveryId) {
+  const response = await fetch(
+    `${API_BASE_URL}/deliveries/${deliveryId}/history`,
+    {
+      headers: authHeaders(token),
+    },
+  );
+  const data = await response.json();
+  if (!response.ok)
+    throw new Error(data.detail || "Failed to fetch delivery history");
   return data;
 }
 

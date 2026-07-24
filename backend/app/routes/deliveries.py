@@ -20,6 +20,8 @@ from app.models.delivery import (
     DeliveryRecordOut,
 )
 from app.models.user import UserDB, UserRole
+from app.models.delivery_history import DeliveryHistoryDB, DeliveryHistoryOut
+from app.services.history import record_history_entry
 from app.routes.auth import get_current_user
 
 router = APIRouter(prefix="/deliveries", tags=["deliveries"])
@@ -63,6 +65,18 @@ def create_delivery(
     db.add(db_record)
     db.commit()
     db.refresh(db_record)
+
+    record_history_entry(
+        db,
+        delivery_id=db_record.id,
+        changed_by_user_id=current_user.id,
+        changed_by_display_name=current_user.display_name,
+        old_status=None,
+        new_status=db_record.status,
+        changed_at=db_record.created_at,
+        note=f"Created and assigned to {target_agent.display_name}",
+    )
+
     return db_record
 
 
@@ -82,6 +96,8 @@ def update_delivery(
     if not db_record:
         raise HTTPException(status_code=404, detail="Delivery record not found")
 
+    old_status = db_record.status
+
     db_record.status = update.status
     db_record.notes = update.notes
     db_record.location_note = update.location_note
@@ -89,6 +105,18 @@ def update_delivery(
 
     db.commit()
     db.refresh(db_record)
+
+    if old_status != update.status:
+        record_history_entry(
+            db,
+            delivery_id=db_record.id,
+            changed_by_user_id=current_user.id,
+            changed_by_display_name=current_user.display_name,
+            old_status=old_status,
+            new_status=update.status,
+            changed_at=update.updated_at,
+        )
+
     return db_record
 
 
@@ -127,6 +155,25 @@ def get_delivery(
     if not db_record:
         raise HTTPException(status_code=404, detail="Delivery record not found")
     return db_record
+
+
+@router.get("/{delivery_id}/history", response_model=List[DeliveryHistoryOut])
+def get_delivery_history(
+    delivery_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """
+    Returns the full audit trail for a delivery — every status change,
+    who made it, and when — ordered oldest first so it reads top-to-bottom
+    like a timeline.
+    """
+    return (
+        db.query(DeliveryHistoryDB)
+        .filter(DeliveryHistoryDB.delivery_id == delivery_id)
+        .order_by(DeliveryHistoryDB.changed_at.asc())
+        .all()
+    )
 
 
 @router.delete("/{delivery_id}")
