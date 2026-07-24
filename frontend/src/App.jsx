@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import { ToastProvider } from "./context/ToastContext";
 import ConnectivityBanner from "./components/ConnectivityBanner";
 import AgentDeliveryList from "./components/AgentDeliveryList";
 import DispatcherTable from "./components/DispatcherTable";
@@ -49,7 +50,9 @@ function AppShell() {
 export default function App() {
   return (
     <AuthProvider>
-      <AppShell />
+      <ToastProvider>
+        <AppShell />
+      </ToastProvider>
     </AuthProvider>
   );
 }

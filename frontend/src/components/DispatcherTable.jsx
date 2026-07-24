@@ -6,6 +6,7 @@ import {
   createDeliveryOnServer,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 import DeliveryDetailModal from "./DeliveryDetailModal";
 
 const STATUS_FILTER_OPTIONS = [
@@ -30,6 +31,7 @@ const SORT_OPTIONS = [
  */
 export default function DispatcherTable() {
   const { token } = useAuth();
+  const { showToast } = useToast();
   const [deliveries, setDeliveries] = useState([]);
   const [agents, setAgents] = useState([]);
   const [error, setError] = useState(null);
@@ -46,7 +48,6 @@ export default function DispatcherTable() {
   const [selectedAgentId, setSelectedAgentId] = useState("");
   const [newOrderId, setNewOrderId] = useState("");
   const [newNotes, setNewNotes] = useState("");
-  const [assignMessage, setAssignMessage] = useState("");
   const [isAssigning, setIsAssigning] = useState(false);
 
   // Detail modal
@@ -79,10 +80,9 @@ export default function DispatcherTable() {
 
   async function handleAssignDelivery(e) {
     e.preventDefault();
-    setAssignMessage("");
 
     if (!selectedAgentId || !newOrderId.trim()) {
-      setAssignMessage("Pick an agent and enter an order ID.");
+      showToast("Pick an agent and enter an order ID.", "error");
       return;
     }
 
@@ -99,18 +99,37 @@ export default function DispatcherTable() {
         created_at: now,
         updated_at: now,
       });
-      setAssignMessage(`Assigned ${newOrderId} successfully.`);
+      showToast(`Assigned ${newOrderId} successfully.`, "success");
       setNewOrderId("");
       setNewNotes("");
       await loadDeliveries();
     } catch (err) {
-      setAssignMessage(`Failed to assign: ${err.message}`);
+      showToast(`Failed to assign: ${err.message}`, "error");
     } finally {
       setIsAssigning(false);
     }
   }
 
   const agentNameById = new Map(agents.map((a) => [a.id, a.display_name]));
+
+  // ---- Summary stats ----
+  const today = new Date().toDateString();
+  const statCounts = {
+    picked_up: 0,
+    out_for_delivery: 0,
+    delivered: 0,
+    failed_attempt: 0,
+  };
+  let deliveredToday = 0;
+  for (const d of deliveries) {
+    if (statCounts[d.status] !== undefined) statCounts[d.status] += 1;
+    if (
+      d.status === "delivered" &&
+      new Date(d.updated_at).toDateString() === today
+    ) {
+      deliveredToday += 1;
+    }
+  }
 
   // ---- Filter ----
   let visibleDeliveries = deliveries.filter((d) => {
@@ -129,7 +148,9 @@ export default function DispatcherTable() {
       d.order_id.toLowerCase().includes(query) ||
       agentName.toLowerCase().includes(query);
 
-    return matchesStatus && matchesAgent && matchesFrom && matchesTo && matchesSearch;
+    return (
+      matchesStatus && matchesAgent && matchesFrom && matchesTo && matchesSearch
+    );
   });
 
   // ---- Sort ----
@@ -159,6 +180,42 @@ export default function DispatcherTable() {
     <div style={{ padding: "16px" }}>
       <h2>Dispatcher Dashboard</h2>
 
+      {/* Summary stat cards */}
+      <div
+        style={{
+          display: "flex",
+          gap: "12px",
+          marginBottom: "24px",
+          flexWrap: "wrap",
+        }}
+      >
+        <StatCard
+          label="Picked Up"
+          value={statCounts.picked_up}
+          color="#1565c0"
+        />
+        <StatCard
+          label="Out for Delivery"
+          value={statCounts.out_for_delivery}
+          color="#f9a825"
+        />
+        <StatCard
+          label="Delivered"
+          value={statCounts.delivered}
+          color="#2e7d32"
+        />
+        <StatCard
+          label="Failed Attempts"
+          value={statCounts.failed_attempt}
+          color="#c62828"
+        />
+        <StatCard
+          label="Delivered Today"
+          value={deliveredToday}
+          color="#00897b"
+        />
+      </div>
+
       {/* Assignment form */}
       <div
         style={{
@@ -176,27 +233,60 @@ export default function DispatcherTable() {
           </p>
         )}
         {agents.length > 0 && (
-          <form onSubmit={handleAssignDelivery} style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "flex-end" }}>
+          <form
+            onSubmit={handleAssignDelivery}
+            style={{
+              display: "flex",
+              gap: "8px",
+              flexWrap: "wrap",
+              alignItems: "flex-end",
+            }}
+          >
             <div>
-              <label style={{ display: "block", fontSize: "12px" }}>Agent</label>
-              <select value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)} style={{ padding: "6px" }}>
+              <label style={{ display: "block", fontSize: "12px" }}>
+                Agent
+              </label>
+              <select
+                value={selectedAgentId}
+                onChange={(e) => setSelectedAgentId(e.target.value)}
+                style={{ padding: "6px" }}
+              >
                 {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>{agent.display_name}</option>
+                  <option key={agent.id} value={agent.id}>
+                    {agent.display_name}
+                  </option>
                 ))}
               </select>
             </div>
             <div>
-              <label style={{ display: "block", fontSize: "12px" }}>Order ID</label>
-              <input type="text" value={newOrderId} onChange={(e) => setNewOrderId(e.target.value)} placeholder="order-123" style={{ padding: "6px" }} />
+              <label style={{ display: "block", fontSize: "12px" }}>
+                Order ID
+              </label>
+              <input
+                type="text"
+                value={newOrderId}
+                onChange={(e) => setNewOrderId(e.target.value)}
+                placeholder="order-123"
+                style={{ padding: "6px" }}
+              />
             </div>
             <div style={{ flexGrow: 1, minWidth: "150px" }}>
-              <label style={{ display: "block", fontSize: "12px" }}>Notes (optional)</label>
-              <input type="text" value={newNotes} onChange={(e) => setNewNotes(e.target.value)} placeholder="Fragile, deliver before 5pm..." style={{ padding: "6px", width: "100%" }} />
+              <label style={{ display: "block", fontSize: "12px" }}>
+                Notes (optional)
+              </label>
+              <input
+                type="text"
+                value={newNotes}
+                onChange={(e) => setNewNotes(e.target.value)}
+                placeholder="Fragile, deliver before 5pm..."
+                style={{ padding: "6px", width: "100%" }}
+              />
             </div>
-            <button type="submit" disabled={isAssigning}>{isAssigning ? "Assigning..." : "Assign"}</button>
+            <button type="submit" disabled={isAssigning}>
+              {isAssigning ? "Assigning..." : "Assign"}
+            </button>
           </form>
         )}
-        {assignMessage && <p style={{ marginTop: "8px" }}>{assignMessage}</p>}
       </div>
 
       {/* Filters, sort, search */}
@@ -216,38 +306,61 @@ export default function DispatcherTable() {
 
         <div>
           <label style={{ display: "block", fontSize: "12px" }}>Status</label>
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+          >
             {STATUS_FILTER_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
             ))}
           </select>
         </div>
 
         <div>
           <label style={{ display: "block", fontSize: "12px" }}>Agent</label>
-          <select value={agentFilter} onChange={(e) => setAgentFilter(e.target.value)}>
+          <select
+            value={agentFilter}
+            onChange={(e) => setAgentFilter(e.target.value)}
+          >
             <option value="all">All Agents</option>
             {agents.map((a) => (
-              <option key={a.id} value={a.id}>{a.display_name}</option>
+              <option key={a.id} value={a.id}>
+                {a.display_name}
+              </option>
             ))}
           </select>
         </div>
 
         <div>
           <label style={{ display: "block", fontSize: "12px" }}>From</label>
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+          />
         </div>
 
         <div>
           <label style={{ display: "block", fontSize: "12px" }}>To</label>
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+          />
         </div>
 
         <div>
           <label style={{ display: "block", fontSize: "12px" }}>Sort by</label>
-          <select value={sortOption} onChange={(e) => setSortOption(e.target.value)}>
+          <select
+            value={sortOption}
+            onChange={(e) => setSortOption(e.target.value)}
+          >
             {SORT_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
             ))}
           </select>
         </div>
@@ -260,7 +373,14 @@ export default function DispatcherTable() {
           style={{ padding: "6px 10px", flexGrow: 1, minWidth: "200px" }}
         />
 
-        <button onClick={clearFilters} style={{ background: "none", border: "1px solid #999", borderRadius: "4px" }}>
+        <button
+          onClick={clearFilters}
+          style={{
+            background: "none",
+            border: "1px solid #999",
+            borderRadius: "4px",
+          }}
+        >
           Clear Filters
         </button>
 
@@ -286,13 +406,21 @@ export default function DispatcherTable() {
               key={d.id}
               onClick={() => setSelectedDelivery(d)}
               style={{ cursor: "pointer" }}
-              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#f5f5f5")}
-              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
+              onMouseEnter={(e) =>
+                (e.currentTarget.style.backgroundColor = "#f5f5f5")
+              }
+              onMouseLeave={(e) =>
+                (e.currentTarget.style.backgroundColor = "transparent")
+              }
             >
               <td style={cellStyle}>{d.order_id}</td>
-              <td style={cellStyle}>{agentNameById.get(d.agent_id) || d.agent_id}</td>
+              <td style={cellStyle}>
+                {agentNameById.get(d.agent_id) || d.agent_id}
+              </td>
               <td style={cellStyle}>{d.status}</td>
-              <td style={cellStyle}>{new Date(d.updated_at).toLocaleString()}</td>
+              <td style={cellStyle}>
+                {new Date(d.updated_at).toLocaleString()}
+              </td>
             </tr>
           ))}
         </tbody>
@@ -320,3 +448,20 @@ const cellStyle = {
   padding: "8px",
   textAlign: "left",
 };
+
+function StatCard({ label, value, color }) {
+  return (
+    <div
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: "8px",
+        padding: "12px 16px",
+        minWidth: "130px",
+        borderTop: `3px solid ${color}`,
+      }}
+    >
+      <div style={{ fontSize: "24px", fontWeight: "bold" }}>{value}</div>
+      <div style={{ fontSize: "12px", color: "#666" }}>{label}</div>
+    </div>
+  );
+}

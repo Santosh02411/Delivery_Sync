@@ -6,8 +6,12 @@ import {
   mergeAssignedDeliveries,
 } from "../services/indexedDb";
 import { startAutoSync, runSync } from "../services/syncEngine";
-import { deleteDeliveryOnServer, fetchMyDeliveriesFromServer } from "../services/api";
+import {
+  deleteDeliveryOnServer,
+  fetchMyDeliveriesFromServer,
+} from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import { useToast } from "../context/ToastContext";
 import DeliveryStatusUpdater from "./DeliveryStatusUpdater";
 import SyncStatusBadge from "./SyncStatusBadge";
 import DeliveryDetailModal from "./DeliveryDetailModal";
@@ -24,8 +28,8 @@ const PULL_INTERVAL_MS = 15000; // check for newly-assigned deliveries every 15s
  */
 export default function AgentDeliveryList() {
   const { token } = useAuth();
+  const { showToast } = useToast();
   const [deliveries, setDeliveries] = useState([]);
-  const [syncMessage, setSyncMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDelivery, setSelectedDelivery] = useState(null);
 
@@ -66,8 +70,13 @@ export default function AgentDeliveryList() {
 
   async function loadFromLocalStorage() {
     const records = await getAllLocalDeliveries();
+    // Sort by CREATED date (oldest first), not updated date. Sorting by
+    // "most recently updated" caused a confusing experience for agents:
+    // the delivery they just touched would immediately jump to the top of
+    // the list. Sorting by creation order keeps each delivery's position
+    // stable regardless of what status changes happen to it.
     const sorted = records.sort(
-      (a, b) => new Date(b.updated_at) - new Date(a.updated_at)
+      (a, b) => new Date(a.created_at) - new Date(b.created_at),
     );
     setDeliveries(sorted);
   }
@@ -89,7 +98,7 @@ export default function AgentDeliveryList() {
 
   async function handleDelete(delivery) {
     const confirmed = window.confirm(
-      `Delete ${delivery.order_id}? This cannot be undone.`
+      `Delete ${delivery.order_id}? This cannot be undone.`,
     );
     if (!confirmed) return;
 
@@ -99,33 +108,47 @@ export default function AgentDeliveryList() {
       try {
         await deleteDeliveryOnServer(token, delivery.id);
       } catch (error) {
-        console.warn("Could not delete on server (may be offline):", error.message);
+        console.warn(
+          "Could not delete on server (may be offline):",
+          error.message,
+        );
       }
     }
 
+    showToast(`Deleted ${delivery.order_id}.`, "success");
     await loadFromLocalStorage();
   }
 
   async function handleManualSync() {
-    setSyncMessage("Syncing...");
     const result = await runSync();
     if (result.success) {
-      setSyncMessage(`Synced ${result.syncedCount} record(s).`);
+      if (result.syncedCount > 0) {
+        showToast(`Synced ${result.syncedCount} record(s).`, "success");
+      } else {
+        showToast("Already up to date.", "info");
+      }
       await pullAssignedDeliveries();
     } else {
-      setSyncMessage(`Sync failed: ${result.error}`);
+      showToast(`Sync failed: ${result.error}`, "error");
     }
   }
 
   const visibleDeliveries = deliveries.filter((d) =>
-    d.order_id.toLowerCase().includes(searchQuery.toLowerCase())
+    d.order_id.toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
   return (
     <div style={{ padding: "16px" }}>
       <h2>My Deliveries</h2>
 
-      <div style={{ display: "flex", gap: "8px", marginBottom: "16px", flexWrap: "wrap" }}>
+      <div
+        style={{
+          display: "flex",
+          gap: "8px",
+          marginBottom: "16px",
+          flexWrap: "wrap",
+        }}
+      >
         <button onClick={handleManualSync}>Sync Now</button>
         <input
           type="text"
@@ -136,10 +159,10 @@ export default function AgentDeliveryList() {
         />
       </div>
 
-      {syncMessage && <p style={{ fontStyle: "italic" }}>{syncMessage}</p>}
-
       {visibleDeliveries.length === 0 && deliveries.length === 0 && (
-        <p>No deliveries assigned yet. Check back soon, or ask your dispatcher.</p>
+        <p>
+          No deliveries assigned yet. Check back soon, or ask your dispatcher.
+        </p>
       )}
       {visibleDeliveries.length === 0 && deliveries.length > 0 && (
         <p>No deliveries match "{searchQuery}".</p>
