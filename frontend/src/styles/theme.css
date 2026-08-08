@@ -1,0 +1,542 @@
+/* ============================================================
+   Delivery Sync — "Fleet Ops Console" Design System
+   A dark, data-dense, logistics-operations aesthetic — built to
+   feel like a real dispatch/tracking product, not a default
+   browser-styled CRUD app.
+
+   Fonts (Space Grotesk, Inter, JetBrains Mono) are loaded via a
+   <link> tag in index.html rather than @import here, since a <link>
+   lets the browser fetch them in parallel with this stylesheet
+   instead of blocking on a nested request.
+   ============================================================ */
+
+:root {
+  /* Backgrounds */
+  --bg-page: #0b0e14;
+  --bg-surface: #141821;
+  --bg-surface-elevated: #1b212c;
+  --bg-input: #0f1319;
+
+  /* Borders */
+  --border-color: #2a3140;
+  --border-color-light: #384056;
+
+  /* Text */
+  --text-primary: #e8eaed;
+  --text-secondary: #8b93a3;
+  --text-muted: #5a6272;
+
+  /* Brand / accent */
+  --accent: #f2a93b;
+  --accent-hover: #d6941f;
+  --accent-text-on: #14100a;
+
+  /* Status colors */
+  --status-picked-up: #4fa3f7;
+  --status-out-for-delivery: #f2a93b;
+  --status-delivered: #3dd68c;
+  --status-failed: #ef5350;
+
+  /* Semantic */
+  --success: #3dd68c;
+  --danger: #ef5350;
+  --info: #4fa3f7;
+
+  /* Typography */
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Spacing / radius */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+}
+
+/* ---------- Light theme overrides ----------
+   Applied via <html data-theme="light">, set by ThemeContext. Every
+   component uses the SAME variable names in both themes — only the
+   values change here, so no component needs theme-specific logic. */
+
+html[data-theme="light"] {
+  --bg-page: #f4f5f7;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #ffffff;
+  --bg-input: #ffffff;
+
+  --border-color: #e1e4e8;
+  --border-color-light: #ccd1d9;
+
+  --text-primary: #1a1d23;
+  --text-secondary: #545b6b;
+  --text-muted: #7c8494;
+
+  --accent: #c97a10;
+  --accent-hover: #a8660c;
+  --accent-text-on: #ffffff;
+
+  /* Status/semantic colors are deliberately darkened versions of the dark
+     theme's colors — the dark theme's colors were tuned to be bright
+     against a near-black background, but at that same brightness they
+     fail contrast against a white background. These keep the same hue
+     (so status meaning stays recognizable) at a darkness that stays
+     readable on white. */
+  --status-picked-up: #1565c0;
+  --status-out-for-delivery: #b26a00;
+  --status-delivered: #1e7e4f;
+  --status-failed: #c62828;
+
+  --success: #1e7e4f;
+  --danger: #c62828;
+  --info: #1565c0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 14px;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  margin: 0;
+}
+
+/* ---------- Layout shell ---------- */
+
+.app-shell {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  background-color: var(--bg-surface);
+  border-right: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  padding: 20px 0;
+}
+
+.sidebar-brand {
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--accent);
+  padding: 0 20px 24px 20px;
+  letter-spacing: 0.3px;
+}
+
+.sidebar-section-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 0 20px;
+  margin-bottom: 8px;
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.sidebar-link:hover {
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-primary);
+}
+
+.sidebar-link.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background-color: var(--bg-surface-elevated);
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding: 16px 20px 0 20px;
+  border-top: 1px solid var(--border-color);
+}
+
+.sidebar-user {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.sidebar-user strong {
+  color: var(--text-primary);
+  display: block;
+  font-size: 13.5px;
+}
+
+.sidebar-action-btn {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.sidebar-action-btn:last-child {
+  margin-bottom: 0;
+}
+
+/* Hidden on desktop — only shown at mobile widths below */
+.mobile-topbar {
+  display: none;
+}
+
+.main-content {
+  flex-grow: 1;
+  padding: 28px 32px;
+  overflow-x: hidden;
+}
+
+.page-title {
+  font-size: 22px;
+  margin-bottom: 20px;
+}
+
+/* ---------- Mobile responsive layout ----------
+   Below 768px, the always-visible desktop sidebar becomes an off-canvas
+   drawer: hidden by default, toggled by a hamburger button in a slim top
+   bar, closed by tapping the dark overlay behind it or picking a nav
+   link. Every other component in this app already uses flex-wrap and
+   relative units in its own inline styles, so forms/filters/cards reflow
+   naturally without needing per-component media queries — this block
+   handles the one part that genuinely needed structural changes: the
+   navigation shell itself.
+
+   Note: .sidebar-overlay has no "display" rule at all — Sidebar.jsx only
+   renders it in the DOM in the first place when the drawer is open, so
+   there's nothing to toggle via CSS; it just needs its positioning. */
+@media (max-width: 768px) {
+  .app-shell {
+    flex-direction: column;
+  }
+
+  .mobile-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background-color: var(--bg-surface);
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .mobile-topbar-brand {
+    font-family: var(--font-display);
+    font-weight: 700;
+    color: var(--accent);
+    font-size: 16px;
+  }
+
+  .mobile-menu-btn {
+    background: none;
+    border: 1px solid var(--border-color-light);
+    color: var(--text-primary);
+    font-size: 18px;
+    padding: 4px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: 240px;
+    max-width: 80vw;
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    z-index: 200;
+    padding-top: 60px; /* clears the fixed mobile top bar */
+  }
+
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    z-index: 150;
+  }
+
+  .main-content {
+    padding: 16px;
+  }
+
+  .page-title {
+    font-size: 19px;
+  }
+}
+
+/* ---------- Connectivity banner ---------- */
+
+.connectivity-banner {
+  padding: 8px 16px;
+  text-align: center;
+  font-weight: 600;
+  font-size: 13px;
+  color: white;
+}
+
+.connectivity-banner.online {
+  background-color: var(--success);
+  color: #06261a;
+}
+
+.connectivity-banner.offline {
+  background-color: var(--danger);
+}
+
+/* ---------- Cards ---------- */
+
+.card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.stat-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+  min-width: 130px;
+  border-top: 3px solid var(--accent);
+}
+
+.stat-card-value {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.stat-card-label {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color-light);
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-text-on);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn-danger-outline {
+  background: none;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.btn-info-outline {
+  background: none;
+  border: 1px solid var(--info);
+  color: var(--info);
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* ---------- Inputs ---------- */
+
+.input, select.input {
+  font-family: var(--font-body);
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-color-light);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+}
+
+.input:focus, select.input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.input::placeholder {
+  color: var(--text-muted);
+}
+
+.field-label {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ---------- Status badges ---------- */
+
+.status-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.status-badge.picked_up { background-color: rgba(79,163,247,0.15); color: var(--status-picked-up); }
+.status-badge.out_for_delivery { background-color: rgba(242,169,59,0.15); color: var(--status-out-for-delivery); }
+.status-badge.delivered { background-color: rgba(61,214,140,0.15); color: var(--status-delivered); }
+.status-badge.failed_attempt { background-color: rgba(239,83,80,0.15); color: var(--status-failed); }
+
+.sync-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.sync-badge.synced { background-color: rgba(61,214,140,0.15); color: var(--success); }
+.sync-badge.pending { background-color: rgba(242,169,59,0.15); color: var(--status-out-for-delivery); }
+
+/* ---------- Table ---------- */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+
+.data-table th {
+  text-align: left;
+  padding: 10px 12px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.data-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-color);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.data-table tbody tr {
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.data-table tbody tr:hover {
+  background-color: var(--bg-surface-elevated);
+}
+
+/* ---------- Delivery card (agent view) ---------- */
+
+.delivery-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 12px;
+}
+
+.delivery-card-order-id {
+  font-family: var(--font-mono);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ---------- Pagination ---------- */
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* ---------- Modal ---------- */
+
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-card {
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+}

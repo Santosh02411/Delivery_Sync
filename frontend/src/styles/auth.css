@@ -1,0 +1,122 @@
+/* Login/Signup styling — matches the dark "Fleet Ops Console" theme
+   (theme.css). This file only adds auth-page-specific layout; colors and
+   fonts are pulled from the CSS variables defined globally in theme.css. */
+
+.auth-page-wrapper {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-page);
+  position: relative;
+}
+
+.auth-theme-toggle {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color-light);
+  color: var(--text-primary);
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+
+.auth-theme-toggle:hover {
+  border-color: var(--accent);
+}
+
+.auth-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  padding: 40px;
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 380px;
+}
+
+.auth-card h2 {
+  margin: 0 0 24px 0;
+  font-size: 20px;
+  color: var(--text-primary);
+}
+
+.auth-field {
+  margin-bottom: 16px;
+}
+
+.auth-field label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.auth-field input,
+.auth-field select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color-light);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-input);
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: var(--font-body);
+  box-sizing: border-box;
+}
+
+.auth-field input:focus,
+.auth-field select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.auth-error {
+  color: var(--danger);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.auth-submit-btn {
+  width: 100%;
+  padding: 12px;
+  background-color: var(--accent);
+  color: var(--accent-text-on);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 14.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-submit-btn:hover:not(:disabled) {
+  background-color: var(--accent-hover);
+}
+
+.auth-submit-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.auth-switch-text {
+  margin-top: 20px;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--text-secondary);
+}
+
+.auth-switch-link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 600;
+  padding: 0;
+}
