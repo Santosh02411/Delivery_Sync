@@ -24,9 +24,11 @@ load_dotenv()
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+import logging
 import os
 
 from app.db.session import Base, engine
@@ -86,8 +88,30 @@ async def add_security_headers(request: Request, call_next):
     still needed before a real public deployment — HTTPS enforcement,
     a production-grade secret key, a shared-store rate limiter, etc.) but
     they're free, safe defaults worth having regardless.
+
+    IMPORTANT — why this wraps call_next in try/except instead of just
+    awaiting it directly: `@app.middleware("http")` is Starlette's
+    BaseHTTPMiddleware, which runs the rest of the app in a separate
+    anyio task inside a task group. If an unhandled exception happens
+    deep in a route (see routes/checkout.py's Razorpay call for a real
+    example that hit this), that combination can fail to deliver a
+    clean 500 JSON response back to the client at all — the browser
+    just sees the connection drop, `fetch()` throws a bare TypeError,
+    and the frontend (reasonably, but wrongly) reports "you're offline"
+    even though the real problem was a backend crash. The individual
+    route-level fix is to never let external calls (payment gateways,
+    etc.) raise uncaught — but this except clause is the backstop for
+    any OTHER unhandled exception anywhere in the app: it guarantees the
+    client always gets back a real 500 JSON response instead of a
+    dropped connection, so a genuine crash always shows up as a genuine
+    error message, never a misleading "offline" one.
     """
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except Exception:
+        logging.getLogger(__name__).exception("Unhandled exception for %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"

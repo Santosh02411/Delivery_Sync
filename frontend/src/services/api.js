@@ -384,11 +384,18 @@ export async function clearCart(token) {
   return response.json();
 }
 
-export async function checkoutCart(token, addressLine, city, phone, couponCode, slotStart) {
+export async function checkoutCart(token, addressLine, city, phone, couponCode, slotStart, paymentMethod = "online") {
   const response = await fetch(`${API_BASE_URL}/customer/checkout`, {
     method: "POST",
     headers: customerAuthHeaders(token),
-    body: JSON.stringify({ address_line: addressLine, city, phone, coupon_code: couponCode || null, slot_start: slotStart || null }),
+    body: JSON.stringify({
+      address_line: addressLine,
+      city,
+      phone,
+      coupon_code: couponCode || null,
+      slot_start: slotStart || null,
+      payment_method: paymentMethod,
+    }),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Checkout failed");

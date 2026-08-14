@@ -89,6 +89,7 @@ export default function Storefront({ token, onOrderPlaced }) {
   const [selectedSlotStart, setSelectedSlotStart] = useState(null);
   const [isLoadingSlots, setIsLoadingSlots] = useState(false);
   const [slotError, setSlotError] = useState(null);
+  const [paymentMethod, setPaymentMethod] = useState("online"); // "online" | "cod"
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [isOffline, setIsOffline] = useState(false);
@@ -104,6 +105,8 @@ export default function Storefront({ token, onOrderPlaced }) {
         setSuccessMessage(
           result.testMode
             ? "Your queued order was placed automatically once you were back online! (Test mode)"
+            : result.codMode
+            ? "Your queued order was placed automatically once you were back online! Pay in cash when it arrives."
             : "Your queued order was placed automatically once you were back online!"
         );
         setPendingCheckoutState(null);
@@ -304,14 +307,15 @@ export default function Storefront({ token, onOrderPlaced }) {
       phone: phone.trim(),
       coupon_code: appliedCoupon ? appliedCoupon.code : null,
       slot_start: selectedSlotStart,
+      payment_method: paymentMethod,
     };
 
     try {
       if (!navigator.onLine) {
-        // Can't pay with no connection — queue the intent instead of
-        // failing outright. The cart stays exactly as-is locally; the
-        // sync engine will pick this up and complete the order (or
-        // prompt for payment) automatically once back online.
+        // Can't reach the server at all with no connection — queue the
+        // intent instead of failing outright. The cart stays exactly
+        // as-is locally; the sync engine will pick this up and complete
+        // the order (or prompt for payment) automatically once back online.
         await setPendingCheckout(details);
         setPendingCheckoutState(await getPendingCheckout());
         setError(null);
@@ -319,11 +323,20 @@ export default function Storefront({ token, onOrderPlaced }) {
         return;
       }
 
-      const checkoutResp = await checkoutCart(token, details.address_line, details.city, details.phone, details.coupon_code, details.slot_start);
+      const checkoutResp = await checkoutCart(
+        token, details.address_line, details.city, details.phone, details.coupon_code, details.slot_start, details.payment_method
+      );
 
-      if (checkoutResp.is_test_mode) {
+      if (checkoutResp.is_test_mode || checkoutResp.payment_method === "cod") {
+        // Neither of these needs the Razorpay widget: test-mode is a
+        // local stand-in, and cash-on-delivery has nothing to charge
+        // right now at all — both just confirm the order immediately.
         await verifyPayment(token, { order_id: checkoutResp.order_id });
-        setSuccessMessage("Order placed! (Test mode — no real payment gateway is connected yet.)");
+        setSuccessMessage(
+          checkoutResp.payment_method === "cod"
+            ? `Order placed! Pay ₹${checkoutResp.total.toFixed(2)} in cash when it arrives.`
+            : "Order placed! (Test mode — no real payment gateway is connected yet.)"
+        );
         await clearLocalCart();
         await loadLocalCart();
         setIsCartOpen(false);
@@ -336,12 +349,20 @@ export default function Storefront({ token, onOrderPlaced }) {
 
       await completeRealPayment(checkoutResp);
     } catch (err) {
-      if (err instanceof TypeError) {
-        // The request itself failed to reach the server (e.g. connection
-        // dropped mid-attempt) — treat exactly like the offline case above.
+      // A TypeError from fetch() means the request never reached the
+      // server at all (connection actually dropped) — that's the only
+      // case that should be silently queued as "offline". Any other
+      // error is a REAL response from the server (e.g. a bad Razorpay
+      // key pair, a validation error) and must be shown as what it
+      // actually is — treating every failure as "you're offline" hides
+      // real problems (like a backend crash) behind a falsely
+      // reassuring message.
+      if (err instanceof TypeError && !navigator.onLine) {
         await setPendingCheckout(details);
         setPendingCheckoutState(await getPendingCheckout());
         setSuccessMessage("You're offline — your order is queued and will be placed automatically once you're back online.");
+      } else if (err instanceof TypeError) {
+        setError("Couldn't reach the server. Check that the backend is running, then try again.");
       } else {
         setError(err.message);
       }
@@ -354,10 +375,17 @@ export default function Storefront({ token, onOrderPlaced }) {
     setError(null);
     setIsCheckingOut(true);
     try {
-      const checkoutResp = await checkoutCart(token, pendingCheckout.address_line, pendingCheckout.city, pendingCheckout.phone, pendingCheckout.coupon_code, pendingCheckout.slot_start);
-      if (checkoutResp.is_test_mode) {
+      const checkoutResp = await checkoutCart(
+        token, pendingCheckout.address_line, pendingCheckout.city, pendingCheckout.phone,
+        pendingCheckout.coupon_code, pendingCheckout.slot_start, pendingCheckout.payment_method || "online"
+      );
+      if (checkoutResp.is_test_mode || checkoutResp.payment_method === "cod") {
         await verifyPayment(token, { order_id: checkoutResp.order_id });
-        setSuccessMessage("Order placed! (Test mode)");
+        setSuccessMessage(
+          checkoutResp.payment_method === "cod"
+            ? `Order placed! Pay ₹${checkoutResp.total.toFixed(2)} in cash when it arrives.`
+            : "Order placed! (Test mode)"
+        );
         await clearPendingCheckout();
         setPendingCheckoutState(null);
         await clearLocalCart();
@@ -367,7 +395,7 @@ export default function Storefront({ token, onOrderPlaced }) {
         await completeRealPayment(checkoutResp);
       }
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof TypeError ? "Couldn't reach the server. Check that the backend is running, then try again." : err.message);
     } finally {
       setIsCheckingOut(false);
     }
@@ -574,12 +602,43 @@ export default function Storefront({ token, onOrderPlaced }) {
                   <label>Phone</label>
                   <input className="input" type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required />
                 </div>
+                <div className="auth-field">
+                  <label>Payment Method</label>
+                  <div style={{ display: "flex", gap: "8px" }}>
+                    <button
+                      type="button"
+                      className="btn"
+                      style={
+                        paymentMethod === "online"
+                          ? { background: "var(--accent)", color: "white", flex: 1 }
+                          : { flex: 1 }
+                      }
+                      onClick={() => setPaymentMethod("online")}
+                    >
+                      💳 Pay Online
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      style={
+                        paymentMethod === "cod"
+                          ? { background: "var(--accent)", color: "white", flex: 1 }
+                          : { flex: 1 }
+                      }
+                      onClick={() => setPaymentMethod("cod")}
+                    >
+                      💵 Cash on Delivery
+                    </button>
+                  </div>
+                </div>
                 <button type="submit" className="btn btn-primary" disabled={isCheckingOut}>
                   {isCheckingOut
                     ? "Processing..."
-                    : navigator.onLine
-                    ? `Pay ₹${computeBreakdownPreview(subtotal, appliedCoupon, selectedStore).total.toFixed(2)}`
-                    : `Place Order (₹${computeBreakdownPreview(subtotal, appliedCoupon, selectedStore).total.toFixed(2)}, will complete when online)`}
+                    : !navigator.onLine
+                    ? `Place Order (₹${computeBreakdownPreview(subtotal, appliedCoupon, selectedStore).total.toFixed(2)}, will complete when online)`
+                    : paymentMethod === "cod"
+                    ? `Confirm Order — Pay ₹${computeBreakdownPreview(subtotal, appliedCoupon, selectedStore).total.toFixed(2)} on Delivery`
+                    : `Pay ₹${computeBreakdownPreview(subtotal, appliedCoupon, selectedStore).total.toFixed(2)}`}
                 </button>
               </form>
             </>

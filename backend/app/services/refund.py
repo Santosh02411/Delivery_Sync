@@ -51,6 +51,16 @@ def refund_order_for_delivery(db: Session, delivery_id: str) -> Optional[OrderDB
     if order.refund_status == "refunded":
         return order  # already handled
 
+    if order.payment_method == "cod":
+        # Cash on delivery — nothing was ever charged, so there's
+        # nothing to refund. Still restock (the items never shipped),
+        # and mark it clearly so it doesn't look like an oversight.
+        order.refund_status = "not_applicable"
+        db.commit()
+        db.refresh(order)
+        restock_order_if_needed(db, order)
+        return order
+
     # The actual amount the customer was charged — includes delivery fee
     # and tax, not just the product subtotal. Falls back to subtotal for
     # any pre-existing order row that predates these columns.

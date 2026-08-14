@@ -98,6 +98,9 @@ def checkout(
 ):
     org_id, line_snapshots, subtotal = _load_cart(db, current_customer.id)
 
+    if payload.payment_method not in ("online", "cod"):
+        raise HTTPException(status_code=400, detail="payment_method must be 'online' or 'cod'.")
+
     # Stock check - early feedback here; the authoritative, final check +
     # actual decrement happens again at verify_payment() (see that
     # function's docstring for why).
@@ -147,6 +150,7 @@ def checkout(
         customer_id=current_customer.id,
         org_id=org_id,
         status=OrderStatus.pending_payment,
+        payment_method=payload.payment_method,
         address_line=payload.address_line,
         city=payload.city,
         phone=payload.phone,
@@ -186,8 +190,52 @@ def checkout(
         slot_end=slot_end,
     )
 
+    if payload.payment_method == "cod":
+        # Cash on delivery — nothing to charge right now at all, so
+        # there's no gateway step and no separate "verify" round trip
+        # needed the way an online payment has. The frontend calls
+        # POST /customer/checkout/verify immediately after this with
+        # just the order_id (same as the test-mode online path already
+        # does) — see verify_payment() below, which skips signature
+        # checking for any is_test_mode_payment OR "cod" order and goes
+        # straight to fulfillment (stock decrement, Delivery creation,
+        # dispatcher notification).
+        db.commit()
+        return CheckoutResponse(
+            order_id=order.id,
+            razorpay_order_id=None,
+            razorpay_key_id=None,
+            amount_paise=amount_paise,
+            is_test_mode=False,
+            payment_method="cod",
+            **breakdown,
+        )
+
     if IS_CONFIGURED:
-        razorpay_order = create_razorpay_order(amount_paise=amount_paise, receipt=order.id)
+        try:
+            razorpay_order = create_razorpay_order(amount_paise=amount_paise, receipt=order.id)
+        except Exception as e:
+            # A configured-but-invalid key pair (wrong/placeholder
+            # RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET), an expired test
+            # key, or Razorpay's API being unreachable all land here.
+            # This MUST be caught and turned into a clean HTTPException
+            # rather than left to propagate — an uncaught exception this
+            # deep can, depending on the middleware stack, fail to reach
+            # the client as a proper response at all (see main.py's
+            # add_security_headers for the general-purpose backstop),
+            # which is exactly what previously showed up in the browser
+            # as a misleading "you're offline" message instead of the
+            # real problem.
+            db.rollback()
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Couldn't reach the payment gateway. If you're testing locally, double-check "
+                    "RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in backend/.env are a real, matching "
+                    "Test Mode key pair from your Razorpay dashboard — or unset them entirely to use "
+                    "the built-in test-mode checkout instead."
+                ),
+            )
         order.razorpay_order_id = razorpay_order["id"]
         db.commit()
         return CheckoutResponse(
@@ -196,6 +244,7 @@ def checkout(
             razorpay_key_id=RAZORPAY_KEY_ID,
             amount_paise=amount_paise,
             is_test_mode=False,
+            payment_method="online",
             **breakdown,
         )
 
@@ -211,6 +260,7 @@ def checkout(
         razorpay_key_id=None,
         amount_paise=amount_paise,
         is_test_mode=True,
+        payment_method="online",
         **breakdown,
     )
 
@@ -230,8 +280,8 @@ def verify_payment(
     if order.status == OrderStatus.paid:
         raise HTTPException(status_code=400, detail="This order was already paid for.")
 
-    if order.is_test_mode_payment:
-        pass  # test-mode order - no signature to verify, proceed straight to fulfillment below
+    if order.is_test_mode_payment or order.payment_method == "cod":
+        pass  # no gateway signature to verify — test-mode stand-in, or a COD order paid in cash on arrival
     else:
         if not (payload.razorpay_payment_id and payload.razorpay_order_id and payload.razorpay_signature):
             raise HTTPException(status_code=400, detail="Missing payment verification details.")
@@ -319,6 +369,11 @@ def verify_payment(
     db.refresh(order)
     db.refresh(delivery)
 
+    fulfillment_note = (
+        "Order placed (cash on delivery) - awaiting dispatcher assignment"
+        if order.payment_method == "cod"
+        else "Order placed and paid - awaiting dispatcher assignment"
+    )
     record_history_entry(
         db=db,
         delivery_id=delivery.id,
@@ -327,7 +382,7 @@ def verify_payment(
         old_status=None,
         new_status=DeliveryStatus.pending,
         changed_at=now,
-        note="Order placed and paid - awaiting dispatcher assignment",
+        note=fulfillment_note,
     )
     notify_customer_of_status_change(
         db,

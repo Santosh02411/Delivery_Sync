@@ -59,6 +59,12 @@ class OrderDB(Base):
     razorpay_order_id = Column(String, nullable=True)
     razorpay_payment_id = Column(String, nullable=True)
 
+    # "online" (paid upfront via Razorpay, or the test-mode stand-in) or
+    # "cod" (cash on delivery — the customer pays the agent in person
+    # when the order arrives, nothing is charged at checkout time at
+    # all). Set once at checkout and never changed afterwards.
+    payment_method = Column(String, nullable=False, default="online")
+
     # True only when no Razorpay keys are configured and this order went
     # through the clearly-labeled fallback path instead of a real
     # gateway — see services/payment.py's module docstring for why this
@@ -107,6 +113,7 @@ class CheckoutRequest(BaseModel):
     phone: str
     coupon_code: Optional[str] = None
     slot_start: Optional[datetime] = None  # must exactly match one of GET /stores/{org_id}/delivery-slots's returned options
+    payment_method: str = "online"  # "online" or "cod" — validated in routes/checkout.py
 
 
 class OrderItemOut(BaseModel):
@@ -132,6 +139,7 @@ class OrderOut(BaseModel):
     tax_amount: float = 0.0
     total: float = 0.0
     is_test_mode_payment: bool
+    payment_method: str = "online"
     refund_status: Optional[str] = None
     refunded_at: Optional[datetime] = None
     slot_start: Optional[datetime] = None
@@ -158,6 +166,7 @@ class CheckoutResponse(BaseModel):
     amount_paise: int
     currency: str = "INR"
     is_test_mode: bool
+    payment_method: str = "online"
     subtotal: float
     coupon_code: Optional[str] = None
     discount_amount: float = 0.0

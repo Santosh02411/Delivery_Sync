@@ -44,7 +44,7 @@ import os
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3005")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3100")
 
 
 def generate_invite_code() -> str:

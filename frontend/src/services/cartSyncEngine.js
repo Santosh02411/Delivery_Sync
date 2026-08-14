@@ -13,15 +13,16 @@
  * Checkout: payment genuinely cannot happen with no connection, so a
  * checkout attempted offline is queued (see setPendingCheckout) instead
  * of failing. Once online:
- *   - If the store's payment is in TEST MODE (no Razorpay account
- *     configured — see backend/app/services/payment.py), the whole
- *     purchase completes automatically with no user interaction needed,
- *     since there's no real payment widget to open.
- *   - If a REAL gateway is configured, opening Razorpay's Checkout.js
- *     from a background timer would be blocked by most browsers as an
- *     unsolicited popup — payment needs a user gesture. So instead this
- *     surfaces the order as "ready — tap to pay" and lets Storefront.jsx
- *     prompt the customer to complete it with one tap.
+ *   - If the order is TEST MODE (no Razorpay account configured — see
+ *     backend/app/services/payment.py) or CASH ON DELIVERY (nothing to
+ *     charge right now at all), the whole purchase completes
+ *     automatically with no user interaction needed, since neither has
+ *     a real payment widget to open.
+ *   - If a REAL online gateway payment is needed, opening Razorpay's
+ *     Checkout.js from a background timer would be blocked by most
+ *     browsers as an unsolicited popup — payment needs a user gesture.
+ *     So instead this surfaces the order as "ready — tap to pay" and
+ *     lets Storefront.jsx prompt the customer to complete it with one tap.
  */
 
 import {
@@ -59,12 +60,18 @@ async function processPendingCheckout(token) {
   if (!pending) return null;
 
   try {
-    const checkoutResp = await checkoutCart(token, pending.address_line, pending.city, pending.phone, pending.coupon_code);
+    const checkoutResp = await checkoutCart(
+      token, pending.address_line, pending.city, pending.phone, pending.coupon_code, pending.slot_start, pending.payment_method || "online"
+    );
 
-    if (checkoutResp.is_test_mode) {
+    if (checkoutResp.is_test_mode || checkoutResp.payment_method === "cod") {
+      // Neither needs the Razorpay widget — test-mode is a local
+      // stand-in, and COD has nothing to charge right now at all — so
+      // both complete automatically the moment connectivity returns,
+      // same as before.
       await verifyPayment(token, { order_id: checkoutResp.order_id });
       await clearPendingCheckout();
-      return { completed: true, testMode: true };
+      return { completed: true, testMode: checkoutResp.is_test_mode, codMode: checkoutResp.payment_method === "cod" };
     }
 
     // Real gateway — leave it queued (don't clear it) so Storefront can

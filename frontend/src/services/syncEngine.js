@@ -11,7 +11,7 @@ import { getPendingDeliveries, markAsSynced } from "./indexedDb";
 import { syncPendingDeliveries } from "./api";
 
 const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 3005;
+const RETRY_DELAY_MS = 3100;
 const PERIODIC_SYNC_INTERVAL_MS = 15000; // check every 15 seconds while online
 
 function wait(ms) {

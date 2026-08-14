@@ -78,10 +78,10 @@ You should see a message like:
 
 ```
 VITE ready in ... ms
-➜  Local:   http://localhost:3005/
+➜  Local:   http://localhost:3100/
 ```
 
-Open `http://localhost:3005` in your browser to use the app.
+Open `http://localhost:3100` in your browser to use the app.
 
 ### 3. Using the App
 
