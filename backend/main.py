@@ -32,11 +32,17 @@ import logging
 import os
 
 from app.db.session import Base, engine
+from app.db.migrate import run_lightweight_migrations
 from app.services.rate_limiter import limiter
 from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots
 
-# Create all database tables on startup (if they don't already exist)
+# Create all database tables on startup (if they don't already exist),
+# then catch up any EXISTING table to the model's current columns — see
+# app/db/migrate.py's module docstring for why both steps are needed:
+# create_all() alone only handles brand-new tables, never adds columns
+# to ones that already exist from a previous run.
 Base.metadata.create_all(bind=engine)
+run_lightweight_migrations(engine, Base)
 
 app = FastAPI(
     title="Offline-First Delivery Sync API",

@@ -1036,6 +1036,43 @@ prints, rather than assuming Vite's default.
 
 ---
 
+---
+
+## Real Bug Fix: Existing Databases Broke on Every New Column
+
+**What was wrong:** `Base.metadata.create_all(bind=engine)` (the only
+schema setup this project had) only creates tables that don't exist
+yet — it silently does NOT add new columns to a table that already
+exists from an earlier run. The COD feature added `payment_method` to
+`OrderDB`, and anyone with an existing local `database.db` file (i.e.
+anyone who'd actually been using the app) hit `sqlite3.OperationalError:
+table orders has no column named payment_method` on the very next
+checkout — a hard crash, not a graceful degradation. This wasn't
+specific to `payment_method`; the exact same failure was waiting to
+happen on every future column added to any existing table, for anyone
+with real data already in their database.
+
+**The fix:** New `app/db/migrate.py` — a lightweight, dependency-free
+migration step (this project deliberately doesn't use Alembic, in
+keeping with its zero-setup philosophy) that runs right after
+`create_all()` on every startup: it diffs each table's actual columns
+against what the model currently expects, and `ALTER TABLE ... ADD
+COLUMN`s in whatever's missing. New columns are always added nullable
+regardless of the model's own `nullable=False`, specifically so it can
+never fail against a table that already has rows. Verified directly
+against Santy's exact scenario: hand-built an old-schema `orders` table
+(matching the schema from before `payment_method` existed) with a real
+row in it, ran the app's real startup against it, confirmed the column
+got added, the existing row survived untouched, AND SQLite correctly
+backfilled it to the column's default (`'online'`) — then ran a live
+COD checkout against that same migrated database end-to-end and
+confirmed it completes. Also confirmed a totally fresh install (no
+`database.db` at all) still works with zero regressions. This means an
+existing local database now survives every future schema change this
+project makes, without ever needing to be deleted and started over.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
