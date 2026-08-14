@@ -11,16 +11,32 @@ import {
   claimCustomerOrder,
   cancelCustomerDelivery,
   reorderCustomerDelivery,
+  fetchMyOrders,
+  fetchReviewableItems,
+  submitProductReview,
   fetchMyCustomerAddresses,
   addCustomerAddress,
   deleteCustomerAddress,
   fetchVapidPublicKey,
   subscribeToPush,
+  exportCustomerData,
+  deleteCustomerAccount,
+  API_BASE_URL,
 } from "../services/api";
 import StatusBadge from "./StatusBadge";
 import LiveTrackingMap from "./LiveTrackingMap";
 import Storefront from "./Storefront";
 import "../styles/auth.css";
+import {
+  setActiveCustomer,
+  cacheCustomerDeliveries,
+  getCachedCustomerDeliveries,
+  getCustomerLastSyncedAt,
+  queueCustomerAction,
+} from "../services/customerOfflineStore";
+import { startCustomerActionAutoSync } from "../services/customerSyncEngine";
+import { writeSyncContext } from "../services/backgroundSyncContext";
+import { urlBase64ToUint8Array } from "../services/pushUtil";
 
 const STATUS_LABELS = {
   confirmed: "Order Confirmed",
@@ -34,13 +50,6 @@ const STATUS_LABELS = {
 
 const LIVE_TRACKABLE_STATUSES = ["picked_up", "out_for_delivery"];
 
-function urlBase64ToUint8Array(base64String) {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData = atob(base64);
-  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
-}
-
 export default function CustomerDashboard() {
   const { customer, token, logout } = useCustomerAuth();
   const { theme, toggleTheme } = useTheme();
@@ -49,15 +58,39 @@ export default function CustomerDashboard() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showAddresses, setShowAddresses] = useState(false);
   const [showShop, setShowShop] = useState(false);
+  const [showPrivacy, setShowPrivacy] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [error, setError] = useState(null);
   const [pushStatus, setPushStatus] = useState("idle");
+  const [isOffline, setIsOffline] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const [pendingActionSyncMsg, setPendingActionSyncMsg] = useState(null);
 
   useEffect(() => {
+    if (customer?.id) {
+      setActiveCustomer(customer.id);
+      writeSyncContext({ userId: customer.id, token, role: "customer", apiBaseUrl: API_BASE_URL });
+    }
     loadDeliveries();
     loadNotifications();
     const intervalId = setInterval(loadNotifications, 10000);
-    return () => clearInterval(intervalId);
+    const stopActionSync = startCustomerActionAutoSync(token, (result) => {
+      if (result.syncedCount > 0) {
+        setPendingActionSyncMsg(
+          `Synced ${result.syncedCount} action(s) that were queued while offline.`
+        );
+        loadDeliveries();
+      }
+      if (result.failed.length > 0) {
+        setPendingActionSyncMsg(
+          `${result.failed.length} queued action(s) couldn't be applied: ${result.failed[0].message}`
+        );
+      }
+    });
+    return () => {
+      clearInterval(intervalId);
+      stopActionSync();
+    };
   }, []);
 
   useEffect(() => {
@@ -74,8 +107,22 @@ export default function CustomerDashboard() {
     try {
       const data = await fetchMyCustomerDeliveries(token);
       setDeliveries(data);
+      setError(null);
+      setIsOffline(false);
+      await cacheCustomerDeliveries(data);
     } catch (err) {
-      setError(err.message);
+      // Fall back to cached data instead of leaving the customer with
+      // an empty screen when they lose connectivity.
+      try {
+        const cached = await getCachedCustomerDeliveries();
+        const lastSynced = await getCustomerLastSyncedAt();
+        setDeliveries(cached);
+        setIsOffline(true);
+        setLastSyncedAt(lastSynced);
+        setError(cached.length === 0 ? err.message : null);
+      } catch (cacheErr) {
+        setError(err.message);
+      }
     }
   }
 
@@ -158,6 +205,9 @@ export default function CustomerDashboard() {
           <button className="btn" onClick={() => setShowAddresses(!showAddresses)}>
             📍 Addresses
           </button>
+          <button className="btn" onClick={() => setShowPrivacy(!showPrivacy)}>
+            🔒 Privacy
+          </button>
           <button className="btn" onClick={() => setShowNotifications(!showNotifications)}>
             🔔{unreadCount > 0 && ` (${unreadCount})`}
           </button>
@@ -175,6 +225,12 @@ export default function CustomerDashboard() {
       {showAddresses && (
         <div style={{ margin: "16px 24px" }}>
           <AddressBook token={token} />
+        </div>
+      )}
+
+      {showPrivacy && (
+        <div style={{ margin: "16px 24px" }}>
+          <PrivacyPanel token={token} onAccountDeleted={logout} />
         </div>
       )}
 
@@ -214,6 +270,18 @@ export default function CustomerDashboard() {
       <div style={{ padding: "24px", maxWidth: "700px", margin: "0 auto" }}>
         <h2 className="page-title">My Orders</h2>
 
+        {isOffline && (
+          <div className="connectivity-banner offline" style={{ marginBottom: "16px" }}>
+            Offline — showing your last synced orders{lastSyncedAt ? ` from ${new Date(lastSyncedAt).toLocaleString()}` : ""}
+          </div>
+        )}
+
+        {pendingActionSyncMsg && (
+          <p style={{ fontSize: "12.5px", color: "var(--accent)", marginBottom: "12px" }}>
+            {pendingActionSyncMsg}
+          </p>
+        )}
+
         {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
 
         {deliveries.length === 0 && (
@@ -235,6 +303,116 @@ export default function CustomerDashboard() {
             onChanged={loadDeliveries}
           />
         ))}
+      </div>
+    </div>
+  );
+}
+
+function PrivacyPanel({ token, onAccountDeleted }) {
+  const [isExporting, setIsExporting] = useState(false);
+  const [error, setError] = useState(null);
+
+  const [showDeleteForm, setShowDeleteForm] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  async function handleExport() {
+    setError(null);
+    setIsExporting(true);
+    try {
+      const blob = await exportCustomerData(token);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `my_data_export_${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
+  async function handleDelete(e) {
+    e.preventDefault();
+    setError(null);
+    setIsDeleting(true);
+    try {
+      await deleteCustomerAccount(token, deletePassword);
+      onAccountDeleted();
+    } catch (err) {
+      setError(err.message);
+      setIsDeleting(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ maxWidth: "500px" }}>
+      <strong style={{ fontSize: "13.5px" }}>Your Data & Privacy</strong>
+
+      <div style={{ marginTop: "14px" }}>
+        <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "4px" }}>Download your data</div>
+        <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginBottom: "8px" }}>
+          Get a JSON file with everything tied to your account: profile, addresses,
+          orders, deliveries, notifications, and reviews.
+        </p>
+        <button className="btn" onClick={handleExport} disabled={isExporting}>
+          {isExporting ? "Preparing download..." : "⬇ Download my data"}
+        </button>
+      </div>
+
+      <div style={{ marginTop: "20px", paddingTop: "16px", borderTop: "1px solid var(--border-color)" }}>
+        <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "4px", color: "var(--danger)" }}>Delete account</div>
+        <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginBottom: "8px" }}>
+          Permanently deletes your account, saved addresses, cart, and notifications.
+          Past orders are kept by the store(s) you ordered from in anonymized form,
+          for their own transaction records.
+        </p>
+
+        {!showDeleteForm && (
+          <button className="btn-danger-outline" onClick={() => setShowDeleteForm(true)}>
+            Delete my account
+          </button>
+        )}
+
+        {showDeleteForm && (
+          <form onSubmit={handleDelete}>
+            <div className="auth-field">
+              <label>Confirm your password to delete your account</label>
+              <input
+                type="password"
+                className="input"
+                value={deletePassword}
+                onChange={(e) => setDeletePassword(e.target.value)}
+                style={{ width: "100%" }}
+                required
+                autoFocus
+              />
+            </div>
+            {error && <p style={{ color: "var(--danger)", fontSize: "12px" }}>{error}</p>}
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button type="submit" className="btn-danger-outline" disabled={isDeleting}>
+                {isDeleting ? "Deleting..." : "Permanently delete my account"}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => {
+                  setShowDeleteForm(false);
+                  setDeletePassword("");
+                  setError(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+
+        {!showDeleteForm && error && <p style={{ color: "var(--danger)", fontSize: "12px", marginTop: "8px" }}>{error}</p>}
       </div>
     </div>
   );
@@ -438,6 +616,8 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
   const [actionError, setActionError] = useState(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const [isReordering, setIsReordering] = useState(false);
+  const [reviewableItems, setReviewableItems] = useState([]);
+  const [refundInfo, setRefundInfo] = useState(null);
 
   useEffect(() => {
     if (isExpanded) loadDetails();
@@ -454,6 +634,27 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
     } catch (err) {
       console.warn("Could not load order details:", err.message);
     }
+    if (delivery.status === "delivered") {
+      try {
+        setReviewableItems(await fetchReviewableItems(token, delivery.id));
+      } catch (err) {
+        console.warn("Could not load reviewable items:", err.message);
+      }
+    }
+    if (delivery.status === "cancelled") {
+      try {
+        const orders = await fetchMyOrders(token);
+        const match = orders.find((o) => o.delivery_id === delivery.id);
+        if (match && match.refund_status) setRefundInfo(match);
+      } catch (err) {
+        console.warn("Could not load refund status:", err.message);
+      }
+    }
+  }
+
+  async function handleReviewSubmit(item, itemRating, itemComment) {
+    await submitProductReview(token, item.product_id, item.order_id, itemRating, itemComment);
+    setReviewableItems(await fetchReviewableItems(token, delivery.id));
   }
 
   async function handleSubmitFeedback(e) {
@@ -482,7 +683,15 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
       await cancelCustomerDelivery(token, delivery.id);
       await onChanged();
     } catch (err) {
-      setActionError(err.message);
+      if (err instanceof TypeError || !navigator.onLine) {
+        // Offline (fetch() throws TypeError when the network is
+        // unreachable) — queue it instead of showing a hard error, so
+        // it replays automatically once connectivity returns.
+        await queueCustomerAction("cancel", delivery.id, delivery.order_id);
+        setActionError("You're offline — this cancellation is queued and will go through once you're back online.");
+      } else {
+        setActionError(err.message);
+      }
     } finally {
       setIsCancelling(false);
     }
@@ -495,7 +704,12 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
       await reorderCustomerDelivery(token, delivery.id);
       await onChanged();
     } catch (err) {
-      setActionError(err.message);
+      if (err instanceof TypeError || !navigator.onLine) {
+        await queueCustomerAction("reorder", delivery.id, delivery.order_id);
+        setActionError("You're offline — this reorder is queued and will be placed once you're back online.");
+      } else {
+        setActionError(err.message);
+      }
     } finally {
       setIsReordering(false);
     }
@@ -532,6 +746,17 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
         )}
       </div>
       {actionError && <p style={{ color: "var(--danger)", fontSize: "12px", marginTop: "6px" }}>{actionError}</p>}
+      {refundInfo && refundInfo.refund_status === "refunded" && (
+        <p style={{ color: "var(--accent)", fontSize: "12px", marginTop: "6px" }}>
+          Refund issued{refundInfo.is_test_mode_payment ? " (test mode — no real payment was ever taken)" : ""} on{" "}
+          {new Date(refundInfo.refunded_at).toLocaleString()}.
+        </p>
+      )}
+      {refundInfo && refundInfo.refund_status === "failed" && (
+        <p style={{ color: "var(--danger)", fontSize: "12px", marginTop: "6px" }}>
+          Your order was cancelled, but the refund couldn't be processed automatically — please contact support.
+        </p>
+      )}
 
       {isExpanded && (
         <div style={{ marginTop: "14px" }}>
@@ -614,7 +839,86 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
               )}
             </div>
           )}
+
+          {delivery.status === "delivered" && reviewableItems.length > 0 && (
+            <div style={{ marginTop: "18px" }}>
+              <div style={{ fontSize: "12.5px", fontWeight: 600, marginBottom: "8px" }}>
+                Rate your products
+              </div>
+              {reviewableItems.map((item) => (
+                <ProductReviewRow key={item.product_id} item={item} onSubmit={handleReviewSubmit} />
+              ))}
+            </div>
+          )}
         </div>
+      )}
+    </div>
+  );
+}
+
+function ProductReviewRow({ item, onSubmit }) {
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (rating === 0) {
+      setError("Please pick a star rating.");
+      return;
+    }
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      await onSubmit(item, rating, comment.trim());
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <div style={{ borderTop: "1px solid var(--border-color)", padding: "10px 0" }}>
+      <div style={{ fontSize: "12.5px", marginBottom: "6px" }}>
+        {item.product_name} {item.quantity > 1 && <span style={{ color: "var(--text-secondary)" }}>× {item.quantity}</span>}
+      </div>
+      {item.already_reviewed ? (
+        <div>
+          <div style={{ fontSize: "16px", letterSpacing: "2px" }}>
+            {"★".repeat(item.my_review.rating)}
+            <span style={{ color: "var(--text-muted)" }}>{"★".repeat(5 - item.my_review.rating)}</span>
+          </div>
+          {item.my_review.comment && (
+            <p style={{ fontSize: "12px", color: "var(--text-secondary)" }}>"{item.my_review.comment}"</p>
+          )}
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit}>
+          <div style={{ fontSize: "18px", marginBottom: "6px" }}>
+            {[1, 2, 3, 4, 5].map((star) => (
+              <span
+                key={star}
+                onClick={() => setRating(star)}
+                style={{ cursor: "pointer", color: star <= rating ? "var(--accent)" : "var(--text-muted)" }}
+              >
+                ★
+              </span>
+            ))}
+          </div>
+          <textarea
+            className="input"
+            placeholder="Optional comment about the product..."
+            value={comment}
+            onChange={(e) => setComment(e.target.value)}
+            style={{ width: "100%", minHeight: "40px", marginBottom: "6px" }}
+          />
+          {error && <p style={{ color: "var(--danger)", fontSize: "12px" }}>{error}</p>}
+          <button type="submit" className="btn" style={{ fontSize: "12px" }} disabled={isSubmitting}>
+            {isSubmitting ? "Submitting..." : "Submit Review"}
+          </button>
+        </form>
       )}
     </div>
   );

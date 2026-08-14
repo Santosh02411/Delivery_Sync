@@ -1,6 +1,8 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
+import { fetchStaffVapidPublicKey, subscribeStaffToPush } from "../services/api";
+import { urlBase64ToUint8Array } from "../services/pushUtil";
 
 /**
  * Left sidebar navigation. Nav items differ by role: agents get
@@ -14,24 +16,72 @@ import { useTheme } from "../context/ThemeContext";
  * always visible, exactly as before.
  */
 export default function Sidebar({ activeView, onNavigate }) {
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
+  const [pushStatus, setPushStatus] = useState("idle");
+
+  useEffect(() => {
+    if (!("Notification" in window)) {
+      setPushStatus("unsupported");
+    } else if (Notification.permission === "granted") {
+      setPushStatus("enabled");
+    } else if (Notification.permission === "denied") {
+      setPushStatus("denied");
+    }
+  }, []);
+
+  async function handleEnablePush() {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      setPushStatus("unsupported");
+      return;
+    }
+    setPushStatus("enabling");
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setPushStatus(permission === "denied" ? "denied" : "idle");
+        return;
+      }
+
+      const registration = await navigator.serviceWorker.ready;
+      const { public_key: vapidPublicKey } = await fetchStaffVapidPublicKey(token);
+
+      let subscription = await registration.pushManager.getSubscription();
+      if (!subscription) {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(vapidPublicKey),
+        });
+      }
+
+      await subscribeStaffToPush(token, subscription.toJSON());
+      setPushStatus("enabled");
+    } catch (err) {
+      console.warn("Push enable failed:", err.message);
+      setPushStatus("idle");
+    }
+  }
 
   const agentLinks = [
     { key: "deliveries", label: "My Deliveries", icon: "\u25A4" },
     { key: "performance", label: "Performance", icon: "\u25CE" },
+    { key: "security", label: "Security", icon: "\u26BF" },
   ];
 
   const dispatcherLinks = [
     { key: "dashboard", label: "Dashboard", icon: "\u25A4" },
     { key: "products", label: "Products", icon: "\u25A3" },
+    { key: "security", label: "Security", icon: "\u26BF" },
   ];
 
   const adminLinks = [
     { key: "dashboard", label: "Dashboard", icon: "\u25A4" },
+    { key: "analytics", label: "Analytics", icon: "\u25C8" },
     { key: "products", label: "Products", icon: "\u25A3" },
     { key: "admin", label: "Manage Users", icon: "\u2699" },
+    { key: "audit-log", label: "Audit Log", icon: "\u2637" },
+    { key: "security", label: "Security", icon: "\u26BF" },
   ];
 
   const links =
@@ -90,6 +140,20 @@ export default function Sidebar({ activeView, onNavigate }) {
             <strong>{user.display_name}</strong>
             {user.role}
           </div>
+          {pushStatus !== "unsupported" && pushStatus !== "denied" && (
+            <button
+              className="btn sidebar-action-btn"
+              onClick={handleEnablePush}
+              disabled={pushStatus === "enabled" || pushStatus === "enabling"}
+              title={
+                user.role === "agent"
+                  ? "Get notified the moment a new delivery is assigned to you"
+                  : "Get notified the moment a new order needs an agent assigned"
+              }
+            >
+              {pushStatus === "enabled" ? "🔔 Notifications On" : pushStatus === "enabling" ? "Enabling..." : "🔔 Enable Notifications"}
+            </button>
+          )}
           <button className="btn sidebar-action-btn" onClick={toggleTheme}>
             {theme === "dark" ? "☀ Light Mode" : "☾ Dark Mode"}
           </button>

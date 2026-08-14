@@ -50,6 +50,25 @@ def create_access_token(data: dict) -> str:
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
+TWO_FACTOR_CHALLENGE_EXPIRE_MINUTES = 5
+
+
+def create_two_factor_challenge_token(user_id: str) -> str:
+    """
+    A short-lived token issued after a correct username/password but
+    before a correct 2FA code — proves "this caller knows the password"
+    without yet granting real API access. Deliberately a much shorter
+    expiry (5 minutes) than a normal access token, and a distinct claim
+    shape ({"pending_2fa_user_id": ...} instead of {"sub": ..., "role":
+    ...}) so it can never be mistaken for, or reused as, a real session
+    token even if it leaked or a caller tried to pass it into an
+    ordinary authenticated route.
+    """
+    expire = datetime.now(timezone.utc) + timedelta(minutes=TWO_FACTOR_CHALLENGE_EXPIRE_MINUTES)
+    to_encode = {"pending_2fa_user_id": user_id, "exp": expire}
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
 def decode_access_token(token: str) -> dict | None:
     """Returns the decoded token payload, or None if invalid/expired."""
     try:

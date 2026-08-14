@@ -16,4 +16,16 @@ if ("serviceWorker" in navigator) {
       console.warn("Service worker registration failed:", error);
     });
   });
+
+  // The service worker posts this after a real Background Sync event
+  // completes (see public/sw.js's runBackgroundSync) — including syncs
+  // that happened while every tab was closed. Dispatched as a DOM event
+  // rather than called directly, since this file sits outside the React
+  // tree (before ToastProvider mounts) — App.jsx listens for it and
+  // shows a real toast once the tree is up.
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if (event.data?.type === "background-sync-complete" && event.data.syncedCount > 0) {
+      window.dispatchEvent(new CustomEvent("background-sync-complete", { detail: event.data }));
+    }
+  });
 }

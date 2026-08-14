@@ -12,6 +12,7 @@ from typing import List
 from app.db.session import get_db
 from app.models.organization import OrganizationDB, PublicOrganizationOut
 from app.models.product import ProductDB, ProductOut
+from app.routes.products import _attach_review_stats
 
 router = APIRouter(prefix="/stores", tags=["storefront"])
 
@@ -30,7 +31,8 @@ def list_store_products(org_id: str, db: Session = Depends(get_db)):
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
 
-    return db.query(ProductDB).filter(
+    products = db.query(ProductDB).filter(
         ProductDB.org_id == org_id,
         ProductDB.is_active == True,  # noqa: E712
     ).all()
+    return _attach_review_stats(db, products)

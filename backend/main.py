@@ -9,13 +9,14 @@ from your code.
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 import os
 
 from app.db.session import Base, engine
 from app.services.rate_limiter import limiter
-from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, stores, products, cart, checkout
+from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots
 
 # Create all database tables on startup (if they don't already exist)
 Base.metadata.create_all(bind=engine)
@@ -53,6 +54,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serves uploaded product images back out at /uploads/products/<file>.
+# Created on demand by routes/products.py's upload endpoint, so it may
+# not exist yet on a completely fresh checkout — create it here too so
+# the mount never fails on a clean clone.
+UPLOAD_ROOT = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(os.path.join(UPLOAD_ROOT, "products"), exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_ROOT), name="uploads")
+
 
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
@@ -80,11 +89,16 @@ app.include_router(messages.router)
 app.include_router(tracking.router)
 app.include_router(customer_auth.router)
 app.include_router(customer_dashboard.router)
+app.include_router(customer_privacy.router)
 app.include_router(stores.router)
 app.include_router(products.router)
 app.include_router(products.store_router)
 app.include_router(cart.router)
 app.include_router(checkout.router)
+app.include_router(reviews.router)
+app.include_router(coupons.router)
+app.include_router(analytics.router)
+app.include_router(slots.router)
 
 
 @app.get("/")

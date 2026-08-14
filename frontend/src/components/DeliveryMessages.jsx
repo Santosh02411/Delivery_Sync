@@ -1,6 +1,14 @@
 import React, { useEffect, useState, useRef } from "react";
 import { fetchDeliveryMessages, sendDeliveryMessage } from "../services/api";
 import { useAuth } from "../context/AuthContext";
+import {
+  setActiveChatUser,
+  queueChatMessage,
+  getQueuedChatMessages,
+} from "../services/chatOfflineQueue";
+import { startChatAutoSync } from "../services/chatSyncEngine";
+import { writeSyncContext } from "../services/backgroundSyncContext";
+import { API_BASE_URL } from "../services/api";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -11,6 +19,11 @@ const POLL_INTERVAL_MS = 5000;
  * history log (an automatic audit trail) — this is an actual
  * back-and-forth conversation.
  *
+ * Offline-first: sending with no connection queues the message locally
+ * (shown immediately, tagged "queued offline") instead of failing, and
+ * it's sent automatically the moment connectivity returns — the same
+ * pattern already used for delivery status updates.
+ *
  * Polls for new messages every 5s while the modal is open, rather than
  * requiring a manual refresh — a chat thread that doesn't show the
  * other person's reply without being told to check again isn't a very
@@ -19,6 +32,7 @@ const POLL_INTERVAL_MS = 5000;
 export default function DeliveryMessages({ deliveryId, isSyncedToServer }) {
   const { token, user } = useAuth();
   const [messages, setMessages] = useState([]);
+  const [queuedMessages, setQueuedMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState(null);
@@ -27,14 +41,26 @@ export default function DeliveryMessages({ deliveryId, isSyncedToServer }) {
   useEffect(() => {
     if (!isSyncedToServer) return; // no server-side id to attach messages to yet
 
+    setActiveChatUser(user.id);
+    writeSyncContext({ userId: user.id, token, role: user.role, apiBaseUrl: API_BASE_URL });
     loadMessages();
+    loadQueuedMessages();
+
     const intervalId = setInterval(loadMessages, POLL_INTERVAL_MS);
-    return () => clearInterval(intervalId);
+    const stopChatSync = startChatAutoSync(token, () => {
+      loadMessages();
+      loadQueuedMessages();
+    });
+
+    return () => {
+      clearInterval(intervalId);
+      stopChatSync();
+    };
   }, [deliveryId, isSyncedToServer]);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
+  }, [messages.length, queuedMessages.length]);
 
   async function loadMessages() {
     try {
@@ -42,21 +68,37 @@ export default function DeliveryMessages({ deliveryId, isSyncedToServer }) {
       setMessages(data);
       setError(null);
     } catch (err) {
-      setError(err.message);
+      // Offline or unreachable — keep showing whatever's already loaded
+      // (plus locally queued messages below) instead of clearing the thread.
+      if (!(err instanceof TypeError)) setError(err.message);
     }
+  }
+
+  async function loadQueuedMessages() {
+    const queued = await getQueuedChatMessages(deliveryId);
+    setQueuedMessages(queued);
   }
 
   async function handleSend(e) {
     e.preventDefault();
-    if (!newMessage.trim()) return;
+    const text = newMessage.trim();
+    if (!text) return;
 
     setIsSending(true);
+    setNewMessage("");
     try {
-      await sendDeliveryMessage(token, deliveryId, newMessage.trim());
-      setNewMessage("");
+      await sendDeliveryMessage(token, deliveryId, text);
       await loadMessages();
     } catch (err) {
-      setError(err.message);
+      if (err instanceof TypeError) {
+        // No connection — queue it. It'll show up immediately below
+        // (tagged "queued offline") and send automatically once online.
+        await queueChatMessage(deliveryId, text, user.display_name, user.role);
+        await loadQueuedMessages();
+      } else {
+        setError(err.message);
+        setNewMessage(text); // restore what they typed so it isn't lost on a real error
+      }
     } finally {
       setIsSending(false);
     }
@@ -71,6 +113,23 @@ export default function DeliveryMessages({ deliveryId, isSyncedToServer }) {
     );
   }
 
+  // Merge server messages with locally-queued-but-unsent ones into a
+  // single chronological thread, so a queued message appears exactly
+  // where it belongs rather than in a separate disconnected list.
+  const combinedThread = [
+    ...messages.map((m) => ({ ...m, _pending: false, _sortKey: m.created_at })),
+    ...queuedMessages.map((m) => ({
+      id: `queued-${m.id}`,
+      sender_id: user.id,
+      sender_display_name: m.sender_display_name,
+      sender_role: m.sender_role,
+      message: m.message,
+      created_at: m.queued_at,
+      _pending: true,
+      _sortKey: m.queued_at,
+    })),
+  ].sort((a, b) => new Date(a._sortKey) - new Date(b._sortKey));
+
   return (
     <div>
       <div
@@ -83,12 +142,12 @@ export default function DeliveryMessages({ deliveryId, isSyncedToServer }) {
           marginBottom: "10px",
         }}
       >
-        {messages.length === 0 && (
+        {combinedThread.length === 0 && (
           <p style={{ color: "var(--text-muted)", fontSize: "13px" }}>
             No messages yet. Say something below.
           </p>
         )}
-        {messages.map((m) => {
+        {combinedThread.map((m) => {
           const isMine = m.sender_id === user.id;
           return (
             <div
@@ -100,6 +159,7 @@ export default function DeliveryMessages({ deliveryId, isSyncedToServer }) {
                 color: isMine ? "var(--accent-text-on)" : "var(--text-primary)",
                 padding: "8px 12px",
                 borderRadius: "var(--radius-sm)",
+                opacity: m._pending ? 0.65 : 1,
               }}
             >
               <div style={{ fontSize: "11px", fontWeight: 600, opacity: 0.85, marginBottom: "2px" }}>
@@ -107,7 +167,7 @@ export default function DeliveryMessages({ deliveryId, isSyncedToServer }) {
               </div>
               <div style={{ fontSize: "13.5px" }}>{m.message}</div>
               <div style={{ fontSize: "10.5px", opacity: 0.7, marginTop: "3px" }}>
-                {new Date(m.created_at).toLocaleString()}
+                {m._pending ? "Queued offline — will send when back online" : new Date(m.created_at).toLocaleString()}
               </div>
             </div>
           );

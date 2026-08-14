@@ -17,8 +17,12 @@
  * function in this file is used.
  */
 
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE_NAME = "deliveries";
+const PINGS_STORE = "location_pings";
+const MAX_QUEUED_PINGS = 30; // caps how large a gap of missed pings we'll try to replay — old enough entries get dropped rather than growing unbounded over a long offline stretch
+
+import { requestBackgroundSync } from "./backgroundSync";
 
 let activeDbName = null;
 
@@ -54,6 +58,9 @@ function openDb() {
         const store = db.createObjectStore(STORE_NAME, { keyPath: "id" });
         store.createIndex("sync_status", "sync_status", { unique: false });
       }
+      if (!db.objectStoreNames.contains(PINGS_STORE)) {
+        db.createObjectStore(PINGS_STORE, { keyPath: "id", autoIncrement: true });
+      }
     };
 
     request.onsuccess = (event) => resolve(event.target.result);
@@ -68,7 +75,7 @@ function openDb() {
  */
 export async function saveDeliveryLocally(record) {
   const db = await openDb();
-  return new Promise((resolve, reject) => {
+  const saved = await new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
     const store = tx.objectStore(STORE_NAME);
     const recordToSave = { ...record, sync_status: "pending" };
@@ -77,6 +84,13 @@ export async function saveDeliveryLocally(record) {
     request.onsuccess = () => resolve(recordToSave);
     request.onerror = (event) => reject(event.target.error);
   });
+
+  // Ask the browser to wake the service worker and sync this the moment
+  // connectivity is detected — even if every tab gets closed before that
+  // happens.
+  requestBackgroundSync();
+
+  return saved;
 }
 
 /**
@@ -164,4 +178,53 @@ export async function mergeAssignedDeliveries(serverRecords) {
     // local edit. The next push-sync will reconcile it against the server
     // using the existing last-write-wins conflict logic.
   }
+}
+
+// ---------- Live GPS ping queue ----------
+// When an agent's device has no signal, a location update to the server
+// currently just fails. Instead of losing it silently, it's queued here
+// and replayed (oldest first) the moment connectivity returns — see
+// services/locationSyncEngine.js. Capped at MAX_QUEUED_PINGS so a long
+// stretch offline doesn't grow this unboundedly; only the most recent
+// pings matter for a live map anyway.
+
+export async function queueLocationPing(latitude, longitude) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PINGS_STORE, "readwrite");
+    const store = tx.objectStore(PINGS_STORE);
+    store.add({ latitude, longitude, queued_at: new Date().toISOString() });
+
+    tx.oncomplete = async () => {
+      // Trim to the cap: drop the oldest entries first if we've grown past it.
+      const all = await getQueuedLocationPings();
+      if (all.length > MAX_QUEUED_PINGS) {
+        const toDrop = all.slice(0, all.length - MAX_QUEUED_PINGS);
+        for (const ping of toDrop) await removeLocationPing(ping.id);
+      }
+      requestBackgroundSync();
+      resolve();
+    };
+    tx.onerror = (event) => reject(event.target.error);
+  });
+}
+
+export async function getQueuedLocationPings() {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PINGS_STORE, "readonly");
+    const request = tx.objectStore(PINGS_STORE).getAll();
+    request.onsuccess = () => resolve(request.result.sort((a, b) => a.id - b.id));
+    request.onerror = (event) => reject(event.target.error);
+  });
+}
+
+export async function removeLocationPing(pingId) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(PINGS_STORE, "readwrite");
+    tx.objectStore(PINGS_STORE).delete(pingId);
+    tx.oncomplete = () => resolve();
+    tx.onerror = (event) => reject(event.target.error);
+  });
 }

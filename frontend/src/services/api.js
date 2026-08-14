@@ -7,7 +7,7 @@
  * `useAuth()` and pass it in.
  */
 
-const API_BASE_URL = "http://127.0.0.1:8000";
+export const API_BASE_URL = "http://127.0.0.1:8000";
 
 function authHeaders(token) {
   return {
@@ -376,14 +376,40 @@ export async function removeCartItem(token, itemId) {
   return response.json();
 }
 
-export async function checkoutCart(token, addressLine, city, phone) {
+export async function clearCart(token) {
+  const response = await fetch(`${API_BASE_URL}/customer/cart/`, {
+    method: "DELETE",
+    headers: customerAuthHeaders(token),
+  });
+  return response.json();
+}
+
+export async function checkoutCart(token, addressLine, city, phone, couponCode, slotStart) {
   const response = await fetch(`${API_BASE_URL}/customer/checkout`, {
     method: "POST",
     headers: customerAuthHeaders(token),
-    body: JSON.stringify({ address_line: addressLine, city, phone }),
+    body: JSON.stringify({ address_line: addressLine, city, phone, coupon_code: couponCode || null, slot_start: slotStart || null }),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Checkout failed");
+  return data;
+}
+
+export async function fetchDeliverySlots(orgId, dateStr) {
+  const response = await fetch(`${API_BASE_URL}/stores/${orgId}/delivery-slots?date=${dateStr}`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load delivery slots");
+  return data;
+}
+
+export async function validateCoupon(token, code) {
+  const response = await fetch(`${API_BASE_URL}/customer/checkout/validate-coupon`, {
+    method: "POST",
+    headers: customerAuthHeaders(token),
+    body: JSON.stringify({ code }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Invalid coupon");
   return data;
 }
 
@@ -405,6 +431,35 @@ export async function fetchMyOrders(token) {
   return response.json();
 }
 
+// ---------- Product reviews ----------
+
+export async function fetchProductReviews(productId) {
+  const response = await fetch(`${API_BASE_URL}/stores/products/${productId}/reviews`);
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to fetch reviews");
+  return data;
+}
+
+export async function fetchReviewableItems(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/customer/deliveries/${deliveryId}/reviewable-items`, {
+    headers: customerAuthHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to fetch reviewable items");
+  return data;
+}
+
+export async function submitProductReview(token, productId, orderId, rating, comment) {
+  const response = await fetch(`${API_BASE_URL}/customer/products/${productId}/reviews`, {
+    method: "POST",
+    headers: customerAuthHeaders(token),
+    body: JSON.stringify({ order_id: orderId, rating, comment: comment || null }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to submit review");
+  return data;
+}
+
 // ---------- Dispatcher: product catalog + unassigned orders ----------
 
 export async function fetchMyProducts(token) {
@@ -412,6 +467,19 @@ export async function fetchMyProducts(token) {
     headers: authHeaders(token),
   });
   return response.json();
+}
+
+export async function uploadProductImage(token, file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(`${API_BASE_URL}/admin/products/upload-image`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` }, // no Content-Type — the browser sets the multipart boundary itself
+    body: formData,
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to upload image");
+  return data;
 }
 
 export async function createProduct(token, product) {
@@ -449,11 +517,99 @@ export async function fetchMyOrganization(token) {
   return response.json();
 }
 
+export async function fetchAnalytics(token, days = 30) {
+  const response = await fetch(`${API_BASE_URL}/admin/analytics/?days=${days}`, {
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load analytics");
+  return data;
+}
+
+// ---------- Staff push notifications ----------
+
+export async function fetchStaffVapidPublicKey(token) {
+  const response = await fetch(`${API_BASE_URL}/users/me/push/vapid-public-key`, {
+    headers: authHeaders(token),
+  });
+  return response.json();
+}
+
+export async function subscribeStaffToPush(token, subscription) {
+  const response = await fetch(`${API_BASE_URL}/users/me/push/subscribe`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify(subscription),
+  });
+  if (!response.ok) throw new Error("Failed to subscribe to push notifications");
+  return response.json();
+}
 export async function setStoreVisibility(token, isPublic) {
   const response = await fetch(`${API_BASE_URL}/admin/store/visibility`, {
     method: "PATCH",
     headers: authHeaders(token),
     body: JSON.stringify({ is_public_store: isPublic }),
+  });
+  return response.json();
+}
+
+export async function setStorePricing(token, deliveryFee, taxRatePercent) {
+  const response = await fetch(`${API_BASE_URL}/admin/store/pricing`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify({ delivery_fee: deliveryFee, tax_rate_percent: taxRatePercent }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update pricing");
+  return data;
+}
+
+export async function setStoreSlotSettings(token, settings) {
+  const response = await fetch(`${API_BASE_URL}/admin/store/slot-settings`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify(settings),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update slot settings");
+  return data;
+}
+
+// ---------- Coupons ----------
+
+export async function fetchMyCoupons(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/coupons/`, {
+    headers: authHeaders(token),
+  });
+  return response.json();
+}
+
+export async function createCoupon(token, coupon) {
+  const response = await fetch(`${API_BASE_URL}/admin/coupons/`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify(coupon),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create coupon");
+  return data;
+}
+
+export async function updateCoupon(token, couponId, updates) {
+  const response = await fetch(`${API_BASE_URL}/admin/coupons/${couponId}`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify(updates),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update coupon");
+  return data;
+}
+
+export async function deleteCoupon(token, couponId) {
+  const response = await fetch(`${API_BASE_URL}/admin/coupons/${couponId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
   });
   return response.json();
 }
@@ -473,6 +629,25 @@ export async function assignAgentToDelivery(token, deliveryId, agentId) {
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Failed to assign agent");
+  return data;
+}
+
+export async function fetchSuggestedAgents(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/suggested-agents`, {
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load agent suggestions");
+  return data;
+}
+
+export async function autoAssignDelivery(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/auto-assign`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to auto-assign");
   return data;
 }
 
@@ -514,6 +689,92 @@ export async function resetUserPassword(token, userId, newPassword) {
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Failed to reset password");
+  return data;
+}
+
+// ---------- Two-factor authentication (staff) ----------
+
+export async function fetchTwoFactorStatus(token) {
+  const response = await fetch(`${API_BASE_URL}/auth/2fa/status`, {
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load two-factor status");
+  return data; // { totp_enabled }
+}
+
+export async function setupTwoFactor(token) {
+  const response = await fetch(`${API_BASE_URL}/auth/2fa/setup`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to start two-factor setup");
+  return data; // { secret, otpauth_uri }
+}
+
+export async function enableTwoFactor(token, code) {
+  const response = await fetch(`${API_BASE_URL}/auth/2fa/enable`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ code }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to enable two-factor authentication");
+  return data;
+}
+
+export async function disableTwoFactor(token, password) {
+  const response = await fetch(`${API_BASE_URL}/auth/2fa/disable`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ password }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to disable two-factor authentication");
+  return data;
+}
+
+// ---------- Admin audit log ----------
+
+export async function fetchAuditLog(token, { dateFrom, dateTo, changedByUserId, orderId, limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
+  if (changedByUserId) params.set("changed_by_user_id", changedByUserId);
+  if (orderId) params.set("order_id", orderId);
+  if (limit) params.set("limit", limit);
+  if (offset) params.set("offset", offset);
+
+  const response = await fetch(`${API_BASE_URL}/admin/audit-log?${params.toString()}`, {
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load audit log");
+  return data;
+}
+
+// ---------- Customer data privacy (GDPR export / delete) ----------
+
+export async function exportCustomerData(token) {
+  const response = await fetch(`${API_BASE_URL}/customer/data-export`, {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.detail || "Failed to export your data");
+  }
+  return response.blob();
+}
+
+export async function deleteCustomerAccount(token, password) {
+  const response = await fetch(`${API_BASE_URL}/customer/account`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+    body: JSON.stringify({ password }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to delete your account");
   return data;
 }
 

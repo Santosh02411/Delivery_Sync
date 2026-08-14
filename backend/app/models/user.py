@@ -42,6 +42,17 @@ class UserDB(Base):
     org_id = Column(String, index=True, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
 
+    # Two-factor auth (TOTP). totp_secret is written as soon as the user
+    # starts setup (see routes/auth.py's /2fa/setup) but totp_enabled
+    # stays False until they prove they scanned it correctly by
+    # submitting one valid code (/2fa/enable) — this prevents a user
+    # locking themselves out by enabling 2FA against a secret their
+    # authenticator app never actually received. A stale, never-confirmed
+    # secret from an abandoned setup attempt is harmless: login only
+    # checks totp_secret when totp_enabled is True.
+    totp_secret = Column(String, nullable=True)
+    totp_enabled = Column(Boolean, nullable=False, default=False)
+
 
 # ---------- Pydantic Schemas ----------
 
@@ -71,6 +82,7 @@ class UserOut(BaseModel):
     display_name: str
     org_id: str
     is_active: bool
+    totp_enabled: bool = False
 
     class Config:
         from_attributes = True
@@ -81,3 +93,42 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     user: UserOut
     org_invite_code: Optional[str] = None  # only present when a NEW org was just created
+
+
+class LoginResult(BaseModel):
+    """
+    Response shape for POST /auth/login. Covers both outcomes with one
+    model rather than two, since FastAPI needs a single response_model:
+    a normal login (access_token + user populated, requires_2fa False),
+    or a 2FA challenge (only requires_2fa + challenge_token populated —
+    no access_token yet, since the password alone isn't enough to prove
+    identity for an account with 2FA turned on).
+    """
+    access_token: Optional[str] = None
+    token_type: str = "bearer"
+    user: Optional[UserOut] = None
+    org_invite_code: Optional[str] = None
+    requires_2fa: bool = False
+    challenge_token: Optional[str] = None
+
+
+class TwoFactorSetupOut(BaseModel):
+    secret: str
+    otpauth_uri: str
+
+
+class TwoFactorCodeRequest(BaseModel):
+    code: str
+
+
+class TwoFactorLoginVerify(BaseModel):
+    challenge_token: str
+    code: str
+
+
+class TwoFactorDisableRequest(BaseModel):
+    password: str
+
+
+class TwoFactorStatusOut(BaseModel):
+    totp_enabled: bool

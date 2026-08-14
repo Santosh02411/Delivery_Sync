@@ -9,6 +9,7 @@ limitations of this approach.
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from app.models.delivery import DeliveryRecordDB
+from app.models.delivery_history import DeliveryHistoryDB
 from app.models.user import UserDB
 from app.services.history import record_history_entry
 from app.services.notifications import notify_customer_of_status_change
@@ -31,15 +32,21 @@ def _normalize_to_naive_utc(dt: datetime) -> datetime:
     return dt
 
 
-def resolve_and_apply(record_data: dict, db: Session) -> DeliveryRecordDB:
+def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB, dict | None]:
     """
     Given an incoming record from a client's offline sync batch, decide
     whether to insert it, update the existing one, or discard it (because
     the server's existing version is newer).
 
-    Returns the FINAL resolved record as stored in the database — the
-    client should overwrite its local copy with this, in case the server's
-    version won the conflict.
+    Returns a (record, conflict) tuple. `record` is the FINAL resolved
+    record as stored in the database — the client should overwrite its
+    local copy with this, in case the server's version won the conflict.
+    `conflict` is None unless the incoming change was actually discarded
+    in favor of a newer server-side change, in which case it's a dict
+    describing what was overridden and by whom — see routes/sync.py,
+    which surfaces this to the client so a discarded change is never
+    silent (previously: the caller had no way to tell "my change was
+    applied" apart from "my change was silently dropped").
 
     Raises ValueError if the record's agent_id doesn't match a real user —
     the caller (routes/sync.py) catches this per-record so one bad record
@@ -102,7 +109,7 @@ def resolve_and_apply(record_data: dict, db: Session) -> DeliveryRecordDB:
             changed_at=new_record.created_at,
             note="Created via offline sync",
         )
-        return new_record
+        return new_record, None
 
     # Conflict case: record already exists on the server.
     # Compare timestamps — whichever is later wins. Both sides are now
@@ -140,8 +147,28 @@ def resolve_and_apply(record_data: dict, db: Session) -> DeliveryRecordDB:
                 customer_phone=existing.customer_phone,
                 customer_id=existing.customer_id,
             )
-        return existing
+        return existing, None
     else:
-        # Server's existing version is newer or equal — keep it, discard incoming
-        return existing
+        # Server's existing version is newer or equal — keep it, discard
+        # incoming. This is the exact case that used to be silent: the
+        # client's change is thrown away with no signal anywhere. Now we
+        # build a conflict record describing what got overridden and (if
+        # we can tell from the history log) who made the winning change,
+        # so routes/sync.py can hand this back to the client to surface.
+        winning_entry = (
+            db.query(DeliveryHistoryDB)
+            .filter(DeliveryHistoryDB.delivery_id == existing.id)
+            .order_by(DeliveryHistoryDB.changed_at.desc())
+            .first()
+        )
+        conflict = {
+            "id": existing.id,
+            "order_id": existing.order_id,
+            "your_status": record_data["status"].value if hasattr(record_data["status"], "value") else record_data["status"],
+            "your_updated_at": incoming_updated_at.isoformat(),
+            "kept_status": existing.status.value if hasattr(existing.status, "value") else existing.status,
+            "kept_updated_at": existing.updated_at.isoformat(),
+            "kept_by": winning_entry.changed_by_display_name if winning_entry else None,
+        }
+        return existing, conflict
 

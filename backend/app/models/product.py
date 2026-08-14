@@ -7,8 +7,8 @@ catalog at a time (see routes/stores.py for the public browsing side).
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime, Float, Boolean
-from pydantic import BaseModel
+from sqlalchemy import Column, String, DateTime, Float, Boolean, Integer
+from pydantic import BaseModel, Field
 from typing import Optional
 
 from app.db.session import Base
@@ -27,6 +27,11 @@ class ProductDB(Base):
     is_active = Column(Boolean, default=True)  # inactive products stay in history but stop showing in the storefront
     created_at = Column(DateTime, nullable=False)
 
+    # None = stock isn't tracked for this product (unlimited — the old,
+    # only behavior). Once set to a number, it's decremented on paid
+    # checkout and restored on cancellation — see services/inventory.py.
+    stock_quantity = Column(Integer, nullable=True, default=None)
+
 
 class ProductCreate(BaseModel):
     name: str
@@ -35,6 +40,7 @@ class ProductCreate(BaseModel):
     image_url: Optional[str] = None
     category: Optional[str] = None
     is_active: bool = True
+    stock_quantity: Optional[int] = Field(default=None, ge=0)
 
 
 class ProductUpdate(BaseModel):
@@ -44,6 +50,7 @@ class ProductUpdate(BaseModel):
     image_url: Optional[str] = None
     category: Optional[str] = None
     is_active: Optional[bool] = None
+    stock_quantity: Optional[int] = Field(default=None, ge=0)
 
 
 class ProductOut(BaseModel):
@@ -56,6 +63,15 @@ class ProductOut(BaseModel):
     category: Optional[str] = None
     is_active: bool
     created_at: datetime
+    stock_quantity: Optional[int] = None
+    # Aggregated from ProductReviewDB at read time — not real columns on
+    # the product row itself. See _attach_review_stats() in routes/products.py.
+    average_rating: Optional[float] = None
+    review_count: int = 0
 
     class Config:
         from_attributes = True
+
+
+class ProductImageUploadOut(BaseModel):
+    image_url: str

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { fetchCustomerDeliveryAgentLocation } from "../services/api";
+import { cacheTile, getCachedTile } from "../services/tileCache";
 
 // Leaflet's default marker icon references image files by a relative
 // path that doesn't survive bundling — this is the standard fix,
@@ -15,6 +16,61 @@ L.Icon.Default.mergeOptions({
   iconRetinaUrl: markerIcon2x,
   iconUrl: markerIcon,
   shadowUrl: markerShadow,
+});
+
+/**
+ * A tile layer that caches every tile it loads (via services/tileCache.js)
+ * and falls back to that cache when a tile can't be fetched — this is
+ * what keeps the tracking map showing the last-viewed area instead of
+ * going blank the moment connectivity drops. Overrides Leaflet's
+ * createTile, which is the documented extension point for exactly this
+ * (custom tile loading logic), rather than Leaflet's normal built-in
+ * <img src="..."> loading which only ever uses the browser's regular
+ * HTTP cache and has no offline fallback of its own.
+ */
+const CachedTileLayer = L.TileLayer.extend({
+  createTile(coords, done) {
+    const tile = document.createElement("img");
+    tile.alt = "";
+    tile.setAttribute("role", "presentation");
+    const url = this.getTileUrl(coords);
+
+    (async () => {
+      // If we're definitely offline, don't waste time on a network
+      // attempt that will only fail — go straight to cache.
+      if (!navigator.onLine) {
+        const cached = await getCachedTile(url);
+        if (cached) {
+          tile.src = URL.createObjectURL(cached);
+          done(null, tile);
+        } else {
+          done(new Error("Offline and no cached tile for this area"), tile);
+        }
+        return;
+      }
+
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Tile fetch failed: ${response.status}`);
+        const blob = await response.blob();
+        cacheTile(url, blob); // fire-and-forget — don't block rendering on the cache write
+        tile.src = URL.createObjectURL(blob);
+        done(null, tile);
+      } catch (err) {
+        // Network attempt failed even though navigator.onLine said we
+        // were online (flaky connection) — fall back to cache.
+        const cached = await getCachedTile(url);
+        if (cached) {
+          tile.src = URL.createObjectURL(cached);
+          done(null, tile);
+        } else {
+          done(err, tile);
+        }
+      }
+    })();
+
+    return tile;
+  },
 });
 
 /**
@@ -52,7 +108,7 @@ export default function LiveTrackingMap({ token, deliveryId }) {
             attributionControl: true,
           }).setView(latLng, 14);
 
-          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          new CachedTileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
             maxZoom: 19,
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
           }).addTo(mapRef.current);

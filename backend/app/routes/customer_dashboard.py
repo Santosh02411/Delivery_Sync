@@ -25,6 +25,7 @@ from app.models.agent_location import AgentLocationDB, AgentLocationOut
 from app.models.push_subscription import PushSubscriptionDB, PushSubscriptionCreate
 from app.services.history import record_history_entry
 from app.services.push import VAPID_PUBLIC_KEY
+from app.services.refund import refund_order_for_delivery
 from app.routes.customer_auth import get_current_customer
 
 router = APIRouter(prefix="/customer", tags=["customer-dashboard"])
@@ -181,6 +182,13 @@ def cancel_my_delivery(
         changed_at=delivery.updated_at,
         note="Cancelled by customer",
     )
+
+    # If this delivery came from a paid checkout order, actually move
+    # the money back — see services/refund.py. A no-op for manually
+    # created deliveries with no linked Order, or ones that were never
+    # paid in the first place.
+    refund_order_for_delivery(db, delivery.id)
+
     return delivery
 
 

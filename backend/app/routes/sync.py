@@ -35,6 +35,8 @@ class SyncRecordIn(BaseModel):
     latitude: str | None = None
     longitude: str | None = None
     expected_by: datetime | None = None
+    slot_start: datetime | None = None
+    slot_end: datetime | None = None
     org_id: str | None = None
     proof_of_delivery: str | None = None
     customer_email: str | None = None
@@ -48,6 +50,7 @@ class SyncRequest(BaseModel):
 class SyncResponse(BaseModel):
     resolved_records: List[DeliveryRecordOut]
     errors: List[dict] = []
+    conflicts: List[dict] = []
 
 
 @router.post("/sync", response_model=SyncResponse)
@@ -65,6 +68,11 @@ def sync_records(request: Request, payload: SyncRequest, db: Session = Depends(g
     on the client and gets retried on the next sync attempt, so no data is
     lost, just delayed.
 
+    A record whose incoming (client-side, offline) change was discarded
+    because the server already had a newer one — last-write-wins actually
+    throwing away real data — is reported in `conflicts` rather than
+    disappearing silently. See services/conflict_resolver.py.
+
     Rate limited to 30 requests/minute per IP — generous enough for normal
     usage (the frontend auto-syncs at most every 15 seconds, i.e. 4/minute,
     plus occasional manual "Sync Now" clicks) while still capping abuse of
@@ -72,11 +80,14 @@ def sync_records(request: Request, payload: SyncRequest, db: Session = Depends(g
     """
     resolved = []
     errors = []
+    conflicts = []
     for record in payload.records:
         try:
-            final_record = resolve_and_apply(record.model_dump(), db)
+            final_record, conflict = resolve_and_apply(record.model_dump(), db)
             resolved.append(final_record)
+            if conflict:
+                conflicts.append(conflict)
         except ValueError as e:
             errors.append({"id": record.id, "error": str(e)})
 
-    return {"resolved_records": resolved, "errors": errors}
+    return {"resolved_records": resolved, "errors": errors, "conflicts": conflicts}

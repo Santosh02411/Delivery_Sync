@@ -58,6 +58,15 @@ class DeliveryRecordDB(Base):
     # a hard deadline.
     expected_by = Column(DateTime, nullable=True)
 
+    # Delivery time-slot the CUSTOMER picked at checkout (see
+    # routes/slots.py, routes/checkout.py) — distinct from expected_by
+    # above, which is a dispatcher-set deadline on an already-placed
+    # delivery. Both nullable: a dispatcher-created manual delivery has
+    # neither, and a customer checkout without picking a slot (ASAP
+    # delivery) has neither either.
+    slot_start = Column(DateTime, nullable=True)
+    slot_end = Column(DateTime, nullable=True)
+
     # Multi-tenant scoping: every delivery belongs to exactly one
     # organization (inherited from the dispatcher who created it). All
     # queries elsewhere filter by this so two organizations never see
@@ -105,6 +114,8 @@ class DeliveryRecordCreate(BaseModel):
     latitude: Optional[str] = None
     longitude: Optional[str] = None
     expected_by: Optional[datetime] = None
+    slot_start: Optional[datetime] = None
+    slot_end: Optional[datetime] = None
     customer_email: Optional[str] = None
     customer_phone: Optional[str] = None
 
@@ -145,6 +156,8 @@ class DeliveryRecordOut(BaseModel):
     latitude: Optional[str] = None
     longitude: Optional[str] = None
     expected_by: Optional[datetime] = None
+    slot_start: Optional[datetime] = None
+    slot_end: Optional[datetime] = None
     org_id: str
     proof_of_delivery: Optional[str] = None
     customer_email: Optional[str] = None

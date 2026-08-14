@@ -7,7 +7,20 @@ import {
   exportDeliveriesCSV,
   fetchUnassignedDeliveries,
   assignAgentToDelivery,
+  fetchSuggestedAgents,
+  autoAssignDelivery,
+  API_BASE_URL,
 } from "../services/api";
+import {
+  setActiveDispatcher,
+  cacheDispatcherDeliveries,
+  getCachedDispatcherDeliveries,
+  getDispatcherLastSyncedAt,
+  queueDispatcherAction,
+  getQueuedDispatcherActions,
+} from "../services/dispatcherCache";
+import { startDispatcherActionAutoSync } from "../services/dispatcherSyncEngine";
+import { writeSyncContext } from "../services/backgroundSyncContext";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import DeliveryDetailModal from "./DeliveryDetailModal";
@@ -40,11 +53,13 @@ const PAGE_SIZE = 8;
  * sorting, search, pagination, and a click-through detail modal.
  */
 export default function DispatcherTable() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const { showToast } = useToast();
   const [deliveries, setDeliveries] = useState([]);
   const [agents, setAgents] = useState([]);
   const [error, setError] = useState(null);
+  const [isOffline, setIsOffline] = useState(false);
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
 
   const [statusFilter, setStatusFilter] = useState("all");
   const [agentFilter, setAgentFilter] = useState("all");
@@ -67,11 +82,36 @@ export default function DispatcherTable() {
   const [isAssigning, setIsAssigning] = useState(false);
 
   const [selectedDelivery, setSelectedDelivery] = useState(null);
+  const [pendingActionCount, setPendingActionCount] = useState(0);
+  const [pendingActionMsg, setPendingActionMsg] = useState(null);
 
   useEffect(() => {
+    if (user?.id) {
+      setActiveDispatcher(user.id);
+      writeSyncContext({ userId: user.id, token, role: user.role, apiBaseUrl: API_BASE_URL });
+    }
     loadDeliveries();
     loadAgents();
+    refreshPendingActionCount();
+
+    const stopDispatcherSync = startDispatcherActionAutoSync(token, (result) => {
+      refreshPendingActionCount();
+      if (result.syncedCount > 0) {
+        setPendingActionMsg(`Synced ${result.syncedCount} queued action(s) from earlier.`);
+        loadDeliveries();
+      }
+      if (result.failed.length > 0) {
+        setPendingActionMsg(`${result.failed.length} queued action(s) couldn't be applied: ${result.failed[0].message}`);
+      }
+    });
+
+    return () => stopDispatcherSync();
   }, []);
+
+  async function refreshPendingActionCount() {
+    const queued = await getQueuedDispatcherActions();
+    setPendingActionCount(queued.length);
+  }
 
   useEffect(() => {
     setCurrentPage(1);
@@ -82,8 +122,21 @@ export default function DispatcherTable() {
       const records = await fetchAllDeliveriesFromServer(token);
       setDeliveries(records);
       setError(null);
+      setIsOffline(false);
+      await cacheDispatcherDeliveries(records);
     } catch (err) {
-      setError(err.message);
+      // Fall back to the last-cached data instead of leaving the screen
+      // blank — this is what makes the dispatcher view usable offline.
+      try {
+        const cached = await getCachedDispatcherDeliveries();
+        const lastSynced = await getDispatcherLastSyncedAt();
+        setDeliveries(cached);
+        setIsOffline(true);
+        setLastSyncedAt(lastSynced);
+        setError(cached.length === 0 ? err.message : null);
+      } catch (cacheErr) {
+        setError(err.message);
+      }
     }
   }
 
@@ -129,23 +182,24 @@ export default function DispatcherTable() {
 
     setIsAssigning(true);
     const now = new Date().toISOString();
+    const record = {
+      id: uuidv4(),
+      agent_id: selectedAgentId,
+      order_id: newOrderId.trim(),
+      status: "picked_up",
+      notes: newNotes.trim(),
+      location_note: "",
+      zone: newZone.trim() || null,
+      customer_email: newCustomerEmail.trim() || null,
+      customer_phone: newCustomerPhone.trim() || null,
+      latitude: latTrimmed || null,
+      longitude: lonTrimmed || null,
+      expected_by: newExpectedBy ? new Date(newExpectedBy).toISOString() : null,
+      created_at: now,
+      updated_at: now,
+    };
     try {
-      await createDeliveryOnServer(token, {
-        id: uuidv4(),
-        agent_id: selectedAgentId,
-        order_id: newOrderId.trim(),
-        status: "picked_up",
-        notes: newNotes.trim(),
-        location_note: "",
-        zone: newZone.trim() || null,
-        customer_email: newCustomerEmail.trim() || null,
-        customer_phone: newCustomerPhone.trim() || null,
-        latitude: latTrimmed || null,
-        longitude: lonTrimmed || null,
-        expected_by: newExpectedBy ? new Date(newExpectedBy).toISOString() : null,
-        created_at: now,
-        updated_at: now,
-      });
+      await createDeliveryOnServer(token, record);
       showToast(`Assigned ${newOrderId} successfully.`, "success");
       setNewOrderId("");
       setNewNotes("");
@@ -157,7 +211,24 @@ export default function DispatcherTable() {
       setNewLongitude("");
       await loadDeliveries();
     } catch (err) {
-      showToast(`Failed to assign: ${err.message}`, "error");
+      if (err instanceof TypeError) {
+        // Offline — queue it instead of losing the entered data.
+        // dispatcherSyncEngine.js creates it for real the moment
+        // connectivity returns.
+        await queueDispatcherAction("create_delivery", record);
+        await refreshPendingActionCount();
+        showToast(`You're offline — ${newOrderId} is queued and will be created once you're back online.`, "info");
+        setNewOrderId("");
+        setNewNotes("");
+        setNewZone("");
+        setNewExpectedBy("");
+        setNewCustomerEmail("");
+        setNewCustomerPhone("");
+        setNewLatitude("");
+        setNewLongitude("");
+      } else {
+        showToast(`Failed to assign: ${err.message}`, "error");
+      }
     } finally {
       setIsAssigning(false);
     }
@@ -223,7 +294,25 @@ export default function DispatcherTable() {
     <div>
       <h2 className="page-title">Dispatcher Dashboard</h2>
 
-      <UnassignedOrdersPanel token={token} agents={agents} onAssigned={loadDeliveries} />
+      {isOffline && (
+        <div className="connectivity-banner offline" style={{ marginBottom: "16px" }}>
+          Offline — showing data from last sync{lastSyncedAt ? ` at ${new Date(lastSyncedAt).toLocaleString()}` : ""}
+        </div>
+      )}
+
+      {pendingActionCount > 0 && (
+        <div className="connectivity-banner offline" style={{ marginBottom: "16px" }}>
+          {pendingActionCount} action(s) queued while offline — will sync automatically once you're back online.
+        </div>
+      )}
+
+      {pendingActionMsg && (
+        <p style={{ fontSize: "12.5px", color: "var(--accent)", marginBottom: "12px" }}>
+          {pendingActionMsg}
+        </p>
+      )}
+
+      <UnassignedOrdersPanel token={token} agents={agents} onAssigned={loadDeliveries} onActionQueued={refreshPendingActionCount} />
 
       <div style={{ display: "flex", gap: "12px", marginBottom: "24px", flexWrap: "wrap" }}>
         <div className="stat-card">
@@ -450,11 +539,15 @@ export default function DispatcherTable() {
   );
 }
 
-function UnassignedOrdersPanel({ token, agents, onAssigned }) {
+function UnassignedOrdersPanel({ token, agents, onAssigned, onActionQueued }) {
   const [orders, setOrders] = useState([]);
   const [assigningId, setAssigningId] = useState(null);
+  const [autoAssigningId, setAutoAssigningId] = useState(null);
   const [selectedAgentByOrder, setSelectedAgentByOrder] = useState({});
   const [error, setError] = useState(null);
+  const [queuedOrderIds, setQueuedOrderIds] = useState(new Set());
+  const [suggestionsByOrder, setSuggestionsByOrder] = useState({});
+  const [loadingSuggestionsFor, setLoadingSuggestionsFor] = useState(null);
 
   useEffect(() => {
     load();
@@ -471,6 +564,37 @@ function UnassignedOrdersPanel({ token, agents, onAssigned }) {
     }
   }
 
+  async function handleShowSuggestions(orderId) {
+    setLoadingSuggestionsFor(orderId);
+    setError(null);
+    try {
+      const result = await fetchSuggestedAgents(token, orderId);
+      setSuggestionsByOrder((prev) => ({ ...prev, [orderId]: result }));
+      // Pre-select the top suggestion so "Assign" is one click if they agree with it.
+      if (result.suggestions.length > 0) {
+        setSelectedAgentByOrder((prev) => ({ ...prev, [orderId]: result.suggestions[0].agent_id }));
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoadingSuggestionsFor(null);
+    }
+  }
+
+  async function handleAutoAssign(orderId) {
+    setAutoAssigningId(orderId);
+    setError(null);
+    try {
+      await autoAssignDelivery(token, orderId);
+      await load();
+      await onAssigned();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setAutoAssigningId(null);
+    }
+  }
+
   async function handleAssign(orderId) {
     const agentId = selectedAgentByOrder[orderId];
     if (!agentId) {
@@ -484,66 +608,124 @@ function UnassignedOrdersPanel({ token, agents, onAssigned }) {
       await load();
       await onAssigned();
     } catch (err) {
-      setError(err.message);
+      if (err instanceof TypeError) {
+        // Offline — queue it instead of losing the dispatcher's choice.
+        // dispatcherSyncEngine.js applies it for real once online.
+        await queueDispatcherAction("assign_agent", { delivery_id: orderId, agent_id: agentId });
+        if (onActionQueued) await onActionQueued();
+        setQueuedOrderIds((prev) => new Set(prev).add(orderId));
+        setError(null);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setAssigningId(null);
     }
   }
 
-  if (orders.length === 0) return null;
+  const visibleOrders = orders.filter((o) => !queuedOrderIds.has(o.id));
+  if (visibleOrders.length === 0) return null;
 
   return (
     <div className="card" style={{ marginBottom: "20px", borderColor: "var(--accent)" }}>
       <strong style={{ fontSize: "13.5px" }}>
-        🛒 Unassigned Orders ({orders.length})
+        🛒 Unassigned Orders ({visibleOrders.length})
       </strong>
       <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "4px", marginBottom: "12px" }}>
         Placed and paid for via the storefront — assign an agent to start fulfillment.
       </p>
       {error && <p style={{ color: "var(--danger)", fontSize: "12px" }}>{error}</p>}
       <div style={{ display: "grid", gap: "10px" }}>
-        {orders.map((order) => (
-          <div
-            key={order.id}
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              padding: "8px 0",
-              borderBottom: "1px solid var(--border-color)",
-              flexWrap: "wrap",
-              gap: "8px",
-            }}
-          >
-            <div>
-              <div style={{ fontSize: "13px", fontWeight: 600 }}>{order.order_id}</div>
-              <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{order.notes}</div>
-            </div>
-            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-              <select
-                className="input"
-                style={{ fontSize: "12px", padding: "4px 8px" }}
-                value={selectedAgentByOrder[order.id] || ""}
-                onChange={(e) =>
-                  setSelectedAgentByOrder({ ...selectedAgentByOrder, [order.id]: e.target.value })
-                }
+        {visibleOrders.map((order) => {
+          const suggestionData = suggestionsByOrder[order.id];
+          const suggestionMap = suggestionData
+            ? new Map(suggestionData.suggestions.map((s) => [s.agent_id, s]))
+            : null;
+          return (
+            <div
+              key={order.id}
+              style={{
+                padding: "8px 0",
+                borderBottom: "1px solid var(--border-color)",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: "8px",
+                }}
               >
-                <option value="">Select agent...</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>{a.display_name}</option>
-                ))}
-              </select>
-              <button
-                className="btn btn-primary"
-                style={{ fontSize: "12px", padding: "4px 10px" }}
-                onClick={() => handleAssign(order.id)}
-                disabled={assigningId === order.id}
-              >
-                {assigningId === order.id ? "Assigning..." : "Assign"}
-              </button>
+                <div>
+                  <div style={{ fontSize: "13px", fontWeight: 600 }}>{order.order_id}</div>
+                  <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{order.notes}</div>
+                  {order.location_note && (
+                    <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>📍 {order.location_note}</div>
+                  )}
+                  <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                    {[order.customer_email, order.customer_phone].filter(Boolean).join(" · ")}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                  {!suggestionData && (
+                    <button
+                      className="btn"
+                      style={{ fontSize: "12px", padding: "4px 8px" }}
+                      onClick={() => handleShowSuggestions(order.id)}
+                      disabled={loadingSuggestionsFor === order.id}
+                      title="Rank agents by live GPS distance and current workload"
+                    >
+                      {loadingSuggestionsFor === order.id ? "Ranking..." : "🎯 Suggest agent"}
+                    </button>
+                  )}
+                  <select
+                    className="input"
+                    style={{ fontSize: "12px", padding: "4px 8px" }}
+                    value={selectedAgentByOrder[order.id] || ""}
+                    onChange={(e) =>
+                      setSelectedAgentByOrder({ ...selectedAgentByOrder, [order.id]: e.target.value })
+                    }
+                  >
+                    <option value="">Select agent...</option>
+                    {agents.map((a) => {
+                      const s = suggestionMap?.get(a.id);
+                      const label = s
+                        ? `${a.display_name}${s.distance_km !== null ? ` — ${s.distance_km} km away` : " — no location"}, ${s.active_delivery_count} active`
+                        : a.display_name;
+                      return (
+                        <option key={a.id} value={a.id}>{label}</option>
+                      );
+                    })}
+                  </select>
+                  <button
+                    className="btn btn-primary"
+                    style={{ fontSize: "12px", padding: "4px 10px" }}
+                    onClick={() => handleAssign(order.id)}
+                    disabled={assigningId === order.id}
+                  >
+                    {assigningId === order.id ? "Assigning..." : "Assign"}
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ fontSize: "12px", padding: "4px 10px", borderColor: "var(--accent)", color: "var(--accent)" }}
+                    onClick={() => handleAutoAssign(order.id)}
+                    disabled={autoAssigningId === order.id}
+                    title="Skip the pick — assign the best-ranked agent automatically"
+                  >
+                    {autoAssigningId === order.id ? "Assigning..." : "⚡ Auto-assign"}
+                  </button>
+                </div>
+              </div>
+              {suggestionData && !suggestionData.ranked_by_distance && (
+                <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
+                  This order has no delivery coordinates — ranked by current workload only.
+                </p>
+              )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

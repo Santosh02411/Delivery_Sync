@@ -4,6 +4,18 @@ a real DeliveryRecordDB row is created (status=pending, unassigned),
 which immediately flows into the existing dispatcher/agent pipeline
 completely unchanged, and shows up in the customer's existing "My
 Orders" tracking view.
+
+Pricing at checkout, in order:
+  1. subtotal          - sum of product price * quantity
+  2. - discount_amount - from an applied coupon, if any (see services/coupons.py)
+  3. + tax_amount      - org's tax_rate_percent applied to the discounted subtotal (GST)
+  4. + delivery_fee    - org's flat delivery_fee
+  = total              - the actual amount charged via Razorpay
+
+Stock is checked (not yet decremented) here at checkout-creation time
+for early feedback, and checked again + actually decremented at
+verify_payment() - see services/inventory.py's module docstring for why
+decrementing happens there and not here.
 """
 
 import uuid
@@ -16,6 +28,8 @@ from typing import List
 from app.db.session import get_db
 from app.models.cart import CartItemDB
 from app.models.product import ProductDB
+from app.models.organization import OrganizationDB
+from app.models.coupon import CouponApply, CouponPreviewOut, CouponDB
 from app.models.order import (
     OrderDB, OrderItemDB, OrderStatus,
     CheckoutRequest, CheckoutResponse, VerifyPaymentRequest, OrderOut, OrderItemOut,
@@ -23,20 +37,19 @@ from app.models.order import (
 from app.models.delivery import DeliveryRecordDB, DeliveryStatus
 from app.models.customer import CustomerDB
 from app.routes.customer_auth import get_current_customer
-from app.services.payment import IS_CONFIGURED, RAZORPAY_KEY_ID, create_razorpay_order, verify_razorpay_signature
+from app.services.payment import IS_CONFIGURED, RAZORPAY_KEY_ID, create_razorpay_order, create_razorpay_refund, verify_razorpay_signature
 from app.services.history import record_history_entry
-from app.services.notifications import notify_customer_of_status_change
+from app.services.notifications import notify_customer_of_status_change, notify_dispatchers_of_new_order
+from app.services.inventory import check_stock_available, decrement_stock_for_order, InsufficientStockError
+from app.services.coupons import find_and_validate_coupon, compute_discount, CouponError
+from app.services.slots import validate_slot
 
 router = APIRouter(prefix="/customer", tags=["checkout"])
 
 
-@router.post("/checkout", response_model=CheckoutResponse)
-def checkout(
-    payload: CheckoutRequest,
-    db: Session = Depends(get_db),
-    current_customer: CustomerDB = Depends(get_current_customer),
-):
-    cart_items = db.query(CartItemDB).filter(CartItemDB.customer_id == current_customer.id).all()
+def _load_cart(db: Session, customer_id: str):
+    """Shared by checkout and coupon preview: cart lines + subtotal for one customer."""
+    cart_items = db.query(CartItemDB).filter(CartItemDB.customer_id == customer_id).all()
     if not cart_items:
         raise HTTPException(status_code=400, detail="Your cart is empty.")
 
@@ -53,7 +66,82 @@ def checkout(
     if not line_snapshots:
         raise HTTPException(status_code=400, detail="Every item in your cart is no longer available.")
 
-    subtotal = round(subtotal, 2)
+    return org_id, line_snapshots, round(subtotal, 2)
+
+
+@router.post("/checkout/validate-coupon", response_model=CouponPreviewOut)
+def validate_coupon(
+    payload: CouponApply,
+    db: Session = Depends(get_db),
+    current_customer: CustomerDB = Depends(get_current_customer),
+):
+    """Preview a coupon's discount against the current cart, before committing to checkout."""
+    org_id, _line_snapshots, subtotal = _load_cart(db, current_customer.id)
+    try:
+        coupon = find_and_validate_coupon(db, org_id, payload.code, subtotal)
+    except CouponError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+    discount = compute_discount(coupon, subtotal)
+    return CouponPreviewOut(
+        code=coupon.code,
+        discount_amount=discount,
+        subtotal=subtotal,
+        new_subtotal=round(subtotal - discount, 2),
+    )
+
+
+@router.post("/checkout", response_model=CheckoutResponse)
+def checkout(
+    payload: CheckoutRequest,
+    db: Session = Depends(get_db),
+    current_customer: CustomerDB = Depends(get_current_customer),
+):
+    org_id, line_snapshots, subtotal = _load_cart(db, current_customer.id)
+
+    # Stock check - early feedback here; the authoritative, final check +
+    # actual decrement happens again at verify_payment() (see that
+    # function's docstring for why).
+    try:
+        for product, quantity in line_snapshots:
+            check_stock_available(db, product.id, quantity)
+    except InsufficientStockError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
+    # Coupon (optional)
+    coupon_code_to_store = None
+    discount_amount = 0.0
+    if payload.coupon_code:
+        try:
+            coupon = find_and_validate_coupon(db, org_id, payload.coupon_code, subtotal)
+        except CouponError as e:
+            raise HTTPException(status_code=400, detail=e.message)
+        discount_amount = compute_discount(coupon, subtotal)
+        coupon_code_to_store = coupon.code
+
+    # Delivery fee + tax (GST) - org-configured, see models/organization.py
+    org = db.query(OrganizationDB).filter(OrganizationDB.id == org_id).first()
+    delivery_fee = org.delivery_fee if org else 0.0
+    tax_rate_percent = org.tax_rate_percent if org else 0.0
+
+    # Delivery time slot (optional) - validated against the same
+    # generation logic that produced the options the customer was shown
+    # (GET /stores/{org_id}/delivery-slots), so a slot picked from that
+    # list can never be rejected here, and one NOT from that list
+    # (stale/tampered/full) always is.
+    slot_start = slot_end = None
+    if payload.slot_start:
+        if not org:
+            raise HTTPException(status_code=400, detail="This store isn't accepting scheduled deliveries.")
+        try:
+            slot_end = validate_slot(db, org, payload.slot_start)
+            slot_start = payload.slot_start
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+    taxable_amount = max(round(subtotal - discount_amount, 2), 0.0)
+    tax_amount = round(taxable_amount * (tax_rate_percent / 100.0), 2)
+    total = round(taxable_amount + tax_amount + delivery_fee, 2)
+
     order = OrderDB(
         id=str(uuid.uuid4()),
         customer_id=current_customer.id,
@@ -63,6 +151,13 @@ def checkout(
         city=payload.city,
         phone=payload.phone,
         subtotal=subtotal,
+        coupon_code=coupon_code_to_store,
+        discount_amount=discount_amount,
+        delivery_fee=delivery_fee,
+        tax_amount=tax_amount,
+        total=total,
+        slot_start=slot_start,
+        slot_end=slot_end,
         created_at=datetime.utcnow(),
     )
     db.add(order)
@@ -78,7 +173,18 @@ def checkout(
             quantity=quantity,
         ))
 
-    amount_paise = int(round(subtotal * 100))
+    amount_paise = int(round(total * 100))
+
+    breakdown = dict(
+        subtotal=subtotal,
+        coupon_code=coupon_code_to_store,
+        discount_amount=discount_amount,
+        delivery_fee=delivery_fee,
+        tax_amount=tax_amount,
+        total=total,
+        slot_start=slot_start,
+        slot_end=slot_end,
+    )
 
     if IS_CONFIGURED:
         razorpay_order = create_razorpay_order(amount_paise=amount_paise, receipt=order.id)
@@ -90,9 +196,10 @@ def checkout(
             razorpay_key_id=RAZORPAY_KEY_ID,
             amount_paise=amount_paise,
             is_test_mode=False,
+            **breakdown,
         )
 
-    # No gateway configured — order + items are still real, saved rows;
+    # No gateway configured - order + items are still real, saved rows;
     # only the payment step itself is a local stand-in. Clearly flagged
     # both in the DB (is_test_mode_payment) and in this response, so the
     # frontend can visibly label it rather than pretending it's real.
@@ -104,6 +211,7 @@ def checkout(
         razorpay_key_id=None,
         amount_paise=amount_paise,
         is_test_mode=True,
+        **breakdown,
     )
 
 
@@ -123,7 +231,7 @@ def verify_payment(
         raise HTTPException(status_code=400, detail="This order was already paid for.")
 
     if order.is_test_mode_payment:
-        pass  # test-mode order — no signature to verify, proceed straight to fulfillment below
+        pass  # test-mode order - no signature to verify, proceed straight to fulfillment below
     else:
         if not (payload.razorpay_payment_id and payload.razorpay_order_id and payload.razorpay_signature):
             raise HTTPException(status_code=400, detail="Missing payment verification details.")
@@ -136,31 +244,75 @@ def verify_payment(
             raise HTTPException(status_code=400, detail="Payment verification failed. No charge was accepted.")
         order.razorpay_payment_id = payload.razorpay_payment_id
 
+    # Final stock check, right before actually committing to fulfilling
+    # this order - items may have sold out to someone else between this
+    # customer's checkout-creation and now. For a real (non test-mode)
+    # payment, Razorpay has already captured the money by this point, so
+    # an insufficient-stock failure here means immediately refunding it
+    # back rather than leaving the customer charged for nothing.
+    items = db.query(OrderItemDB).filter(OrderItemDB.order_id == order.id).all()
+    try:
+        for item in items:
+            check_stock_available(db, item.product_id, item.quantity)
+    except InsufficientStockError as e:
+        order.status = OrderStatus.payment_failed
+        if not order.is_test_mode_payment and order.razorpay_payment_id:
+            try:
+                refund = create_razorpay_refund(order.razorpay_payment_id, int(round(order.total * 100)))
+                order.razorpay_refund_id = refund.get("id")
+                order.refund_status = "refunded"
+                order.refunded_at = datetime.utcnow()
+            except Exception:
+                order.refund_status = "failed"
+        db.commit()
+        suffix = " You've been refunded in full." if order.refund_status == "refunded" else ""
+        raise HTTPException(status_code=400, detail=f"{e.message}{suffix}")
+
+    decrement_stock_for_order(db, order)
+
     order.status = OrderStatus.paid
+
+    # Coupon usage is only ever counted against a PAID order, so an
+    # abandoned/failed checkout never burns a limited coupon's uses.
+    if order.coupon_code:
+        coupon = db.query(CouponDB).filter(CouponDB.org_id == order.org_id, CouponDB.code == order.coupon_code).first()
+        if coupon:
+            coupon.used_count = coupon.used_count + 1
 
     # Fulfillment: create the actual Delivery, unassigned, for a
     # dispatcher to pick up from their "Unassigned Orders" queue.
-    items = db.query(OrderItemDB).filter(OrderItemDB.order_id == order.id).all()
     items_summary = "; ".join(f"{i.quantity}x {i.product_name}" for i in items)
     now = datetime.utcnow()
+
+    # Purely numeric order ID for customer-placed orders - YYMMDDHHMMSS
+    # (from the order's creation instant) is unique enough for a single
+    # organization's order volume without needing a database sequence,
+    # and reads clearly as a receipt/order number with no letters mixed
+    # in. Dispatcher-created deliveries keep using whatever human-chosen
+    # order_id the dispatcher types in themselves - this generator only
+    # applies to the checkout path.
+    numeric_order_id = now.strftime("%y%m%d%H%M%S") + f"{now.microsecond // 1000:03d}"
 
     delivery = DeliveryRecordDB(
         id=str(uuid.uuid4()),
         agent_id=None,
-        order_id=f"ORD-{now.strftime('%y%m%d')}-{order.id[:6].upper()}",
+        order_id=numeric_order_id,
         status=DeliveryStatus.pending,
-        notes=f"Items: {items_summary}. Deliver to: {order.address_line}" + (f", {order.city}" if order.city else ""),
+        notes=f"Items: {items_summary}",
+        location_note=f"{order.address_line}" + (f", {order.city}" if order.city else ""),
         created_at=now,
         updated_at=now,
         org_id=order.org_id,
         customer_email=current_customer.email,
         customer_phone=order.phone,
         customer_id=current_customer.id,
+        slot_start=order.slot_start,
+        slot_end=order.slot_end,
     )
     db.add(delivery)
     order.delivery_id = delivery.id
 
-    # Cart is now spent — clear it.
+    # Cart is now spent - clear it.
     db.query(CartItemDB).filter(CartItemDB.customer_id == current_customer.id).delete()
 
     db.commit()
@@ -175,7 +327,7 @@ def verify_payment(
         old_status=None,
         new_status=DeliveryStatus.pending,
         changed_at=now,
-        note="Order placed and paid — awaiting dispatcher assignment",
+        note="Order placed and paid - awaiting dispatcher assignment",
     )
     notify_customer_of_status_change(
         db,
@@ -186,8 +338,9 @@ def verify_payment(
         customer_phone=delivery.customer_phone,
         customer_id=delivery.customer_id,
     )
+    notify_dispatchers_of_new_order(db, org_id=order.org_id, order_id=delivery.order_id)
 
-    # Re-query items fresh rather than reusing the pre-commit list above —
+    # Re-query items fresh rather than reusing the pre-commit list above -
     # SQLAlchemy expires all session objects on commit by default, and
     # serializing already-expired instances after the fact is what
     # produced empty {} objects here during testing.
@@ -202,7 +355,7 @@ def list_my_orders(
     db: Session = Depends(get_db),
     current_customer: CustomerDB = Depends(get_current_customer),
 ):
-    """Itemized purchase history — separate from /customer/deliveries, which tracks fulfillment/shipment status."""
+    """Itemized purchase history - separate from /customer/deliveries, which tracks fulfillment/shipment status."""
     orders = db.query(OrderDB).filter(OrderDB.customer_id == current_customer.id).order_by(OrderDB.created_at.desc()).all()
     results = []
     for order in orders:

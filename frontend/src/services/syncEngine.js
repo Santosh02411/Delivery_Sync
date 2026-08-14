@@ -11,11 +11,24 @@ import { getPendingDeliveries, markAsSynced } from "./indexedDb";
 import { syncPendingDeliveries } from "./api";
 
 const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 3001;
+const RETRY_DELAY_MS = 3005;
 const PERIODIC_SYNC_INTERVAL_MS = 15000; // check every 15 seconds while online
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Turns one backend conflict record (see services/conflict_resolver.py)
+ * into a plain-English sentence for the UI — this is the whole point of
+ * conflict-visibility: previously a discarded offline change vanished
+ * with no trace anywhere in the interface.
+ */
+export function describeConflict(conflict) {
+  const who = conflict.kept_by
+    ? `${conflict.kept_by} already updated it`
+    : "it was already updated";
+  return `Order ${conflict.order_id}: your change to "${conflict.your_status}" was overridden — ${who} to "${conflict.kept_status}" more recently, so that's what was kept.`;
 }
 
 /**
@@ -48,6 +61,7 @@ export async function runSync() {
         syncedCount: response.resolved_records.length,
         errorCount,
         errors: response.errors || [],
+        conflicts: response.conflicts || [],
       };
     } catch (error) {
       attempt += 1;

@@ -27,6 +27,19 @@ export async function loginRequest({ username, password }) {
   if (!response.ok) {
     throw new Error(data.detail || "Login failed.");
   }
+  return data; // { access_token, user } OR { requires_2fa: true, challenge_token }
+}
+
+export async function verifyTwoFactorLoginRequest(challengeToken, code) {
+  const response = await fetch(`${API_BASE_URL}/auth/2fa/verify-login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ challenge_token: challengeToken, code }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Verification failed.");
+  }
   return data; // { access_token, token_type, user }
 }
 

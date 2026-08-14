@@ -45,8 +45,9 @@ from app.services.sms import send_status_notification_sms, send_status_notificat
 from app.services.push import send_web_push
 from app.models.customer_notification import CustomerNotificationDB
 from app.models.push_subscription import PushSubscriptionDB
+from app.models.user import UserDB, UserRole
 
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3001")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3005")
 
 STATUS_LABELS = {
     "confirmed": "Order Confirmed",
@@ -127,3 +128,63 @@ def notify_customer_of_status_change(
                 )
         except Exception as error:  # noqa: BLE001
             print(f"Web push notification failed for {order_id}: {error}")
+
+
+def _push_to_user_ids(db: Session, user_ids: list[str], title: str, body: str, url: str) -> None:
+    """Shared low-level fan-out: send one Web Push to every subscribed device for a set of staff user IDs."""
+    if not user_ids:
+        return
+    try:
+        subscriptions = db.query(PushSubscriptionDB).filter(
+            PushSubscriptionDB.user_id.in_(user_ids)
+        ).all()
+        for sub in subscriptions:
+            send_web_push(
+                subscription_info={
+                    "endpoint": sub.endpoint,
+                    "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+                },
+                title=title,
+                body=body,
+                url=url,
+            )
+    except Exception as error:  # noqa: BLE001
+        print(f"Staff web push notification failed: {error}")
+
+
+def notify_agent_of_new_assignment(db: Session, delivery_id: str, order_id: str, agent_id: str) -> None:
+    """
+    Web Push to one agent, the moment a delivery is assigned to them —
+    either at dispatcher-creation time or via the "assign to agent"
+    action on a customer-placed order. Best-effort: a missing/expired
+    subscription (or the agent never having enabled push) is silently a
+    no-op, same as the customer-facing push above.
+    """
+    tracking_link = f"{FRONTEND_URL}/?deliveries"
+    _push_to_user_ids(
+        db, [agent_id],
+        title="New delivery assigned",
+        body=f"Order {order_id} has been assigned to you.",
+        url=tracking_link,
+    )
+
+
+def notify_dispatchers_of_new_order(db: Session, org_id: str, order_id: str) -> None:
+    """
+    Web Push to every dispatcher AND admin in an org, the moment a new
+    customer checkout order lands unassigned in their queue — so they
+    don't have to keep the dashboard open/refreshing to notice it.
+    """
+    staff_ids = [
+        row[0] for row in db.query(UserDB.id).filter(
+            UserDB.org_id == org_id,
+            UserDB.role.in_([UserRole.dispatcher, UserRole.admin]),
+        ).all()
+    ]
+    tracking_link = f"{FRONTEND_URL}/?dashboard"
+    _push_to_user_ids(
+        db, staff_ids,
+        title="New order to assign",
+        body=f"Order {order_id} was just placed and needs an agent.",
+        url=tracking_link,
+    )

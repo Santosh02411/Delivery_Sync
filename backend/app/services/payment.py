@@ -52,6 +52,18 @@ def create_razorpay_order(amount_paise: int, receipt: str) -> dict:
     })
 
 
+def create_razorpay_refund(payment_id: str, amount_paise: int) -> dict:
+    """
+    Issues a real refund against a captured Razorpay payment — the
+    actual API call that moves money back to the customer. Only called
+    when IS_CONFIGURED is True and the order being cancelled was a real
+    (non test-mode) payment; see services/refund.py for the caller.
+    """
+    import razorpay
+    client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
+    return client.payment.refund(payment_id, {"amount": amount_paise})
+
+
 def verify_razorpay_signature(razorpay_order_id: str, razorpay_payment_id: str, razorpay_signature: str) -> bool:
     """
     Verifies a completed payment is genuinely authorized by Razorpay and

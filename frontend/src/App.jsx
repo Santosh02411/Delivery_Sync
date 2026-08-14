@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { CustomerAuthProvider, useCustomerAuth } from "./context/CustomerAuthContext";
-import { ToastProvider } from "./context/ToastContext";
+import { ToastProvider, useToast } from "./context/ToastContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import ConnectivityBanner from "./components/ConnectivityBanner";
 import Sidebar from "./components/Sidebar";
@@ -9,7 +9,10 @@ import AgentDeliveryList from "./components/AgentDeliveryList";
 import AgentPerformance from "./components/AgentPerformance";
 import DispatcherTable from "./components/DispatcherTable";
 import ProductManager from "./components/ProductManager";
+import AnalyticsDashboard from "./components/AnalyticsDashboard";
 import AdminPanel from "./components/AdminPanel";
+import AuditLogViewer from "./components/AuditLogViewer";
+import TwoFactorSettings from "./components/TwoFactorSettings";
 import LoginPage from "./components/LoginPage";
 import SignupPage from "./components/SignupPage";
 import ForgotPasswordPage from "./components/ForgotPasswordPage";
@@ -33,9 +36,12 @@ function StaffDashboard({ user }) {
             <DispatcherTable />
           )}
           {user.role === "admin" && currentView === "admin" && <AdminPanel />}
+          {user.role === "admin" && currentView === "audit-log" && <AuditLogViewer />}
+          {user.role === "admin" && currentView === "analytics" && <AnalyticsDashboard />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "products" && (
             <ProductManager />
           )}
+          {currentView === "security" && <TwoFactorSettings />}
         </div>
       </div>
     </div>
@@ -71,6 +77,18 @@ function AuthFlow() {
 function RootRouter() {
   const { user, isLoading: staffLoading } = useAuth();
   const { customer, isLoading: customerLoading } = useCustomerAuth();
+  const { showToast } = useToast();
+
+  useEffect(() => {
+    // Surfaces a real Background Sync completion (see public/sw.js) —
+    // including one that happened while every tab was closed, the
+    // moment this tab is next open to show it.
+    function handleBackgroundSync(event) {
+      showToast(`Synced ${event.detail.syncedCount} item(s) that were queued while offline.`, "info");
+    }
+    window.addEventListener("background-sync-complete", handleBackgroundSync);
+    return () => window.removeEventListener("background-sync-complete", handleBackgroundSync);
+  }, [showToast]);
 
   const urlParams = new URLSearchParams(window.location.search);
   const resetToken = urlParams.get("reset_token");

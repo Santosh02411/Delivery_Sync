@@ -5,7 +5,7 @@ import { useTheme } from "../context/ThemeContext";
 import "../styles/auth.css";
 
 export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
-  const { login: staffLogin } = useAuth();
+  const { login: staffLogin, completeTwoFactorLogin } = useAuth();
   const { login: customerLogin } = useCustomerAuth();
   const { theme, toggleTheme } = useTheme();
 
@@ -15,13 +15,22 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Set once staffLogin() comes back saying this account needs a 2FA
+  // code — switches the form into a second step instead of navigating
+  // away, since a password alone isn't enough to finish logging in.
+  const [twoFactorChallenge, setTwoFactorChallenge] = useState(null);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
     setIsSubmitting(true);
     try {
       if (accountType === "staff") {
-        await staffLogin(identifier, password);
+        const result = await staffLogin(identifier, password);
+        if (result && result.requires_2fa) {
+          setTwoFactorChallenge(result.challenge_token);
+        }
       } else {
         await customerLogin(identifier, password);
       }
@@ -30,6 +39,69 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  async function handleTwoFactorSubmit(e) {
+    e.preventDefault();
+    setError("");
+    setIsSubmitting(true);
+    try {
+      await completeTwoFactorLogin(twoFactorChallenge, twoFactorCode.trim());
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  if (twoFactorChallenge) {
+    return (
+      <div className="auth-page-wrapper">
+        <button className="auth-theme-toggle" onClick={toggleTheme}>
+          {theme === "dark" ? "☀ Light" : "☾ Dark"}
+        </button>
+        <div className="auth-card">
+          <h2>Enter your code</h2>
+          <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginBottom: "12px" }}>
+            Open your authenticator app and enter the 6-digit code for this account.
+          </p>
+          <form onSubmit={handleTwoFactorSubmit}>
+            <div className="auth-field">
+              <label>6-digit code</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={6}
+                value={twoFactorCode}
+                onChange={(e) => setTwoFactorCode(e.target.value.replace(/\D/g, ""))}
+                required
+                autoFocus
+              />
+            </div>
+
+            {error && <p className="auth-error">{error}</p>}
+
+            <button type="submit" className="auth-submit-btn" disabled={isSubmitting || twoFactorCode.length !== 6}>
+              {isSubmitting ? "Verifying..." : "Verify & Log in"}
+            </button>
+          </form>
+
+          <p className="auth-switch-text">
+            <button
+              className="auth-switch-link"
+              onClick={() => {
+                setTwoFactorChallenge(null);
+                setTwoFactorCode("");
+                setError("");
+              }}
+            >
+              Back to login
+            </button>
+          </p>
+        </div>
+      </div>
+    );
   }
 
   return (

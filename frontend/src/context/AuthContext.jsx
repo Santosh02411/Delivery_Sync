@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { signupRequest, loginRequest } from "../services/authApi";
+import { signupRequest, loginRequest, verifyTwoFactorLoginRequest } from "../services/authApi";
 
 const AuthContext = createContext(null);
 
@@ -36,6 +36,18 @@ export function AuthProvider({ children }) {
 
   async function login(username, password) {
     const data = await loginRequest({ username, password });
+    if (data.requires_2fa) {
+      // Password was correct, but this account has 2FA on — hand back
+      // the challenge token so LoginPage can prompt for a code next,
+      // instead of persisting a session that doesn't exist yet.
+      return { requires_2fa: true, challenge_token: data.challenge_token };
+    }
+    persistSession(data.access_token, data.user);
+    return data.user;
+  }
+
+  async function completeTwoFactorLogin(challengeToken, code) {
+    const data = await verifyTwoFactorLoginRequest(challengeToken, code);
     persistSession(data.access_token, data.user);
     return data.user;
   }
@@ -52,7 +64,20 @@ export function AuthProvider({ children }) {
     setToken(null);
   }
 
-  const value = { user, token, isLoading, login, signup, logout };
+  function updateUser(patch) {
+    setUser((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, user: next }));
+      }
+      return next;
+    });
+  }
+
+  const value = { user, token, isLoading, login, completeTwoFactorLogin, signup, logout, updateUser };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

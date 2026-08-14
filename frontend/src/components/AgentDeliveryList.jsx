@@ -5,8 +5,12 @@ import {
   deleteDeliveryLocally,
   mergeAssignedDeliveries,
   setActiveUser,
+  queueLocationPing,
 } from "../services/indexedDb";
-import { startAutoSync, runSync } from "../services/syncEngine";
+import { startAutoSync, runSync, describeConflict } from "../services/syncEngine";
+import { startLocationPingAutoSync } from "../services/locationSyncEngine";
+import { writeSyncContext } from "../services/backgroundSyncContext";
+import { API_BASE_URL } from "../services/api";
 import { deleteDeliveryOnServer, fetchMyDeliveriesFromServer, updateMyAgentLocation } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
@@ -40,6 +44,7 @@ export default function AgentDeliveryList() {
   const [currentPage, setCurrentPage] = useState(1);
   const [isSharingLocation, setIsSharingLocation] = useState(false);
   const [locationError, setLocationError] = useState(null);
+  const [conflictNotices, setConflictNotices] = useState([]);
   const watchIdRef = React.useRef(null);
 
   useEffect(() => {
@@ -47,6 +52,7 @@ export default function AgentDeliveryList() {
     // local storage to THIS specific user, so switching accounts on the
     // same browser can never show one agent another agent's deliveries.
     setActiveUser(user.id);
+    writeSyncContext({ userId: user.id, token, role: user.role, apiBaseUrl: API_BASE_URL });
 
     loadFromLocalStorage();
     pullAssignedDeliveries();
@@ -55,7 +61,12 @@ export default function AgentDeliveryList() {
       if (result.success && result.syncedCount > 0) {
         loadFromLocalStorage();
       }
+      if (result.conflicts && result.conflicts.length > 0) {
+        recordConflicts(result.conflicts);
+      }
     });
+
+    const stopLocationSync = startLocationPingAutoSync(token);
 
     const pullIntervalId = setInterval(() => {
       if (navigator.onLine) pullAssignedDeliveries();
@@ -63,6 +74,7 @@ export default function AgentDeliveryList() {
 
     return () => {
       stopAutoSync();
+      stopLocationSync();
       clearInterval(pullIntervalId);
     };
   }, []);
@@ -161,17 +173,45 @@ export default function AgentDeliveryList() {
       return;
     }
 
+    if (!window.isSecureContext) {
+      setLocationError(
+        "Location sharing needs a secure connection. If you're testing locally, open the app via 'localhost' " +
+        "(not a network IP like 192.168.x.x) — browsers block location access on plain http:// outside localhost."
+      );
+      return;
+    }
+
     setLocationError(null);
     watchIdRef.current = navigator.geolocation.watchPosition(
       async (position) => {
         try {
           await updateMyAgentLocation(token, position.coords.latitude, position.coords.longitude);
         } catch (err) {
-          console.warn("Failed to push location update:", err.message);
+          if (err instanceof TypeError) {
+            // fetch() throws TypeError specifically when the network is
+            // unreachable — queue it instead of losing it.
+            // locationSyncEngine.js replays the queue (oldest first) the
+            // moment connectivity returns.
+            try {
+              await queueLocationPing(position.coords.latitude, position.coords.longitude);
+            } catch (queueErr) {
+              console.warn("Failed to queue location ping locally:", queueErr.message);
+            }
+          } else {
+            // A real server-side rejection (e.g. expired session) — queueing
+            // this would just retry the same failure forever once "online".
+            console.warn("Failed to push location update:", err.message);
+          }
         }
       },
       (err) => {
-        setLocationError(`Couldn't get your location: ${err.message}`);
+        const friendlyMessage =
+          err.code === err.PERMISSION_DENIED
+            ? "Location permission was denied. Check your browser's site settings and allow location access, then try again."
+            : err.code === err.TIMEOUT
+            ? "Timed out getting your location. Check your device's location/GPS is turned on and try again."
+            : `Couldn't get your location: ${err.message}`;
+        setLocationError(friendlyMessage);
         setIsSharingLocation(false);
       },
       { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 }
@@ -200,6 +240,9 @@ export default function AgentDeliveryList() {
           "error"
         );
       }
+      if (result.conflicts && result.conflicts.length > 0) {
+        recordConflicts(result.conflicts);
+      }
       // CRITICAL: reload the UI from IndexedDB directly, unconditionally —
       // this is a pure local read and needs no network at all. The
       // previous version called pullAssignedDeliveries() here instead,
@@ -219,6 +262,28 @@ export default function AgentDeliveryList() {
     }
   }
 
+  function recordConflicts(conflicts) {
+    // Durable banner (not just a toast) — a discarded offline change is
+    // exactly the kind of thing an agent shouldn't have to catch in a
+    // 3.5-second popup. It stays visible until they dismiss it.
+    const withIds = conflicts.map((c) => ({ ...c, _noticeId: `${c.id}-${c.your_updated_at}` }));
+    setConflictNotices((prev) => {
+      const existingIds = new Set(prev.map((n) => n._noticeId));
+      const fresh = withIds.filter((n) => !existingIds.has(n._noticeId));
+      return [...prev, ...fresh];
+    });
+    showToast(
+      conflicts.length === 1
+        ? "One of your updates was overridden by a newer change — see details below."
+        : `${conflicts.length} of your updates were overridden by newer changes — see details below.`,
+      "error"
+    );
+  }
+
+  function dismissConflictNotice(noticeId) {
+    setConflictNotices((prev) => prev.filter((n) => n._noticeId !== noticeId));
+  }
+
   const filteredDeliveries = deliveries.filter((d) =>
     d.order_id.toLowerCase().includes(searchQuery.toLowerCase())
   );
@@ -230,6 +295,26 @@ export default function AgentDeliveryList() {
   return (
     <div>
       <h2 className="page-title">My Deliveries</h2>
+
+      {conflictNotices.length > 0 && (
+        <div style={{ marginBottom: "14px", display: "grid", gap: "8px" }}>
+          {conflictNotices.map((c) => (
+            <div
+              key={c._noticeId}
+              className="card"
+              style={{ borderColor: "var(--danger)", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}
+            >
+              <div style={{ fontSize: "12.5px" }}>
+                <strong style={{ color: "var(--danger)" }}>Update overridden — </strong>
+                {describeConflict(c)}
+              </div>
+              <button className="btn" style={{ fontSize: "11px", flexShrink: 0 }} onClick={() => dismissConflictNotice(c._noticeId)}>
+                Dismiss
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <SuggestedRoute deliveries={deliveries} />
 

@@ -11,14 +11,18 @@ what a production system would use instead. This is documented as a
 known gap in docs/SECURITY_AND_ACCESS.md.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import date, datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 from app.db.session import get_db
 from app.models.user import UserDB, UserRole, UserOut
 from app.models.organization import OrganizationDB, OrganizationOut
+from app.models.delivery import DeliveryRecordDB
+from app.models.delivery_history import DeliveryHistoryDB
 from app.routes.auth import get_current_user
 from app.services.auth import hash_password
 
@@ -119,3 +123,82 @@ def reset_user_password(
     target.hashed_password = hash_password(payload.new_password)
     db.commit()
     return {"success": True, "message": f"Password reset for {target.display_name}."}
+
+
+# ---------- Audit log viewer ----------
+# Browses the delivery status-change history (DeliveryHistoryDB) that
+# already gets written on every status change — see services/history.py.
+# That table has existed since early in the project (it's what powers
+# the per-delivery "history" timeline agents/dispatchers already see),
+# but there was no UI to browse it BROADLY, across every delivery in the
+# organization at once, filterable by who made the change and when. This
+# is that missing admin-facing view — "who changed what, when" as a
+# proper audit trail rather than something you can only see one delivery
+# at a time.
+#
+# DeliveryHistoryDB doesn't store org_id directly (it's a child record of
+# a delivery, not a top-level tenant-scoped table), so every query here
+# joins through DeliveryRecordDB to enforce the same multi-tenant
+# isolation as everywhere else in the app: an admin only ever sees audit
+# entries for deliveries that belong to their own organization.
+
+class AuditLogEntryOut(BaseModel):
+    id: str
+    delivery_id: str
+    delivery_order_id: str
+    changed_by_display_name: str
+    old_status: Optional[str] = None
+    new_status: str
+    changed_at: datetime
+    note: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/audit-log", response_model=List[AuditLogEntryOut])
+def get_audit_log(
+    date_from: Optional[date] = Query(None, description="Include entries changed on/after this date"),
+    date_to: Optional[date] = Query(None, description="Include entries changed on/before this date"),
+    changed_by_user_id: Optional[str] = Query(None, description="Filter to changes made by one user"),
+    order_id: Optional[str] = Query(None, description="Filter by delivery order ID (partial match)"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_admin),
+):
+    query = (
+        db.query(DeliveryHistoryDB, DeliveryRecordDB.order_id)
+        .join(DeliveryRecordDB, DeliveryHistoryDB.delivery_id == DeliveryRecordDB.id)
+        .filter(DeliveryRecordDB.org_id == current_user.org_id)
+    )
+
+    if date_from:
+        query = query.filter(DeliveryHistoryDB.changed_at >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        query = query.filter(DeliveryHistoryDB.changed_at <= datetime.combine(date_to, datetime.max.time()))
+    if changed_by_user_id:
+        query = query.filter(DeliveryHistoryDB.changed_by_user_id == changed_by_user_id)
+    if order_id:
+        query = query.filter(DeliveryRecordDB.order_id.ilike(f"%{order_id}%"))
+
+    rows = (
+        query.order_by(DeliveryHistoryDB.changed_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return [
+        AuditLogEntryOut(
+            id=history.id,
+            delivery_id=history.delivery_id,
+            delivery_order_id=order_id_value,
+            changed_by_display_name=history.changed_by_display_name,
+            old_status=history.old_status,
+            new_status=history.new_status,
+            changed_at=history.changed_at,
+            note=history.note,
+        )
+        for history, order_id_value in rows
+    ]

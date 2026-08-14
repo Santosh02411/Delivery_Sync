@@ -19,6 +19,7 @@ from app.models.cart import CartItemDB, CartItemAdd, CartItemUpdate
 from app.models.product import ProductDB, ProductOut
 from app.models.customer import CustomerDB
 from app.routes.customer_auth import get_current_customer
+from app.services.inventory import check_stock_available, InsufficientStockError
 
 router = APIRouter(prefix="/customer/cart", tags=["cart"])
 
@@ -79,8 +80,14 @@ def add_to_cart(
         existing_items = []
 
     existing_line = next((i for i in existing_items if i.product_id == payload.product_id), None)
+    new_quantity = (existing_line.quantity if existing_line else 0) + payload.quantity
+    try:
+        check_stock_available(db, product.id, new_quantity)
+    except InsufficientStockError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+
     if existing_line:
-        existing_line.quantity += payload.quantity
+        existing_line.quantity = new_quantity
     else:
         db.add(CartItemDB(
             id=str(uuid.uuid4()),
@@ -111,6 +118,10 @@ def update_cart_item(
     if payload.quantity <= 0:
         db.delete(item)
     else:
+        try:
+            check_stock_available(db, item.product_id, payload.quantity)
+        except InsufficientStockError as e:
+            raise HTTPException(status_code=400, detail=e.message)
         item.quantity = payload.quantity
     db.commit()
     return _build_cart_response(db, current_customer.id)

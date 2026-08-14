@@ -42,7 +42,17 @@ class OrderDB(Base):
     city = Column(String, nullable=True)
     phone = Column(String, nullable=False)
 
-    subtotal = Column(Float, nullable=False)
+    subtotal = Column(Float, nullable=False)  # pure product subtotal — unchanged meaning, never includes fee/tax/discount
+
+    # Pricing breakdown, computed once at checkout() and never
+    # recalculated afterwards (so a later coupon/fee/tax config change
+    # never alters a receipt that already exists). `total` is the actual
+    # amount charged — subtotal - discount_amount + delivery_fee + tax_amount.
+    coupon_code = Column(String, nullable=True)
+    discount_amount = Column(Float, nullable=False, default=0.0)
+    delivery_fee = Column(Float, nullable=False, default=0.0)
+    tax_amount = Column(Float, nullable=False, default=0.0)
+    total = Column(Float, nullable=False, default=0.0)
 
     # Real Razorpay identifiers — set once a payment attempt/order is
     # actually created with Razorpay. See services/payment.py.
@@ -54,6 +64,27 @@ class OrderDB(Base):
     # gateway — see services/payment.py's module docstring for why this
     # exists and how it's surfaced to the customer.
     is_test_mode_payment = Column(Integer, nullable=False, default=0)  # 0/1 as SQLite has no native bool constraint issues here
+
+    # Refund tracking — set by services/refund.py when a paid order is
+    # cancelled (customer self-serve or dispatcher/admin side). None
+    # means "never refunded / nothing to refund". See services/refund.py
+    # for what "refunded" means for a test-mode order vs a real one.
+    refund_status = Column(String, nullable=True)  # None | "refunded" | "failed"
+    razorpay_refund_id = Column(String, nullable=True)
+    refunded_at = Column(DateTime, nullable=True)
+
+    # Set once stock has been credited back for a cancelled order — see
+    # services/inventory.py.restock_order_if_needed(). Idempotency guard,
+    # same 0/1 pattern as is_test_mode_payment.
+    stock_restored = Column(Integer, nullable=False, default=0)
+
+    # Delivery time-slot the customer picked at checkout (see
+    # routes/slots.py) — None means "ASAP / no preference", same as
+    # skipping a coupon. Copied onto the DeliveryRecordDB created in
+    # verify_payment() so a dispatcher/agent can see it without
+    # cross-referencing the order.
+    slot_start = Column(DateTime, nullable=True)
+    slot_end = Column(DateTime, nullable=True)
 
     delivery_id = Column(String, nullable=True)  # set once payment is verified and a Delivery is created
     created_at = Column(DateTime, nullable=False)
@@ -74,6 +105,8 @@ class CheckoutRequest(BaseModel):
     address_line: str
     city: Optional[str] = None
     phone: str
+    coupon_code: Optional[str] = None
+    slot_start: Optional[datetime] = None  # must exactly match one of GET /stores/{org_id}/delivery-slots's returned options
 
 
 class OrderItemOut(BaseModel):
@@ -93,7 +126,16 @@ class OrderOut(BaseModel):
     city: Optional[str] = None
     phone: str
     subtotal: float
+    coupon_code: Optional[str] = None
+    discount_amount: float = 0.0
+    delivery_fee: float = 0.0
+    tax_amount: float = 0.0
+    total: float = 0.0
     is_test_mode_payment: bool
+    refund_status: Optional[str] = None
+    refunded_at: Optional[datetime] = None
+    slot_start: Optional[datetime] = None
+    slot_end: Optional[datetime] = None
     delivery_id: Optional[str] = None
     created_at: datetime
     items: List[OrderItemOut] = []
@@ -106,7 +148,9 @@ class CheckoutResponse(BaseModel):
     """
     What the frontend needs to either launch Razorpay's real Checkout.js
     widget (when a real gateway is configured) or show the clearly-
-    labeled test-mode confirmation flow (when it isn't).
+    labeled test-mode confirmation flow (when it isn't). Also carries
+    the full price breakdown so the frontend can show a proper receipt
+    before/while payment happens, without a second round trip.
     """
     order_id: str
     razorpay_order_id: Optional[str] = None
@@ -114,6 +158,14 @@ class CheckoutResponse(BaseModel):
     amount_paise: int
     currency: str = "INR"
     is_test_mode: bool
+    subtotal: float
+    coupon_code: Optional[str] = None
+    discount_amount: float = 0.0
+    delivery_fee: float = 0.0
+    tax_amount: float = 0.0
+    total: float = 0.0
+    slot_start: Optional[datetime] = None
+    slot_end: Optional[datetime] = None
 
 
 class VerifyPaymentRequest(BaseModel):

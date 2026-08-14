@@ -495,6 +495,402 @@ returning user would never see again.
 
 ---
 
+## Real Product Image Upload
+
+**What was missing:** `image_url` on a product was just a free-text field —
+a dispatcher had to already have the image hosted somewhere else and paste
+in a link. No actual file upload/storage existed.
+
+**Why it was needed:** No real store owner has a pre-hosted image URL
+ready to paste in; they have a photo on their phone/laptop. A catalog
+management feature isn't real without a way to actually upload the photo.
+
+**What it does:** New `POST /admin/products/upload-image` endpoint takes
+real multipart file bytes, validates type (JPEG/PNG/WebP/GIF) and size
+(5MB max), and saves it to `backend/uploads/products/<uuid>.<ext>` on
+disk — returning a URL that's then mounted and served back out at
+`/uploads/products/...` via FastAPI's StaticFiles. `ProductManager.jsx`
+got a real file input with upload progress + thumbnail preview;
+`Storefront.jsx` now shows product photos in the catalog and cart.
+Deleting a product also cleans up its image file from disk.
+
+---
+
+## Real Razorpay Refunds on Cancellation
+
+**What was missing:** Cancelling a paid order only flipped the delivery's
+status to "cancelled" in the database — no money ever actually moved back
+to the customer, real gateway or not.
+
+**Why it was needed:** A cancel button that doesn't refund isn't a real
+cancel button from a customer's (or a recruiter's) perspective — it's a
+status label. This was the same "is it actually real, not just a
+console-log demo" gap the notification system had earlier.
+
+**What it does:** New `services/refund.py` with `refund_order_for_delivery()`,
+called from BOTH places an order can be cancelled — the customer's
+self-serve cancel button and the dispatcher/admin status-update path.
+It looks up the Order linked to the cancelled delivery and, if it was
+actually paid: calls Razorpay's real refund API (same HMAC-verified,
+no-shortcuts pattern as the original payment integration) when a gateway
+is configured, or marks a clearly-labeled simulated refund when running
+in test mode — mirroring `is_test_mode_payment` exactly. New
+`refund_status`/`razorpay_refund_id`/`refunded_at` columns on Order.
+Refund failures are caught and recorded as `refund_status="failed"`
+rather than silently blocking the cancellation itself. Frontend now
+shows the real refund outcome ("Refund issued on ..." or a failure
+notice) on a cancelled order.
+
+---
+
+## Product Reviews & Ratings
+
+**What was missing:** Only delivery-experience feedback existed (was the
+agent good, was it on time) — nothing for rating the product itself.
+
+**Why it was needed:** A store needs product ratings for customers
+browsing to decide whether to buy — delivery feedback doesn't tell a
+shopper anything about the product quality.
+
+**What it does:** New `ProductReviewDB` table, separate from the existing
+delivery-feedback table. Submitting a review is gated server-side, not
+just hidden in the UI: the order must belong to the reviewing customer,
+must be paid, must actually contain that product, and the linked delivery
+must have reached `delivered` — otherwise it's rejected with a clear
+error. One review per (order, product) pair, enforced with a DB unique
+constraint. New endpoints: public `GET /stores/products/{id}/reviews`
+(browse before buying, no login), `GET /customer/deliveries/{id}/reviewable-items`
+(what still needs a review on a delivered order), and
+`POST /customer/products/{id}/reviews` (submit). Product listings in
+both the admin catalog view and the public storefront now show an
+aggregated average rating + review count, computed live from real review
+rows rather than a cached counter. `CustomerDashboard.jsx` gained a
+"Rate your products" section on delivered orders — one star-rating form
+per line item, right where the existing delivery-feedback form already
+lived.
+
+---
+
+---
+
+## Stock / Inventory Tracking
+
+**What was missing:** Products could be "sold" with no quantity limit —
+`stock_quantity` didn't exist at all, so a store could oversell anything
+indefinitely.
+
+**Why it was needed:** Real stores run out of things. Without a stock
+limit, a shop selling a one-off or limited item has no way to stop
+customers from ordering more than actually exists.
+
+**What it does:** New optional `stock_quantity` on Product — `None`
+means untracked/unlimited (the old behavior, unchanged for every
+existing product), and setting a number turns on real enforcement.
+Checked at cart-add, cart-quantity-update, checkout-creation, and once
+more right before payment is finalized (the authoritative check, since
+stock can change between checkout and payment). Decremented only once
+an order actually reaches `paid` — an abandoned checkout never
+permanently reserves stock. If stock runs out for a **real** payment
+between checkout and verification, the order is auto-refunded via the
+existing Razorpay refund integration rather than leaving the customer
+charged for nothing. Cancelling a paid order restocks the items
+automatically (wired into the same refund path from the previous
+session's cancellation work) — the items never shipped, so they go
+back on the shelf. `ProductManager.jsx` got a stock field on create
+plus an inline editable stock number per product; `Storefront.jsx`
+shows "Only N left" / "Sold out" badges and disables Add-to-cart /
+blocks quantity increases at the limit.
+
+---
+
+## Coupons / Discounts
+
+**What was missing:** No promo code mechanism anywhere in checkout —
+there was no way for a store to run a sale or targeted discount.
+
+**Why it was needed:** Discount codes are a basic, expected e-commerce
+feature for both marketing (drive orders with a promo) and support
+(comp a customer) — a checkout flow isn't feature-complete without one.
+
+**What it does:** New org-scoped `CouponDB` — percent-off or flat-₹-off,
+with optional minimum order value, optional max redemptions, optional
+expiry, and an active/inactive toggle. Admin/dispatcher CRUD at
+`/admin/coupons`. On the customer side, a coupon can be previewed
+against the current cart before committing (`/customer/checkout/validate-coupon`,
+used by the cart's "Apply" button for instant feedback) and is then
+applied for real at checkout. Eligibility (active, not expired, under
+its use limit, minimum order met) is enforced by one shared function
+(`services/coupons.py`) used by both the preview and the real checkout,
+so what a customer sees in the preview can never disagree with what
+they're actually charged. A coupon's `used_count` is only incremented
+once its order reaches `paid` — an abandoned checkout never burns
+through a limited coupon's redemptions.
+
+---
+
+## Delivery Fee + Tax (GST)
+
+**What was missing:** Checkout charged exactly the product subtotal —
+no delivery charge, no tax line, on every single order regardless of
+store or location.
+
+**Why it was needed:** No real delivery/e-commerce checkout charges
+exactly the product subtotal — a delivery fee and applicable tax (GST,
+for an India-focused app) are standard, expected line items, and their
+absence made the checkout total simply wrong for demonstrating a real
+payment flow.
+
+**What it does:** Each org now has an admin-configurable flat
+`delivery_fee` and `tax_rate_percent` (`PATCH /admin/store/pricing`,
+new "Delivery Fee & Tax (GST)" card in the Products page). Checkout now
+computes, in order: subtotal → minus any coupon discount → GST applied
+to that discounted amount → plus the flat delivery fee → the actual
+total charged via Razorpay. The full breakdown (subtotal, discount,
+delivery fee, tax, total) is returned from the checkout API and stored
+on the Order itself, not just computed in the frontend, so a receipt
+always reflects exactly what was charged even if the store's pricing
+changes later. This also closed a related gap in last session's refund
+work: refunds now correctly return the full amount actually charged
+(including delivery fee and tax), not just the product subtotal.
+`Storefront.jsx`'s cart shows a live subtotal/discount/delivery/GST/total
+breakdown before checkout, using the same formula as the backend.
+
+---
+
+---
+
+## Admin Analytics Dashboard
+
+**What was missing:** No revenue/order-volume view anywhere — an admin
+could only see raw lists of orders/deliveries and had to mentally
+total them up.
+
+**Why it was needed:** "How is the store actually doing" (revenue,
+order volume, what's selling, what's running low, what's stuck in
+delivery) is one of the first things a real store admin wants to see,
+and no amount of scrolling raw lists answers it well.
+
+**What it does:** New admin-only `GET /admin/analytics/` endpoint
+(with a `days` window — 7/30/90 in the UI), computed live from
+existing Order/OrderItem/DeliveryRecord rows rather than a maintained
+running total, so it can never drift from what the raw lists already
+show. Returns: total revenue, order count, average order value,
+discount/delivery-fee/tax totals, refund totals, a day-by-day revenue
+series (zero-filled so a chart has a continuous axis), the top 5
+products by revenue, a delivery status breakdown (pending through
+delivered/cancelled), and a low-stock alert list (any tracked product
+at 5 units or fewer — see last session's stock-tracking work). New
+`AnalyticsDashboard.jsx`, added as its own "Analytics" nav item for
+admins — stat cards, a lightweight CSS bar chart for the revenue
+trend, a status-breakdown bar, a top-products list, and low-stock
+warnings. No new charting library — everything is plain divs/CSS to
+avoid adding a dependency for what's a fairly simple visual need here.
+
+---
+
+## Push Notifications for Agents/Dispatchers
+
+**What was missing:** Web Push only ever fired for customers (order
+status updates). An agent got no notification when assigned a new
+delivery, and a dispatcher/admin got no notification when a new
+unassigned customer order landed in their queue — both had to keep
+the dashboard open and refresh to notice.
+
+**Why it was needed:** The whole point of Web Push (real OS-level
+notifications, even with the tab/browser closed) is exactly this kind
+of "you need to know the moment this happens" event — and an agent or
+dispatcher needs that just as much as a customer does.
+
+**What it does:** Reused the exact same Web Push mechanism already
+built for customers (`services/push.py`, VAPID-based, no third-party
+account needed) rather than building a second notification pipeline —
+`PushSubscriptionDB` now supports a staff subscriber (`user_id`
+alongside the existing `customer_id`), with new endpoints
+(`/users/me/push/vapid-public-key`, `/users/me/push/subscribe`)
+mirroring the customer-facing ones. Two new trigger points in
+`services/notifications.py`: `notify_agent_of_new_assignment` (fires
+whenever a delivery is assigned to an agent — both at dispatcher-
+creation time and via the "assign to agent" action on a customer
+order) and `notify_dispatchers_of_new_order` (fires to every
+dispatcher AND admin in the org the moment a checkout order lands
+unassigned — wired into `verify_payment`). Both are best-effort and
+failure-isolated exactly like the customer-facing push, confirmed by
+smoke-testing with deliberately invalid subscription endpoints: the
+push call fails and logs, but checkout/assignment still succeed.
+Frontend: extracted the shared base64→Uint8Array VAPID helper into
+`services/pushUtil.js` (previously duplicated per-component) and added
+a "🔔 Enable Notifications" button to the staff sidebar, with
+role-aware copy explaining what it's for.
+
+---
+
+---
+
+## Delivery Time-Slot Scheduling
+
+**What was missing:** No way for a customer to pick a delivery window —
+every order was implicitly "as soon as possible," with no scheduling
+concept anywhere in checkout.
+
+**Why it was needed:** Picking a delivery window (like a 2-hour slot)
+is standard for any real delivery service — customers plan around
+being home, and a store needs to avoid promising more deliveries in
+one window than it can actually fulfill.
+
+**What it does:** Each org gets an admin-configurable daily operating
+window, slot length, and per-slot order cap (`PATCH /admin/store/slot-settings`,
+new "Delivery Time Slots" card in the Products page — defaults to a
+9am-9pm day cut into 2-hour slots, 10 orders max per slot). A new
+`GET /stores/{org_id}/delivery-slots?date=...` endpoint generates the
+bookable windows for a given day (today plus up to 6 days out),
+already accounting for how many paid orders are booked into each —
+past slots for today are automatically excluded. Checkout accepts an
+optional `slot_start`, re-validated server-side against the exact same
+generation logic that produced the options the customer saw (so a slot
+shown as available can never be rejected, and a stale/tampered/full
+one always is), and copies the resolved window onto both the Order and
+the Delivery record it creates. `Storefront.jsx` got a date-tab + time-
+slot picker in the checkout form, showing remaining capacity per slot;
+skipping it entirely still works exactly as before (ASAP delivery).
+
+---
+
+## Smarter / Automated Agent Assignment
+
+**What was missing:** A dispatcher assigning an order picked from a
+plain alphabetical list of agents, with no guidance — despite live
+agent GPS positions already being collected for the customer tracking
+map and just sitting unused for this decision.
+
+**Why it was needed:** The whole point of already tracking agent
+locations is exactly this: helping a dispatcher assign the delivery to
+whoever can actually get there fastest, instead of a blind pick.
+
+**What it does:** New `GET /deliveries/{id}/suggested-agents` ranks
+every agent in the org for one specific delivery — nearest by live GPS
+distance first (haversine straight-line against the delivery's
+coordinates, reusing `AgentLocationDB`), with current active-delivery
+workload as the tiebreaker. Falls back to workload-only ranking when a
+delivery has no coordinates or an agent has never shared a location —
+those agents still show up, just without a distance and sorted after
+anyone who has one, so nobody silently disappears from consideration.
+A new `POST /deliveries/{id}/auto-assign` uses the same ranking to
+assign the top match in one click, sharing its actual assignment logic
+with the existing manual "pick from the list" endpoint (refactored
+into one `_apply_agent_assignment()` helper so both paths produce
+identical history entries and notifications). `DispatcherTable.jsx`'s
+unassigned-orders queue got a "🎯 Suggest agent" button that annotates
+the agent dropdown with live distance/workload, and a "⚡ Auto-assign"
+button for skipping the pick entirely.
+
+---
+
+## Conflict-Resolution Visibility
+
+**What was missing:** The offline sync engine resolves conflicting
+updates with last-write-wins (see `services/conflict_resolver.py`) —
+but silently. If an agent's offline status change lost to a newer
+change made elsewhere while they were offline, their update was just
+discarded with no signal anywhere that it happened.
+
+**Why it was needed:** Silently throwing away someone's real update is
+a data-loss-adjacent problem — an agent who marked a delivery
+"delivered" offline deserves to know if that never actually stuck,
+rather than discovering it later (or never).
+
+**What it does:** `resolve_and_apply()` now returns a conflict record
+(not just the winning row) whenever an incoming offline change is
+discarded in favor of a newer one already on the server — including,
+where available, who made the winning change (looked up from the
+existing delivery-history audit log). `POST /sync`'s response gained a
+`conflicts` list carrying this alongside the usual `resolved_records`/
+`errors`. `AgentDeliveryList.jsx` turns each one into a durable,
+dismissible banner ("Order X: your change to '...' was overridden —
+Y already updated it to '...' more recently") plus an immediate toast,
+shown on both the periodic background sync and a manual "Sync Now" —
+so a discarded change is now something the agent can actually see and
+act on, not something that vanishes.
+
+---
+
+## Two-Factor Authentication (Staff Logins)
+
+**What was missing:** A staff account (agent/dispatcher/admin) was
+protected by a password alone. Anyone who obtained or guessed a
+password had full account access — including an admin's ability to
+manage every user in the organization.
+
+**Why it was needed:** Trust & compliance requirement — staff logins
+needed a second factor beyond the password, the standard baseline for
+any account with administrative or operational access to real customer
+data.
+
+**What it does:** TOTP-based 2FA (RFC 6238 — the same standard behind
+Google Authenticator, Authy, 1Password), free and self-contained since
+it needs no SMS/email provider. `UserDB` gained `totp_secret` /
+`totp_enabled`. Setup is two steps on purpose (`POST /auth/2fa/setup`
+returns a QR code but doesn't enable anything; `POST /auth/2fa/enable`
+only flips it on once a real code from the freshly-scanned app is
+confirmed), so an abandoned setup can't lock an account out. Once
+enabled, `POST /auth/login` no longer returns a session token directly
+for that account — it returns a short-lived (5 min) `challenge_token`,
+and `POST /auth/2fa/verify-login` exchanges that plus a correct code for
+the real access token. `POST /auth/2fa/disable` requires the password
+again, not just an active session. Frontend: `LoginPage.jsx` gained a
+second step for the code; a new "Security" page (`TwoFactorSettings.jsx`,
+in the sidebar for every staff role) handles setup/enable/disable, with
+the QR rendered via the same free `api.qrserver.com` image API already
+used for order QR codes.
+
+---
+
+## Audit Log Viewer (Admin)
+
+**What was missing:** Delivery status changes were already recorded
+with who/what/when (`DeliveryHistoryDB`, powering each delivery's
+individual history timeline) — but there was no way for an admin to
+browse that data broadly, across every delivery in the organization at
+once.
+
+**Why it was needed:** Trust & compliance requirement — admins need a
+proper audit trail view, not just a per-delivery timeline they'd have
+to click into one order at a time.
+
+**What it does:** `GET /admin/audit-log` joins `DeliveryHistoryDB` to
+`DeliveryRecordDB` (for org-scoping, since history rows don't carry
+`org_id` directly) and returns every status-change entry for the
+admin's organization, filterable by date range, who made the change,
+and order ID, with pagination. New `AuditLogViewer.jsx` (sidebar, admin
+only) renders it as a filterable table with a "Load more" pager.
+
+---
+
+## GDPR-Style Data Export & Account Deletion (Customers)
+
+**What was missing:** A customer had no self-serve way to see everything
+the platform held about them, or to delete their account.
+
+**Why it was needed:** Trust & compliance requirement — a basic "right
+to access" and "right to erasure" flow for customer accounts.
+
+**What it does:** `GET /customer/data-export` streams a single JSON file
+with everything tied to the logged-in customer: profile, saved
+addresses, orders + line items, linked deliveries + status history +
+feedback given, cart, notifications, product reviews, and registered
+push-notification devices (endpoint only — private keys withheld, since
+those are security credentials, not personal data worth exposing in a
+downloadable file). `DELETE /customer/account` requires the password
+again (not just an active session) and deletes purely personal data
+outright (cart, addresses, notifications, push subscriptions) — but
+*anonymizes* rather than deletes orders/deliveries/reviews, since a
+store has a legitimate business reason to retain its own transaction
+and refund records even after a customer's account is gone, the same
+pattern real e-commerce platforms (Amazon, Shopify) use. New
+`PrivacyPanel` in `CustomerDashboard.jsx` (🔒 Privacy button) offers
+both actions, with a password-confirmation step before deletion.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

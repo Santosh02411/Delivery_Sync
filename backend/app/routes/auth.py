@@ -12,10 +12,29 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models.user import UserDB, UserSignup, UserLogin, UserOut, TokenResponse
+from app.models.user import (
+    UserDB,
+    UserSignup,
+    UserLogin,
+    UserOut,
+    TokenResponse,
+    LoginResult,
+    TwoFactorSetupOut,
+    TwoFactorCodeRequest,
+    TwoFactorLoginVerify,
+    TwoFactorDisableRequest,
+    TwoFactorStatusOut,
+)
 from app.models.organization import OrganizationDB
 from app.models.password_reset import PasswordResetTokenDB, ForgotPasswordRequest, ResetPasswordRequest
-from app.services.auth import hash_password, verify_password, create_access_token, decode_access_token
+from app.services.auth import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    decode_access_token,
+    create_two_factor_challenge_token,
+)
+from app.services.totp import generate_secret, get_provisioning_uri, verify_code
 from app.services.rate_limiter import limiter
 from app.services.email import send_password_reset_email
 from datetime import datetime
@@ -23,7 +42,7 @@ import os
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3001")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3005")
 
 
 def generate_invite_code() -> str:
@@ -111,7 +130,7 @@ def signup(request: Request, payload: UserSignup, db: Session = Depends(get_db))
     return {"access_token": token, "user": user, "org_invite_code": new_org_invite_code}
 
 
-@router.post("/login", response_model=TokenResponse)
+@router.post("/login", response_model=LoginResult)
 @limiter.limit("10/minute")
 def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
     user = db.query(UserDB).filter(UserDB.username == payload.username).first()
@@ -120,6 +139,41 @@ def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="This account has been deactivated. Contact your admin.")
+
+    if user.totp_enabled:
+        # Password alone isn't enough for this account — hand back a
+        # short-lived challenge token instead of a real session, and let
+        # the frontend prompt for the 6-digit code next.
+        challenge_token = create_two_factor_challenge_token(user.id)
+        return {"requires_2fa": True, "challenge_token": challenge_token}
+
+    token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
+    return {"access_token": token, "user": user, "org_invite_code": None}
+
+
+@router.post("/2fa/verify-login", response_model=TokenResponse)
+@limiter.limit("10/minute")
+def verify_two_factor_login(request: Request, payload: TwoFactorLoginVerify, db: Session = Depends(get_db)):
+    """
+    Second step of login for an account with 2FA turned on: exchanges a
+    valid challenge_token (from POST /auth/login) plus a correct 6-digit
+    authenticator code for a real access token.
+    """
+    decoded = decode_access_token(payload.challenge_token)
+    if not decoded or "pending_2fa_user_id" not in decoded:
+        raise HTTPException(status_code=401, detail="This login attempt has expired. Log in again.")
+
+    user = db.query(UserDB).filter(UserDB.id == decoded["pending_2fa_user_id"]).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="This login attempt has expired. Log in again.")
+
+    if not user.totp_enabled or not user.totp_secret:
+        # 2FA was turned off between step 1 and step 2 (rare, but
+        # possible) — nothing left to verify against.
+        raise HTTPException(status_code=400, detail="Two-factor authentication is no longer enabled on this account.")
+
+    if not verify_code(user.totp_secret, payload.code):
+        raise HTTPException(status_code=401, detail="Incorrect code. Check your authenticator app and try again.")
 
     token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
     return {"access_token": token, "user": user, "org_invite_code": None}
@@ -210,3 +264,68 @@ def get_current_user(
         raise HTTPException(status_code=403, detail="This account has been deactivated. Contact your admin.")
 
     return user
+
+
+# ---------- Two-factor auth: setup / enable / disable (staff, logged in) ----------
+# These three routes require an already-valid access token, which is why
+# they're defined after get_current_user above rather than next to
+# /login and /2fa/verify-login (both of which run BEFORE a session
+# exists). Turning 2FA on is a two-step process on purpose — /2fa/setup
+# hands back a QR code but does NOT enable anything yet, and /2fa/enable
+# only flips it on once the user proves their authenticator app actually
+# received it by submitting one real code. Skipping straight to "on"
+# would risk locking someone out on a secret their app never scanned.
+
+@router.get("/2fa/status", response_model=TwoFactorStatusOut)
+def get_two_factor_status(current_user: UserDB = Depends(get_current_user)):
+    return {"totp_enabled": current_user.totp_enabled}
+
+
+@router.post("/2fa/setup", response_model=TwoFactorSetupOut)
+def setup_two_factor(db: Session = Depends(get_db), current_user: UserDB = Depends(get_current_user)):
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="Two-factor authentication is already enabled. Disable it first to set up a new device.")
+
+    secret = generate_secret()
+    current_user.totp_secret = secret
+    db.commit()
+
+    uri = get_provisioning_uri(secret, current_user.username)
+    return {"secret": secret, "otpauth_uri": uri}
+
+
+@router.post("/2fa/enable")
+def enable_two_factor(
+    payload: TwoFactorCodeRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    if not current_user.totp_secret:
+        raise HTTPException(status_code=400, detail="Start setup first (POST /auth/2fa/setup) before confirming a code.")
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="Two-factor authentication is already enabled.")
+
+    if not verify_code(current_user.totp_secret, payload.code):
+        raise HTTPException(status_code=400, detail="Incorrect code. Check your authenticator app and try again.")
+
+    current_user.totp_enabled = True
+    db.commit()
+    return {"success": True, "message": "Two-factor authentication is now enabled on your account."}
+
+
+@router.post("/2fa/disable")
+def disable_two_factor(
+    payload: TwoFactorDisableRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """Requires the account password again — not just an active session —
+    so someone who grabs an unlocked, logged-in device can't silently
+    strip 2FA off the account themselves."""
+    if not verify_password(payload.password, current_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+
+    current_user.totp_enabled = False
+    current_user.totp_secret = None
+    db.commit()
+    return {"success": True, "message": "Two-factor authentication has been disabled."}
