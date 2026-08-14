@@ -778,6 +778,63 @@ export async function deleteCustomerAccount(token, password) {
   return data;
 }
 
+// ---------- Agent coverage area (real GPS + reverse geocoding) ----------
+
+export async function detectMyArea(token, latitude, longitude) {
+  const response = await fetch(`${API_BASE_URL}/users/me/area/detect`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ latitude, longitude }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to detect your area");
+  return data; // { area_name, area_latitude, area_longitude }
+}
+
+export async function clearMyArea(token) {
+  const response = await fetch(`${API_BASE_URL}/users/me/area`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to clear your area");
+  return data;
+}
+
+// ---------- Two-factor authentication: email-code method ----------
+
+export async function setupEmailTwoFactor(token) {
+  const response = await fetch(`${API_BASE_URL}/auth/2fa/setup-email`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to send a confirmation code");
+  return data; // { sent, masked_email }
+}
+
+export async function enableEmailTwoFactor(token, code) {
+  const response = await fetch(`${API_BASE_URL}/auth/2fa/enable-email`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ code }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to enable two-factor authentication");
+  return data;
+}
+
+export async function resendTwoFactorLoginCode(challengeToken) {
+  const response = await fetch(`${API_BASE_URL}/auth/2fa/resend-code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ challenge_token: challengeToken, code: "" }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to resend the code");
+  return data; // { sent, masked_email }
+}
+
 /**
  * Sends a batch of pending records to the server's /sync endpoint.
  * NOTE: this endpoint is intentionally left unauthenticated for now — see

@@ -38,9 +38,16 @@ export function AuthProvider({ children }) {
     const data = await loginRequest({ username, password });
     if (data.requires_2fa) {
       // Password was correct, but this account has 2FA on — hand back
-      // the challenge token so LoginPage can prompt for a code next,
-      // instead of persisting a session that doesn't exist yet.
-      return { requires_2fa: true, challenge_token: data.challenge_token };
+      // the challenge token (plus which method, and a masked email if
+      // that's the method) so LoginPage can prompt for the right kind
+      // of code next, instead of persisting a session that doesn't
+      // exist yet.
+      return {
+        requires_2fa: true,
+        challenge_token: data.challenge_token,
+        two_factor_method: data.two_factor_method,
+        masked_email: data.masked_email,
+      };
     }
     persistSession(data.access_token, data.user);
     return data.user;

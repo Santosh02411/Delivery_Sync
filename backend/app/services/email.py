@@ -47,6 +47,28 @@ def send_status_notification_email(to_email: str, order_id: str, status_label: s
     _send_email(to_email, subject, body)
 
 
+def send_two_factor_code_email(to_email: str, code: str, purpose: str) -> None:
+    """
+    purpose is "enable_2fa" (confirming the user controls this inbox
+    before turning email-based 2FA on) or "login" (a normal sign-in
+    second factor) — same email shape either way, just different wording
+    so it's clear from the subject line why the code was sent.
+    """
+    if purpose == "enable_2fa":
+        subject = "Confirm email for Delivery Sync two-factor authentication"
+        intro = "Use this code to turn on email-based two-factor authentication for your account:"
+    else:
+        subject = "Your Delivery Sync login code"
+        intro = "Use this code to finish logging in:"
+
+    body = (
+        f"{intro}\n\n"
+        f"    {code}\n\n"
+        f"This code expires in 10 minutes. If you didn't request this, you can safely ignore this email."
+    )
+    _send_email(to_email, subject, body)
+
+
 def _send_email(to_email: str, subject: str, body: str) -> None:
     if not SMTP_HOST:
         # No SMTP configured — this is the default, zero-cost path.

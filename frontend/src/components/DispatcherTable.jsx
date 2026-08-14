@@ -661,6 +661,9 @@ function UnassignedOrdersPanel({ token, agents, onAssigned, onActionQueued }) {
                 <div>
                   <div style={{ fontSize: "13px", fontWeight: 600 }}>{order.order_id}</div>
                   <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>{order.notes}</div>
+                  {order.zone && (
+                    <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>🗺 Zone: {order.zone}</div>
+                  )}
                   {order.location_note && (
                     <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>📍 {order.location_note}</div>
                   )}
@@ -675,7 +678,7 @@ function UnassignedOrdersPanel({ token, agents, onAssigned, onActionQueued }) {
                       style={{ fontSize: "12px", padding: "4px 8px" }}
                       onClick={() => handleShowSuggestions(order.id)}
                       disabled={loadingSuggestionsFor === order.id}
-                      title="Rank agents by live GPS distance and current workload"
+                      title="Rank agents by zone match, live GPS distance, and current workload"
                     >
                       {loadingSuggestionsFor === order.id ? "Ranking..." : "🎯 Suggest agent"}
                     </button>
@@ -691,9 +694,11 @@ function UnassignedOrdersPanel({ token, agents, onAssigned, onActionQueued }) {
                     <option value="">Select agent...</option>
                     {agents.map((a) => {
                       const s = suggestionMap?.get(a.id);
+                      const zoneTag = s?.zone_match ? "✓ zone match — " : "";
+                      const areaTag = a.area_name ? ` (${a.area_name})` : "";
                       const label = s
-                        ? `${a.display_name}${s.distance_km !== null ? ` — ${s.distance_km} km away` : " — no location"}, ${s.active_delivery_count} active`
-                        : a.display_name;
+                        ? `${zoneTag}${a.display_name}${areaTag}${s.distance_km !== null ? ` — ${s.distance_km} km away` : " — no location"}, ${s.active_delivery_count} active`
+                        : `${a.display_name}${areaTag}`;
                       return (
                         <option key={a.id} value={a.id}>{label}</option>
                       );

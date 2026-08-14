@@ -24,9 +24,11 @@ from app.models.user import (
     TwoFactorLoginVerify,
     TwoFactorDisableRequest,
     TwoFactorStatusOut,
+    TwoFactorEmailCodeRequest,
 )
 from app.models.organization import OrganizationDB
 from app.models.password_reset import PasswordResetTokenDB, ForgotPasswordRequest, ResetPasswordRequest
+from app.models.email_otp import EmailOtpDB, EMAIL_OTP_EXPIRY_MINUTES, generate_numeric_code, mask_email
 from app.services.auth import (
     hash_password,
     verify_password,
@@ -36,8 +38,8 @@ from app.services.auth import (
 )
 from app.services.totp import generate_secret, get_provisioning_uri, verify_code
 from app.services.rate_limiter import limiter
-from app.services.email import send_password_reset_email
-from datetime import datetime
+from app.services.email import send_password_reset_email, send_two_factor_code_email
+from datetime import datetime, timedelta
 import os
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -49,6 +51,49 @@ def generate_invite_code() -> str:
     """8-character, easy-to-read invite code (uppercase letters + digits)."""
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(8))
+
+
+def _issue_and_send_email_otp(db: Session, user: UserDB, purpose: str) -> str:
+    """
+    Generates a fresh 6-digit code, stores its hash (see
+    models/email_otp.py for why hashed, not plaintext), emails the plain
+    code to the user, and returns the masked email address for display.
+    Shared by both the "confirm your inbox to enable email 2FA" flow and
+    the "here's your login code" flow — same mechanics, different
+    `purpose` label so the two can't be swapped for each other.
+    """
+    code = generate_numeric_code()
+    otp = EmailOtpDB(user_id=user.id, code_hash=hash_password(code), purpose=purpose)
+    db.add(otp)
+    db.commit()
+
+    send_two_factor_code_email(user.email, code, purpose)
+    return mask_email(user.email)
+
+
+def _verify_and_consume_email_otp(db: Session, user_id: str, purpose: str, code: str) -> bool:
+    """
+    Checks `code` against the most recent not-yet-used, not-yet-expired
+    OTP of this purpose for this user, and marks it used on success —
+    each code works exactly once, and only the most recently issued one
+    is ever accepted (so requesting a resend invalidates checking an
+    older email still sitting in the inbox, avoiding any ambiguity about
+    which one is "the real code").
+    """
+    otp = (
+        db.query(EmailOtpDB)
+        .filter(EmailOtpDB.user_id == user_id, EmailOtpDB.purpose == purpose, EmailOtpDB.used == False)  # noqa: E712
+        .order_by(EmailOtpDB.created_at.desc())
+        .first()
+    )
+    if not otp or otp.expires_at < datetime.utcnow():
+        return False
+    if not verify_password(code, otp.code_hash):
+        return False
+
+    otp.used = True
+    db.commit()
+    return True
 
 
 @router.post("/signup", response_model=TokenResponse)
@@ -143,12 +188,46 @@ def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
     if user.totp_enabled:
         # Password alone isn't enough for this account — hand back a
         # short-lived challenge token instead of a real session, and let
-        # the frontend prompt for the 6-digit code next.
+        # the frontend prompt for the code next. For the "email" method
+        # there's no code sitting in an app yet, so send one right now;
+        # for "totp" the code already exists in the user's authenticator
+        # app, nothing to send.
         challenge_token = create_two_factor_challenge_token(user.id)
-        return {"requires_2fa": True, "challenge_token": challenge_token}
+        masked_email = None
+        if user.two_factor_method == "email":
+            masked_email = _issue_and_send_email_otp(db, user, purpose="login")
+        return {
+            "requires_2fa": True,
+            "challenge_token": challenge_token,
+            "two_factor_method": user.two_factor_method,
+            "masked_email": masked_email,
+        }
 
     token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
     return {"access_token": token, "user": user, "org_invite_code": None}
+
+
+@router.post("/2fa/resend-code")
+@limiter.limit("5/minute")
+def resend_two_factor_login_code(request: Request, payload: TwoFactorLoginVerify, db: Session = Depends(get_db)):
+    """
+    Sends a fresh login code to an "email" 2FA account's inbox — for
+    when the first one expired, got lost, or landed in spam.
+    `payload.code` is ignored here (the model is reused for its
+    `challenge_token` field); only the token matters.
+    """
+    decoded = decode_access_token(payload.challenge_token)
+    if not decoded or "pending_2fa_user_id" not in decoded:
+        raise HTTPException(status_code=401, detail="This login attempt has expired. Log in again.")
+
+    user = db.query(UserDB).filter(UserDB.id == decoded["pending_2fa_user_id"]).first()
+    if not user or not user.is_active or not user.totp_enabled:
+        raise HTTPException(status_code=401, detail="This login attempt has expired. Log in again.")
+    if user.two_factor_method != "email":
+        raise HTTPException(status_code=400, detail="This account doesn't use email codes.")
+
+    masked_email = _issue_and_send_email_otp(db, user, purpose="login")
+    return {"sent": True, "masked_email": masked_email}
 
 
 @router.post("/2fa/verify-login", response_model=TokenResponse)
@@ -156,8 +235,9 @@ def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
 def verify_two_factor_login(request: Request, payload: TwoFactorLoginVerify, db: Session = Depends(get_db)):
     """
     Second step of login for an account with 2FA turned on: exchanges a
-    valid challenge_token (from POST /auth/login) plus a correct 6-digit
-    authenticator code for a real access token.
+    valid challenge_token (from POST /auth/login) plus a correct code
+    for a real access token. Branches on the account's
+    `two_factor_method` to check against the right kind of code.
     """
     decoded = decode_access_token(payload.challenge_token)
     if not decoded or "pending_2fa_user_id" not in decoded:
@@ -167,13 +247,17 @@ def verify_two_factor_login(request: Request, payload: TwoFactorLoginVerify, db:
     if not user or not user.is_active:
         raise HTTPException(status_code=401, detail="This login attempt has expired. Log in again.")
 
-    if not user.totp_enabled or not user.totp_secret:
+    if not user.totp_enabled:
         # 2FA was turned off between step 1 and step 2 (rare, but
         # possible) — nothing left to verify against.
         raise HTTPException(status_code=400, detail="Two-factor authentication is no longer enabled on this account.")
 
-    if not verify_code(user.totp_secret, payload.code):
-        raise HTTPException(status_code=401, detail="Incorrect code. Check your authenticator app and try again.")
+    if user.two_factor_method == "email":
+        if not _verify_and_consume_email_otp(db, user.id, purpose="login", code=payload.code.strip()):
+            raise HTTPException(status_code=401, detail="Incorrect or expired code. Request a new one and try again.")
+    else:
+        if not user.totp_secret or not verify_code(user.totp_secret, payload.code):
+            raise HTTPException(status_code=401, detail="Incorrect code. Check your authenticator app and try again.")
 
     token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
     return {"access_token": token, "user": user, "org_invite_code": None}
@@ -278,11 +362,12 @@ def get_current_user(
 
 @router.get("/2fa/status", response_model=TwoFactorStatusOut)
 def get_two_factor_status(current_user: UserDB = Depends(get_current_user)):
-    return {"totp_enabled": current_user.totp_enabled}
+    return {"totp_enabled": current_user.totp_enabled, "two_factor_method": current_user.two_factor_method}
 
 
 @router.post("/2fa/setup", response_model=TwoFactorSetupOut)
 def setup_two_factor(db: Session = Depends(get_db), current_user: UserDB = Depends(get_current_user)):
+    """Start setup for the AUTHENTICATOR APP method. For the email-code method, see /2fa/setup-email below instead."""
     if current_user.totp_enabled:
         raise HTTPException(status_code=400, detail="Two-factor authentication is already enabled. Disable it first to set up a new device.")
 
@@ -300,6 +385,7 @@ def enable_two_factor(
     db: Session = Depends(get_db),
     current_user: UserDB = Depends(get_current_user),
 ):
+    """Confirms the AUTHENTICATOR APP method with one real code from it, and turns 2FA on."""
     if not current_user.totp_secret:
         raise HTTPException(status_code=400, detail="Start setup first (POST /auth/2fa/setup) before confirming a code.")
     if current_user.totp_enabled:
@@ -309,6 +395,43 @@ def enable_two_factor(
         raise HTTPException(status_code=400, detail="Incorrect code. Check your authenticator app and try again.")
 
     current_user.totp_enabled = True
+    current_user.two_factor_method = "totp"
+    db.commit()
+    return {"success": True, "message": "Two-factor authentication is now enabled on your account."}
+
+
+@router.post("/2fa/setup-email")
+@limiter.limit("5/minute")
+def setup_email_two_factor(request: Request, db: Session = Depends(get_db), current_user: UserDB = Depends(get_current_user)):
+    """
+    Start setup for the EMAIL CODE method: sends a confirmation code to
+    the user's own account email right away — the "device" being set up
+    here is the inbox itself, so there's nothing to scan first the way
+    there is with an authenticator app. POST /2fa/enable-email with that
+    code turns it on.
+    """
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="Two-factor authentication is already enabled. Disable it first to switch methods.")
+
+    masked_email = _issue_and_send_email_otp(db, current_user, purpose="enable_2fa")
+    return {"sent": True, "masked_email": masked_email}
+
+
+@router.post("/2fa/enable-email")
+def enable_email_two_factor(
+    payload: TwoFactorEmailCodeRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    if current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="Two-factor authentication is already enabled.")
+
+    if not _verify_and_consume_email_otp(db, current_user.id, purpose="enable_2fa", code=payload.code.strip()):
+        raise HTTPException(status_code=400, detail="Incorrect or expired code. Request a new one and try again.")
+
+    current_user.totp_enabled = True
+    current_user.two_factor_method = "email"
+    current_user.totp_secret = None  # this account uses email codes, not an authenticator secret
     db.commit()
     return {"success": True, "message": "Two-factor authentication is now enabled on your account."}
 
@@ -321,11 +444,13 @@ def disable_two_factor(
 ):
     """Requires the account password again — not just an active session —
     so someone who grabs an unlocked, logged-in device can't silently
-    strip 2FA off the account themselves."""
+    strip 2FA off the account themselves. Works the same regardless of
+    which method (authenticator app or email) is currently active."""
     if not verify_password(payload.password, current_user.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect password.")
 
     current_user.totp_enabled = False
     current_user.totp_secret = None
+    current_user.two_factor_method = "totp"
     db.commit()
     return {"success": True, "message": "Two-factor authentication has been disabled."}

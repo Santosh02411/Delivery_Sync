@@ -12,3 +12,5 @@ pywebpush
 twilio
 razorpay
 pyotp
+python-dotenv
+requests

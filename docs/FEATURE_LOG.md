@@ -891,6 +891,81 @@ both actions, with a password-confirmation step before deletion.
 
 ---
 
+---
+
+## Real Fix: `.env` Was Never Actually Being Loaded
+
+**What was wrong:** Every "optional real, else console-log" integration
+(SMTP email, Twilio SMS, Razorpay, VAPID) reads its config as a
+module-level constant via `os.environ.get(...)`. Nothing in the codebase
+ever called `load_dotenv()` — no `python-dotenv` dependency existed at
+all. Filling in real values in `backend/.env` had **zero effect**: those
+values only ever reach `os.environ` if something loads the file into
+the process first, and nothing did. Password reset (and everything else
+gated the same way) kept "printing instead of sending" no matter what
+`.env` said.
+
+**The fix:** Added `python-dotenv`; `main.py` now calls `load_dotenv()`
+as the literal first lines of the file, before any local import — this
+has to happen before those modules are first imported, since that's the
+exact moment their module-level `SMTP_HOST = os.environ.get(...)`-style
+constants get evaluated. Verified directly: `SMTP_HOST` reads as `None`
+without the fix, and the real value with it.
+
+---
+
+## Agent Coverage Area (Real GPS Reverse Geocoding) + Zone-Based Assignment
+
+**What was missing:** Suggested/auto-assign ranking used only live GPS
+distance and workload — there was no concept of an agent's actual
+coverage area, so a dispatcher couldn't assign based on "who actually
+covers this zone."
+
+**What it does:** New `services/geocoding.py` calls OpenStreetMap's free
+Nominatim reverse-geocoding API (no key, no billing) to turn an agent's
+real device GPS coordinates into a real area name (e.g. "Koramangala,
+Bengaluru") — a genuine reverse geocode, not a hand-typed field.
+`POST /users/me/area/detect` (agent-only) saves it; new "My Area"
+section + "📍 Detect My Area" button in `AgentDeliveryList.jsx`.
+`_rank_agents_for_delivery` now sorts zone-matched agents (delivery's
+`zone` vs. agent's `area_name`, loose case-insensitive match) ahead of
+everyone else, before distance or workload — a far-away agent whose area
+matches the delivery's zone now outranks a much closer agent who doesn't
+(verified directly: 1111km-but-zone-matched agent ranked #1 over a
+0.78km-but-wrong-zone agent). Dispatcher's assign dropdown and suggested-
+agents panel show each agent's area and a zone-match indicator.
+
+---
+
+## Email-Code Two-Factor Authentication (Second Method)
+
+**What was missing:** 2FA only supported an authenticator app (TOTP).
+Scanning the setup QR code with a phone's general camera or Google
+Lens/Search doesn't work — those read it as plain text and try to
+web-search it, since `otpauth://` isn't a scheme they know how to open.
+That's expected behavior for those tools, not a bug, but it meant
+anyone without a dedicated authenticator app installed had no way to use
+2FA at all.
+
+**What it does:** A second, independent 2FA method — a 6-digit code
+emailed to the account's own address, real SMTP delivery (see the
+`.env` fix above), reusing the same hashed-and-expiring code pattern as
+password reset tokens (`models/email_otp.py`). Setup: `POST
+/auth/2fa/setup-email` sends a confirmation code immediately (no QR —
+the "device" being set up is the inbox itself); `POST
+/auth/2fa/enable-email` confirms it. Login: when an "email"-method
+account signs in, `POST /auth/login` sends a fresh code automatically
+and returns `two_factor_method`/`masked_email` alongside the challenge
+token; `POST /auth/2fa/resend-code` covers a lost/expired code.
+`TwoFactorSettings.jsx` now offers both methods side by side, with
+explicit instructions to use an authenticator app's own QR scanner
+(not a camera app or Lens) for the TOTP option. Verified end-to-end:
+setup → enable → login-auto-sends → wrong-code rejection → correct-code
+success → single-use enforcement — and confirmed the existing TOTP path
+is completely unaffected by an account using the email method.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

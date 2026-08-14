@@ -17,7 +17,7 @@ login (which would need the login form to ask "which organization?" too).
 import enum
 import uuid
 
-from sqlalchemy import Column, String, Enum as SqlEnum, Boolean
+from sqlalchemy import Column, String, Enum as SqlEnum, Boolean, Float
 from pydantic import BaseModel
 from typing import Optional
 
@@ -52,6 +52,22 @@ class UserDB(Base):
     # checks totp_secret when totp_enabled is True.
     totp_secret = Column(String, nullable=True)
     totp_enabled = Column(Boolean, nullable=False, default=False)
+    # Which second factor is active when totp_enabled is True: "totp" (an
+    # authenticator app, using totp_secret above) or "email" (a one-time
+    # code sent to `email` at login time — see services/email_otp.py).
+    # Meaningless while totp_enabled is False.
+    two_factor_method = Column(String, nullable=False, default="totp")
+
+    # An agent's real-world coverage area — set via "Detect my area" on
+    # their profile (browser GPS -> services/geocoding.py reverse
+    # geocode), NOT hand-typed, so it reflects where the agent actually
+    # is rather than a guess. Used to prioritize zone-matched agents when
+    # a dispatcher assigns or auto-assigns a delivery that has a `zone`
+    # set (see routes/deliveries.py's _rank_agents_for_delivery).
+    # Meaningless for non-agent roles.
+    area_name = Column(String, nullable=True)
+    area_latitude = Column(Float, nullable=True)
+    area_longitude = Column(Float, nullable=True)
 
 
 # ---------- Pydantic Schemas ----------
@@ -83,6 +99,8 @@ class UserOut(BaseModel):
     org_id: str
     is_active: bool
     totp_enabled: bool = False
+    two_factor_method: str = "totp"
+    area_name: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -110,6 +128,8 @@ class LoginResult(BaseModel):
     org_invite_code: Optional[str] = None
     requires_2fa: bool = False
     challenge_token: Optional[str] = None
+    two_factor_method: Optional[str] = None  # "totp" or "email", only set when requires_2fa is True
+    masked_email: Optional[str] = None  # e.g. "m***y@example.com" — only set when two_factor_method is "email"
 
 
 class TwoFactorSetupOut(BaseModel):
@@ -132,3 +152,19 @@ class TwoFactorDisableRequest(BaseModel):
 
 class TwoFactorStatusOut(BaseModel):
     totp_enabled: bool
+    two_factor_method: str = "totp"
+
+
+class TwoFactorEmailCodeRequest(BaseModel):
+    code: str
+
+
+class AreaDetectRequest(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class AreaOut(BaseModel):
+    area_name: Optional[str] = None
+    area_latitude: Optional[float] = None
+    area_longitude: Optional[float] = None

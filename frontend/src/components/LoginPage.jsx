@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useTheme } from "../context/ThemeContext";
+import { resendTwoFactorLoginCode } from "../services/api";
 import "../styles/auth.css";
 
 export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
@@ -19,7 +20,11 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
   // code — switches the form into a second step instead of navigating
   // away, since a password alone isn't enough to finish logging in.
   const [twoFactorChallenge, setTwoFactorChallenge] = useState(null);
+  const [twoFactorMethod, setTwoFactorMethod] = useState(null); // "totp" | "email"
+  const [maskedEmail, setMaskedEmail] = useState(null);
   const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [isResending, setIsResending] = useState(false);
+  const [resendMessage, setResendMessage] = useState("");
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -30,6 +35,8 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
         const result = await staffLogin(identifier, password);
         if (result && result.requires_2fa) {
           setTwoFactorChallenge(result.challenge_token);
+          setTwoFactorMethod(result.two_factor_method);
+          setMaskedEmail(result.masked_email);
         }
       } else {
         await customerLogin(identifier, password);
@@ -54,6 +61,20 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
     }
   }
 
+  async function handleResend() {
+    setError("");
+    setResendMessage("");
+    setIsResending(true);
+    try {
+      await resendTwoFactorLoginCode(twoFactorChallenge);
+      setResendMessage("A new code is on its way to your inbox.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsResending(false);
+    }
+  }
+
   if (twoFactorChallenge) {
     return (
       <div className="auth-page-wrapper">
@@ -62,9 +83,15 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
         </button>
         <div className="auth-card">
           <h2>Enter your code</h2>
-          <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginBottom: "12px" }}>
-            Open your authenticator app and enter the 6-digit code for this account.
-          </p>
+          {twoFactorMethod === "email" ? (
+            <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginBottom: "12px" }}>
+              We sent a 6-digit code to {maskedEmail || "your email"}. Enter it below — it expires in 10 minutes.
+            </p>
+          ) : (
+            <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginBottom: "12px" }}>
+              Open your authenticator app and enter the 6-digit code for this account.
+            </p>
+          )}
           <form onSubmit={handleTwoFactorSubmit}>
             <div className="auth-field">
               <label>6-digit code</label>
@@ -81,18 +108,32 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
             </div>
 
             {error && <p className="auth-error">{error}</p>}
+            {resendMessage && !error && (
+              <p style={{ fontSize: "12px", color: "var(--status-delivered)" }}>{resendMessage}</p>
+            )}
 
             <button type="submit" className="auth-submit-btn" disabled={isSubmitting || twoFactorCode.length !== 6}>
               {isSubmitting ? "Verifying..." : "Verify & Log in"}
             </button>
           </form>
 
+          {twoFactorMethod === "email" && (
+            <p className="auth-switch-text">
+              <button className="auth-switch-link" onClick={handleResend} disabled={isResending}>
+                {isResending ? "Sending..." : "Didn't get it? Resend code"}
+              </button>
+            </p>
+          )}
+
           <p className="auth-switch-text">
             <button
               className="auth-switch-link"
               onClick={() => {
                 setTwoFactorChallenge(null);
+                setTwoFactorMethod(null);
+                setMaskedEmail(null);
                 setTwoFactorCode("");
+                setResendMessage("");
                 setError("");
               }}
             >

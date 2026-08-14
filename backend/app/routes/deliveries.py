@@ -183,11 +183,31 @@ class AgentSuggestionOut(BaseModel):
     distance_km: Optional[float] = None  # None if this agent has no live location, or the delivery has no coordinates to compare against
     active_delivery_count: int
     has_location: bool
+    area_name: Optional[str] = None
+    zone_match: bool = False  # True when this agent's detected area matches the delivery's zone
 
 
 class SuggestedAgentsOut(BaseModel):
     suggestions: List[AgentSuggestionOut]
     ranked_by_distance: bool  # False when the delivery has no coordinates — suggestions fall back to workload-only ranking
+
+
+def _zone_matches_area(zone: Optional[str], area_name: Optional[str]) -> bool:
+    """
+    Loose, case-insensitive match between a delivery's dispatcher-entered
+    `zone` and an agent's GPS-detected `area_name` — checks each as a
+    substring of the other so "Koramangala" (agent's real detected area)
+    matches a zone entered as "Koramangala, Bengaluru" or just
+    "koramangala", without requiring an exact string match that would
+    be fragile in practice.
+    """
+    if not zone or not area_name:
+        return False
+    zone_norm = zone.strip().lower()
+    area_norm = area_name.strip().lower()
+    if not zone_norm or not area_norm:
+        return False
+    return zone_norm in area_norm or area_norm in zone_norm
 
 
 def _rank_agents_for_delivery(db: Session, org_id: str, db_record: DeliveryRecordDB) -> tuple[list[AgentSuggestionOut], bool]:
@@ -198,18 +218,23 @@ def _rank_agents_for_delivery(db: Session, org_id: str, db_record: DeliveryRecor
     (AgentLocationDB) — previously collected but never actually used to
     help a dispatcher decide who to assign.
 
-    Primary signal: distance from the agent's last-known position to the
-    delivery's coordinates (haversine, straight-line — good enough for
-    ranking purposes without needing a paid routing API). Secondary
-    signal / tiebreaker: current workload (how many deliveries they're
-    already out on), so two similarly-close agents don't both get
-    piled onto the busier one.
+    Ranking, in order:
+    1. Zone match FIRST — an agent whose real GPS-detected coverage area
+       (UserDB.area_name, from /users/me/area/detect) matches this
+       delivery's `zone` is placed ahead of every non-matching agent,
+       regardless of raw distance. A dispatcher marking a delivery
+       "Koramangala" wants it going to someone who actually covers
+       Koramangala, not just whoever happens to be a few hundred meters
+       closer to that one address.
+    2. Within each of those two groups (zone match / no zone match),
+       distance from the agent's last-known position to the delivery's
+       coordinates (haversine, straight-line — good enough for ranking
+       without a paid routing API).
+    3. Workload (active delivery count) as the final tiebreaker.
 
-    Falls back to workload-only ranking when the delivery has no
-    coordinates (zone-based deliveries, or a customer address that was
-    never geocoded) or an agent has never shared their location — those
-    agents still show up, just without a distance and sorted after
-    anyone with one.
+    Falls back gracefully at every level: no zone on the delivery, no
+    area on an agent, no coordinates, no shared location — all just mean
+    that particular signal doesn't contribute, not that ranking fails.
     """
     agents = db.query(UserDB).filter(UserDB.org_id == org_id, UserDB.role == UserRole.agent).all()
     if not agents:
@@ -248,12 +273,20 @@ def _rank_agents_for_delivery(db: Session, org_id: str, db_record: DeliveryRecor
             distance_km=distance_km,
             active_delivery_count=active_count,
             has_location=location is not None,
+            area_name=agent.area_name,
+            zone_match=_zone_matches_area(db_record.zone, agent.area_name),
         ))
 
-    # Sort: agents with a computed distance first (nearest first), then
-    # workload as the tiebreaker; agents with no distance available sort
-    # after, ordered by workload alone.
-    suggestions.sort(key=lambda s: (s.distance_km is None, s.distance_km if s.distance_km is not None else 0, s.active_delivery_count))
+    # Sort: zone-matched agents first, then agents with a computed
+    # distance (nearest first), then workload as the final tiebreaker;
+    # agents with no distance available sort after, ordered by workload
+    # alone within their zone-match group.
+    suggestions.sort(key=lambda s: (
+        not s.zone_match,
+        s.distance_km is None,
+        s.distance_km if s.distance_km is not None else 0,
+        s.active_delivery_count,
+    ))
     return suggestions, ranked_by_distance
 
 

@@ -7,6 +7,21 @@ a genuinely useful thing to show in interviews, since it's auto-generated
 from your code.
 """
 
+# THIS MUST RUN BEFORE ANY OTHER LOCAL IMPORT. Several modules below
+# (services/email.py, services/sms.py, services/payment.py, services/push.py)
+# read config like SMTP_HOST/TWILIO_ACCOUNT_SID/RAZORPAY_KEY_ID as
+# MODULE-LEVEL constants — evaluated once, the moment that module is
+# first imported. If .env hasn't been loaded into the process
+# environment yet at that exact moment, those modules permanently
+# capture `None` for every setting, and no amount of the .env file
+# being technically present on disk fixes it for the rest of that
+# run — env vars only reach os.environ this way, never automatically
+# just because a same-named file sits next to the code. Filling in a
+# real SMTP_HOST in .env and still seeing "printed instead of sent" in
+# the console is exactly what that bug looks like from the outside.
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles

@@ -11,7 +11,7 @@ import { startAutoSync, runSync, describeConflict } from "../services/syncEngine
 import { startLocationPingAutoSync } from "../services/locationSyncEngine";
 import { writeSyncContext } from "../services/backgroundSyncContext";
 import { API_BASE_URL } from "../services/api";
-import { deleteDeliveryOnServer, fetchMyDeliveriesFromServer, updateMyAgentLocation } from "../services/api";
+import { deleteDeliveryOnServer, fetchMyDeliveriesFromServer, updateMyAgentLocation, detectMyArea, clearMyArea } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import DeliveryStatusUpdater from "./DeliveryStatusUpdater";
@@ -34,7 +34,7 @@ const PAGE_SIZE = 5;
  *    and pushed up via the sync engine
  */
 export default function AgentDeliveryList() {
-  const { token, user } = useAuth();
+  const { token, user, updateUser } = useAuth();
   const { showToast } = useToast();
   const [deliveries, setDeliveries] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -44,6 +44,8 @@ export default function AgentDeliveryList() {
   const [currentPage, setCurrentPage] = useState(1);
   const [isSharingLocation, setIsSharingLocation] = useState(false);
   const [locationError, setLocationError] = useState(null);
+  const [isDetectingArea, setIsDetectingArea] = useState(false);
+  const [areaError, setAreaError] = useState(null);
   const [conflictNotices, setConflictNotices] = useState([]);
   const watchIdRef = React.useRef(null);
 
@@ -226,6 +228,55 @@ export default function AgentDeliveryList() {
     };
   }, []);
 
+  function handleDetectArea() {
+    if (!navigator.geolocation) {
+      setAreaError("Location isn't available on this device/browser.");
+      return;
+    }
+    if (!window.isSecureContext) {
+      setAreaError(
+        "Detecting your area needs a secure connection. If you're testing locally, open the app via " +
+        "'localhost' (not a network IP like 192.168.x.x)."
+      );
+      return;
+    }
+
+    setAreaError(null);
+    setIsDetectingArea(true);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        try {
+          const result = await detectMyArea(token, position.coords.latitude, position.coords.longitude);
+          updateUser({ area_name: result.area_name });
+        } catch (err) {
+          setAreaError(err.message);
+        } finally {
+          setIsDetectingArea(false);
+        }
+      },
+      (err) => {
+        const friendlyMessage =
+          err.code === err.PERMISSION_DENIED
+            ? "Location permission was denied. Check your browser's site settings and allow location access, then try again."
+            : err.code === err.TIMEOUT
+            ? "Timed out getting your location. Check your device's location/GPS is turned on and try again."
+            : `Couldn't get your location: ${err.message}`;
+        setAreaError(friendlyMessage);
+        setIsDetectingArea(false);
+      },
+      { enableHighAccuracy: true, timeout: 20000 }
+    );
+  }
+
+  async function handleClearArea() {
+    try {
+      await clearMyArea(token);
+      updateUser({ area_name: null });
+    } catch (err) {
+      setAreaError(err.message);
+    }
+  }
+
   async function handleManualSync() {
     const result = await runSync();
     if (result.success) {
@@ -345,6 +396,39 @@ export default function AgentDeliveryList() {
       {locationError && (
         <p style={{ color: "var(--danger)", fontSize: "12px", marginTop: "-12px", marginBottom: "16px" }}>
           {locationError}
+        </p>
+      )}
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "10px",
+          flexWrap: "wrap",
+          marginBottom: "20px",
+          padding: "10px 14px",
+          border: "1px solid var(--border-color)",
+          borderRadius: "var(--radius-sm)",
+        }}
+      >
+        <span style={{ fontSize: "12.5px", color: "var(--text-secondary)" }}>
+          My area:{" "}
+          <strong style={{ color: "var(--text-primary)" }}>
+            {user.area_name || "Not set"}
+          </strong>
+        </span>
+        <button className="btn" style={{ fontSize: "12px" }} onClick={handleDetectArea} disabled={isDetectingArea}>
+          {isDetectingArea ? "Detecting..." : "📍 Detect My Area"}
+        </button>
+        {user.area_name && (
+          <button className="btn" style={{ fontSize: "12px" }} onClick={handleClearArea}>
+            Clear
+          </button>
+        )}
+      </div>
+      {areaError && (
+        <p style={{ color: "var(--danger)", fontSize: "12px", marginTop: "-12px", marginBottom: "16px" }}>
+          {areaError}
         </p>
       )}
 

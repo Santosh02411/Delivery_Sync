@@ -11,13 +11,14 @@ from typing import List
 from datetime import datetime
 
 from app.db.session import get_db
-from app.models.user import UserDB, UserRole, UserOut
+from app.models.user import UserDB, UserRole, UserOut, AreaDetectRequest, AreaOut
 from app.models.agent_location import AgentLocationDB, AgentLocationUpdate, AgentLocationOut
 from app.models.delivery import DeliveryRecordDB
 from app.models.push_subscription import PushSubscriptionDB, PushSubscriptionCreate
 from app.routes.deliveries import require_dispatcher
 from app.routes.auth import get_current_user
 from app.services.push import VAPID_PUBLIC_KEY
+from app.services.geocoding import reverse_geocode_area
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -89,6 +90,56 @@ def get_delivery_agent_location(
     if not location:
         raise HTTPException(status_code=404, detail="Agent hasn't shared a live location yet.")
     return location
+
+
+@router.post("/me/area/detect", response_model=AreaOut)
+def detect_my_area(
+    payload: AreaDetectRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """
+    Real reverse geocoding, not a hand-typed zone field: the frontend
+    sends the agent's own device GPS coordinates (from
+    navigator.geolocation), and this resolves them to an actual area
+    name via services/geocoding.py. That resolved name is what
+    dispatcher assignment ranking matches against a delivery's `zone`
+    (see routes/deliveries.py's _rank_agents_for_delivery) — so
+    "assign based on area" reflects where the agent's device actually
+    is, not a string a dispatcher guessed.
+    """
+    if current_user.role != UserRole.agent:
+        raise HTTPException(status_code=403, detail="Only agents have a coverage area.")
+
+    area_name = reverse_geocode_area(payload.latitude, payload.longitude)
+    if not area_name:
+        raise HTTPException(
+            status_code=502,
+            detail="Couldn't determine an area name for that location. Check your connection and try again.",
+        )
+
+    current_user.area_name = area_name
+    current_user.area_latitude = payload.latitude
+    current_user.area_longitude = payload.longitude
+    db.commit()
+
+    return AreaOut(area_name=area_name, area_latitude=payload.latitude, area_longitude=payload.longitude)
+
+
+@router.delete("/me/area", response_model=AreaOut)
+def clear_my_area(
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """Clears a previously-detected area, e.g. if an agent's coverage has genuinely changed and the old one no longer applies."""
+    if current_user.role != UserRole.agent:
+        raise HTTPException(status_code=403, detail="Only agents have a coverage area.")
+
+    current_user.area_name = None
+    current_user.area_latitude = None
+    current_user.area_longitude = None
+    db.commit()
+    return AreaOut()
 
 
 @router.get("/me/push/vapid-public-key")
