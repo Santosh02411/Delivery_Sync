@@ -164,6 +164,10 @@ class AreaDetectRequest(BaseModel):
     longitude: float
 
 
+class AreaSetRequest(BaseModel):
+    area_name: str
+
+
 class AreaOut(BaseModel):
     area_name: Optional[str] = None
     area_latitude: Optional[float] = None

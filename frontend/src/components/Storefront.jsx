@@ -6,6 +6,7 @@ import {
   checkoutCart,
   validateCoupon,
   fetchDeliverySlots,
+  fetchMyCustomerAddresses,
   API_BASE_URL,
 } from "../services/api";
 import {
@@ -90,6 +91,8 @@ export default function Storefront({ token, onOrderPlaced }) {
   const [isLoadingSlots, setIsLoadingSlots] = useState(false);
   const [slotError, setSlotError] = useState(null);
   const [paymentMethod, setPaymentMethod] = useState("online"); // "online" | "cod"
+  const [savedAddresses, setSavedAddresses] = useState([]);
+  const [selectedAddressId, setSelectedAddressId] = useState("new"); // "new" or a saved address's id
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [isOffline, setIsOffline] = useState(false);
@@ -99,6 +102,7 @@ export default function Storefront({ token, onOrderPlaced }) {
     loadStores();
     loadLocalCart();
     checkPendingCheckout();
+    loadSavedAddresses();
 
     const stopCartSync = startCartAutoSync(token, (result) => {
       if (result.completed) {
@@ -136,6 +140,41 @@ export default function Storefront({ token, onOrderPlaced }) {
   async function checkPendingCheckout() {
     const pending = await getPendingCheckout();
     setPendingCheckoutState(pending);
+  }
+
+  async function loadSavedAddresses() {
+    try {
+      const addresses = await fetchMyCustomerAddresses(token);
+      setSavedAddresses(addresses);
+      // Prefill from the default address (or the only one, if there's
+      // just one) so a returning customer doesn't have to retype it —
+      // still fully editable, and still overridable via the dropdown.
+      const preferred = addresses.find((a) => a.is_default) || (addresses.length === 1 ? addresses[0] : null);
+      if (preferred) {
+        applySavedAddress(preferred);
+      }
+    } catch (err) {
+      console.warn("Could not load saved addresses:", err.message);
+    }
+  }
+
+  function applySavedAddress(address) {
+    setSelectedAddressId(address.id);
+    setAddressLine(address.address_line);
+    setCity(address.city || "");
+    if (address.phone) setPhone(address.phone);
+  }
+
+  function handleAddressSelectChange(e) {
+    const value = e.target.value;
+    setSelectedAddressId(value);
+    if (value === "new") {
+      setAddressLine("");
+      setCity("");
+      return;
+    }
+    const address = savedAddresses.find((a) => a.id === value);
+    if (address) applySavedAddress(address);
   }
 
   async function loadStores() {
@@ -592,11 +631,26 @@ export default function Storefront({ token, onOrderPlaced }) {
                 </div>
                 <div className="auth-field">
                   <label>Delivery Address</label>
-                  <input className="input" type="text" value={addressLine} onChange={(e) => setAddressLine(e.target.value)} required />
+                  {savedAddresses.length > 0 && (
+                    <select
+                      className="input"
+                      value={selectedAddressId}
+                      onChange={handleAddressSelectChange}
+                      style={{ marginBottom: "6px" }}
+                    >
+                      {savedAddresses.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.label}{a.is_default ? " (default)" : ""} — {a.address_line}
+                        </option>
+                      ))}
+                      <option value="new">Enter a new address...</option>
+                    </select>
+                  )}
+                  <input className="input" type="text" value={addressLine} onChange={(e) => { setAddressLine(e.target.value); setSelectedAddressId("new"); }} required />
                 </div>
                 <div className="auth-field">
                   <label>City</label>
-                  <input className="input" type="text" value={city} onChange={(e) => setCity(e.target.value)} />
+                  <input className="input" type="text" value={city} onChange={(e) => { setCity(e.target.value); setSelectedAddressId("new"); }} />
                 </div>
                 <div className="auth-field">
                   <label>Phone</label>

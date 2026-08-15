@@ -11,7 +11,7 @@ import { startAutoSync, runSync, describeConflict } from "../services/syncEngine
 import { startLocationPingAutoSync } from "../services/locationSyncEngine";
 import { writeSyncContext } from "../services/backgroundSyncContext";
 import { API_BASE_URL } from "../services/api";
-import { deleteDeliveryOnServer, fetchMyDeliveriesFromServer, updateMyAgentLocation, detectMyArea, clearMyArea } from "../services/api";
+import { deleteDeliveryOnServer, fetchMyDeliveriesFromServer, updateMyAgentLocation, detectMyArea, clearMyArea, setMyArea, fetchAreaSuggestions } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import DeliveryStatusUpdater from "./DeliveryStatusUpdater";
@@ -46,6 +46,9 @@ export default function AgentDeliveryList() {
   const [locationError, setLocationError] = useState(null);
   const [isDetectingArea, setIsDetectingArea] = useState(false);
   const [areaError, setAreaError] = useState(null);
+  const [areaSuggestions, setAreaSuggestions] = useState([]);
+  const [manualAreaInput, setManualAreaInput] = useState("");
+  const [isSettingArea, setIsSettingArea] = useState(false);
   const [conflictNotices, setConflictNotices] = useState([]);
   const watchIdRef = React.useRef(null);
 
@@ -58,6 +61,7 @@ export default function AgentDeliveryList() {
 
     loadFromLocalStorage();
     pullAssignedDeliveries();
+    fetchAreaSuggestions(token).then(setAreaSuggestions).catch(() => {});
 
     const stopAutoSync = startAutoSync((result) => {
       if (result.success && result.syncedCount > 0) {
@@ -277,6 +281,25 @@ export default function AgentDeliveryList() {
     }
   }
 
+  async function handleSetAreaManually(areaName) {
+    const trimmed = areaName.trim();
+    if (!trimmed) return;
+    setAreaError(null);
+    setIsSettingArea(true);
+    try {
+      const result = await setMyArea(token, trimmed);
+      updateUser({ area_name: result.area_name });
+      setManualAreaInput("");
+      if (!areaSuggestions.includes(result.area_name)) {
+        setAreaSuggestions([...areaSuggestions, result.area_name].sort());
+      }
+    } catch (err) {
+      setAreaError(err.message);
+    } finally {
+      setIsSettingArea(false);
+    }
+  }
+
   async function handleManualSync() {
     const result = await runSync();
     if (result.success) {
@@ -418,7 +441,38 @@ export default function AgentDeliveryList() {
           </strong>
         </span>
         <button className="btn" style={{ fontSize: "12px" }} onClick={handleDetectArea} disabled={isDetectingArea}>
-          {isDetectingArea ? "Detecting..." : "📍 Detect My Area"}
+          {isDetectingArea ? "Detecting..." : "📍 Detect via GPS"}
+        </button>
+        {areaSuggestions.length > 0 && (
+          <select
+            className="input"
+            style={{ fontSize: "12px", width: "auto" }}
+            value=""
+            onChange={(e) => { if (e.target.value) handleSetAreaManually(e.target.value); }}
+            disabled={isSettingArea}
+          >
+            <option value="">Choose an area...</option>
+            {areaSuggestions.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        )}
+        <input
+          type="text"
+          className="input"
+          style={{ fontSize: "12px", width: "160px" }}
+          placeholder="Or type an area name"
+          value={manualAreaInput}
+          onChange={(e) => setManualAreaInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleSetAreaManually(manualAreaInput); } }}
+        />
+        <button
+          className="btn"
+          style={{ fontSize: "12px" }}
+          onClick={() => handleSetAreaManually(manualAreaInput)}
+          disabled={isSettingArea || !manualAreaInput.trim()}
+        >
+          Set
         </button>
         {user.area_name && (
           <button className="btn" style={{ fontSize: "12px" }} onClick={handleClearArea}>

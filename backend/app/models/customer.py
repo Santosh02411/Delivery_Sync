@@ -11,6 +11,7 @@ from datetime import datetime
 
 from sqlalchemy import Column, String, DateTime
 from pydantic import BaseModel
+from typing import Optional
 
 from app.db.session import Base
 
@@ -43,6 +44,25 @@ class CustomerOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class CustomerProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+
+
+class CustomerPasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class CustomerUpdate(BaseModel):
+    name: str
+
+
+class CustomerPasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str
 
 
 class CustomerTokenResponse(BaseModel):

@@ -65,7 +65,7 @@ npm install
 npm run dev
 ```
 
-Runs at `http://localhost:3100`.
+Runs at `http://localhost:3200`.
 
 > **If you're pulling a fresh copy of this project after previously
 > running an older version:** delete `backend/database.db` before

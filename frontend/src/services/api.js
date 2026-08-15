@@ -668,6 +668,57 @@ export async function markAllCustomerNotificationsRead(token) {
   return data;
 }
 
+export async function deleteCustomerNotification(token, notificationId) {
+  const response = await fetch(`${API_BASE_URL}/customer/notifications/${notificationId}`, {
+    method: "DELETE",
+    headers: customerAuthHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to delete notification");
+  return data;
+}
+
+export async function clearCustomerNotifications(token, onlyRead = true) {
+  const response = await fetch(`${API_BASE_URL}/customer/notifications?only_read=${onlyRead}`, {
+    method: "DELETE",
+    headers: customerAuthHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to clear notifications");
+  return data;
+}
+
+export async function fetchMyCustomerProfile(token) {
+  const response = await fetch(`${API_BASE_URL}/customer/me`, {
+    headers: customerAuthHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load your profile");
+  return data;
+}
+
+export async function updateMyCustomerProfile(token, updates) {
+  const response = await fetch(`${API_BASE_URL}/customer/me`, {
+    method: "PATCH",
+    headers: customerAuthHeaders(token),
+    body: JSON.stringify(updates),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update your profile");
+  return data;
+}
+
+export async function changeMyCustomerPassword(token, currentPassword, newPassword) {
+  const response = await fetch(`${API_BASE_URL}/customer/me/change-password`, {
+    method: "POST",
+    headers: customerAuthHeaders(token),
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to change your password");
+  return data;
+}
+
 export async function deactivateUser(token, userId) {
   const response = await fetch(`${API_BASE_URL}/admin/users/${userId}/deactivate`, {
     method: "PATCH",
@@ -806,6 +857,26 @@ export async function clearMyArea(token) {
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Failed to clear your area");
   return data;
+}
+
+export async function setMyArea(token, areaName) {
+  const response = await fetch(`${API_BASE_URL}/users/me/area/set`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ area_name: areaName }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to set your area");
+  return data;
+}
+
+export async function fetchAreaSuggestions(token) {
+  const response = await fetch(`${API_BASE_URL}/users/me/area/suggestions`, {
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load area suggestions");
+  return data; // string[]
 }
 
 // ---------- Two-factor authentication: email-code method ----------

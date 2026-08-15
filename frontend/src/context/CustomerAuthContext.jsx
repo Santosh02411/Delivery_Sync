@@ -62,8 +62,21 @@ export function CustomerAuthProvider({ children }) {
     setToken(null);
   }
 
+  function updateCustomer(patch) {
+    setCustomer((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev, ...patch };
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...parsed, customer: next }));
+      }
+      return next;
+    });
+  }
+
   return (
-    <CustomerAuthContext.Provider value={{ customer, token, isLoading, signup, login, logout }}>
+    <CustomerAuthContext.Provider value={{ customer, token, isLoading, signup, login, logout, updateCustomer }}>
       {children}
     </CustomerAuthContext.Provider>
   );

@@ -11,7 +11,7 @@ from typing import List
 from datetime import datetime
 
 from app.db.session import get_db
-from app.models.user import UserDB, UserRole, UserOut, AreaDetectRequest, AreaOut
+from app.models.user import UserDB, UserRole, UserOut, AreaDetectRequest, AreaSetRequest, AreaOut
 from app.models.agent_location import AgentLocationDB, AgentLocationUpdate, AgentLocationOut
 from app.models.delivery import DeliveryRecordDB
 from app.models.push_subscription import PushSubscriptionDB, PushSubscriptionCreate
@@ -124,6 +124,66 @@ def detect_my_area(
     db.commit()
 
     return AreaOut(area_name=area_name, area_latitude=payload.latitude, area_longitude=payload.longitude)
+
+
+@router.get("/me/area/suggestions", response_model=List[str])
+def get_area_suggestions(
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """
+    Area names already in use in this org — other agents' detected/set
+    areas, plus zones dispatchers have typed onto deliveries — so
+    picking an area can be "choose from what's already used here"
+    instead of typing blind every time. Free text is still accepted by
+    POST /me/area/set regardless; this is just a convenience list.
+    """
+    agent_areas = (
+        db.query(UserDB.area_name)
+        .filter(UserDB.org_id == current_user.org_id, UserDB.area_name.isnot(None))
+        .distinct()
+        .all()
+    )
+    delivery_zones = (
+        db.query(DeliveryRecordDB.zone)
+        .filter(DeliveryRecordDB.org_id == current_user.org_id, DeliveryRecordDB.zone.isnot(None))
+        .distinct()
+        .all()
+    )
+    names = {row[0].strip() for row in agent_areas if row[0] and row[0].strip()}
+    names |= {row[0].strip() for row in delivery_zones if row[0] and row[0].strip()}
+    return sorted(names)
+
+
+@router.post("/me/area/set", response_model=AreaOut)
+def set_my_area_manually(
+    payload: AreaSetRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """
+    Sets the agent's coverage area directly, without GPS — for when the
+    reverse-geocoded name from /me/area/detect isn't the name the
+    dispatcher actually uses for a zone (e.g. "HSR Layout" vs. what
+    Nominatim resolved to), or the agent just wants to pick their area
+    outright rather than relying on their device's current location.
+    No coordinates are stored for a manually-set area (there's no real
+    GPS fix behind it) — only the name, which is all zone-matching in
+    _rank_agents_for_delivery actually compares against anyway.
+    """
+    if current_user.role != UserRole.agent:
+        raise HTTPException(status_code=403, detail="Only agents have a coverage area.")
+
+    area_name = payload.area_name.strip()
+    if not area_name:
+        raise HTTPException(status_code=400, detail="Area name can't be empty.")
+
+    current_user.area_name = area_name
+    current_user.area_latitude = None
+    current_user.area_longitude = None
+    db.commit()
+
+    return AreaOut(area_name=area_name, area_latitude=None, area_longitude=None)
 
 
 @router.delete("/me/area", response_model=AreaOut)

@@ -21,6 +21,11 @@ import {
   subscribeToPush,
   exportCustomerData,
   deleteCustomerAccount,
+  deleteCustomerNotification,
+  clearCustomerNotifications,
+  fetchMyCustomerProfile,
+  updateMyCustomerProfile,
+  changeMyCustomerPassword,
   API_BASE_URL,
 } from "../services/api";
 import StatusBadge from "./StatusBadge";
@@ -51,14 +56,12 @@ const STATUS_LABELS = {
 const LIVE_TRACKABLE_STATUSES = ["picked_up", "out_for_delivery"];
 
 export default function CustomerDashboard() {
-  const { customer, token, logout } = useCustomerAuth();
+  const { customer, token, logout, updateCustomer } = useCustomerAuth();
   const { theme, toggleTheme } = useTheme();
   const [deliveries, setDeliveries] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [showAddresses, setShowAddresses] = useState(false);
-  const [showShop, setShowShop] = useState(false);
-  const [showPrivacy, setShowPrivacy] = useState(false);
+  const [activeView, setActiveView] = useState("orders"); // "orders" | "shop" | "addresses" | "privacy" | "profile"
   const [expandedId, setExpandedId] = useState(null);
   const [error, setError] = useState(null);
   const [pushStatus, setPushStatus] = useState("idle");
@@ -140,6 +143,16 @@ export default function CustomerDashboard() {
     await loadNotifications();
   }
 
+  async function handleDeleteNotification(id) {
+    await deleteCustomerNotification(token, id);
+    await loadNotifications();
+  }
+
+  async function handleClearReadNotifications() {
+    await clearCustomerNotifications(token, true);
+    await loadNotifications();
+  }
+
   async function handleEnablePush() {
     if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
       setPushStatus("unsupported");
@@ -199,14 +212,40 @@ export default function CustomerDashboard() {
               {pushStatus === "enabling" ? "Enabling..." : pushStatus === "denied" ? "Notifications Blocked" : "🔔 Enable Push"}
             </button>
           )}
-          <button className="btn btn-primary" onClick={() => setShowShop(!showShop)}>
+          <button
+            className="btn btn-primary"
+            style={activeView === "orders" ? { outline: "2px solid var(--accent)" } : undefined}
+            onClick={() => setActiveView("orders")}
+          >
+            📦 My Orders
+          </button>
+          <button
+            className="btn btn-primary"
+            style={activeView === "shop" ? { outline: "2px solid var(--accent)" } : undefined}
+            onClick={() => setActiveView("shop")}
+          >
             🛍️ Shop
           </button>
-          <button className="btn" onClick={() => setShowAddresses(!showAddresses)}>
+          <button
+            className="btn"
+            style={activeView === "addresses" ? { outline: "2px solid var(--accent)" } : undefined}
+            onClick={() => setActiveView("addresses")}
+          >
             📍 Addresses
           </button>
-          <button className="btn" onClick={() => setShowPrivacy(!showPrivacy)}>
+          <button
+            className="btn"
+            style={activeView === "privacy" ? { outline: "2px solid var(--accent)" } : undefined}
+            onClick={() => setActiveView("privacy")}
+          >
             🔒 Privacy
+          </button>
+          <button
+            className="btn"
+            style={activeView === "profile" ? { outline: "2px solid var(--accent)" } : undefined}
+            onClick={() => setActiveView("profile")}
+          >
+            👤 Profile
           </button>
           <button className="btn" onClick={() => setShowNotifications(!showNotifications)}>
             🔔{unreadCount > 0 && ` (${unreadCount})`}
@@ -216,21 +255,27 @@ export default function CustomerDashboard() {
         </div>
       </div>
 
-      {showShop && (
+      {activeView === "shop" && (
         <div style={{ margin: "16px 24px" }}>
-          <Storefront token={token} onOrderPlaced={() => { loadDeliveries(); setShowShop(false); }} />
+          <Storefront token={token} onOrderPlaced={() => { loadDeliveries(); setActiveView("orders"); }} />
         </div>
       )}
 
-      {showAddresses && (
+      {activeView === "addresses" && (
         <div style={{ margin: "16px 24px" }}>
           <AddressBook token={token} />
         </div>
       )}
 
-      {showPrivacy && (
+      {activeView === "privacy" && (
         <div style={{ margin: "16px 24px" }}>
           <PrivacyPanel token={token} onAccountDeleted={logout} />
+        </div>
+      )}
+
+      {activeView === "profile" && (
+        <div style={{ margin: "16px 24px" }}>
+          <ProfilePanel token={token} customer={customer} />
         </div>
       )}
 
@@ -238,11 +283,18 @@ export default function CustomerDashboard() {
         <div className="card" style={{ margin: "16px 24px", maxWidth: "420px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
             <strong style={{ fontSize: "13.5px" }}>Notifications</strong>
-            {unreadCount > 0 && (
-              <button className="btn" onClick={handleMarkAllRead} style={{ fontSize: "12px", padding: "4px 8px" }}>
-                Mark all read
-              </button>
-            )}
+            <div style={{ display: "flex", gap: "6px" }}>
+              {unreadCount > 0 && (
+                <button className="btn" onClick={handleMarkAllRead} style={{ fontSize: "12px", padding: "4px 8px" }}>
+                  Mark all read
+                </button>
+              )}
+              {notifications.some((n) => n.is_read) && (
+                <button className="btn" onClick={handleClearReadNotifications} style={{ fontSize: "12px", padding: "4px 8px" }}>
+                  Clear read
+                </button>
+              )}
+            </div>
           </div>
           {notifications.length === 0 && (
             <p style={{ fontSize: "12.5px", color: "var(--text-muted)" }}>No notifications yet.</p>
@@ -255,18 +307,33 @@ export default function CustomerDashboard() {
                   padding: "8px 0",
                   borderBottom: "1px solid var(--border-color)",
                   opacity: n.is_read ? 0.6 : 1,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: "8px",
                 }}
               >
-                <div style={{ fontSize: "13px" }}>{n.message}</div>
-                <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>
-                  {new Date(n.created_at).toLocaleString()}
+                <div>
+                  <div style={{ fontSize: "13px" }}>{n.message}</div>
+                  <div style={{ fontSize: "11px", color: "var(--text-muted)" }}>
+                    {new Date(n.created_at).toLocaleString()}
+                  </div>
                 </div>
+                <button
+                  className="btn"
+                  style={{ fontSize: "11px", padding: "2px 6px", flexShrink: 0 }}
+                  onClick={() => handleDeleteNotification(n.id)}
+                  title="Delete this notification"
+                >
+                  🗑
+                </button>
               </div>
             ))}
           </div>
         </div>
       )}
 
+      {activeView === "orders" && (
       <div style={{ padding: "24px", maxWidth: "700px", margin: "0 auto" }}>
         <h2 className="page-title">My Orders</h2>
 
@@ -303,6 +370,98 @@ export default function CustomerDashboard() {
             onChanged={loadDeliveries}
           />
         ))}
+      </div>
+      )}
+    </div>
+  );
+}
+
+function ProfilePanel({ token, customer }) {
+  const { updateCustomer } = useCustomerAuth();
+
+  const [name, setName] = useState(customer.name);
+  const [email, setEmail] = useState(customer.email);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState(null);
+  const [profileSuccess, setProfileSuccess] = useState(null);
+
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState(null);
+  const [passwordSuccess, setPasswordSuccess] = useState(null);
+
+  async function handleSaveProfile(e) {
+    e.preventDefault();
+    setProfileError(null);
+    setProfileSuccess(null);
+    setIsSavingProfile(true);
+    try {
+      const updated = await updateMyCustomerProfile(token, { name: name.trim(), email: email.trim() });
+      updateCustomer({ name: updated.name, email: updated.email });
+      setProfileSuccess("Profile updated.");
+    } catch (err) {
+      setProfileError(err.message);
+    } finally {
+      setIsSavingProfile(false);
+    }
+  }
+
+  async function handleChangePassword(e) {
+    e.preventDefault();
+    setPasswordError(null);
+    setPasswordSuccess(null);
+    setIsChangingPassword(true);
+    try {
+      await changeMyCustomerPassword(token, currentPassword, newPassword);
+      setPasswordSuccess("Password changed.");
+      setCurrentPassword("");
+      setNewPassword("");
+    } catch (err) {
+      setPasswordError(err.message);
+    } finally {
+      setIsChangingPassword(false);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px", maxWidth: "500px" }}>
+      <div className="card">
+        <strong style={{ fontSize: "13.5px" }}>Profile</strong>
+        <form onSubmit={handleSaveProfile} style={{ marginTop: "12px" }}>
+          <div className="auth-field">
+            <label>Name</label>
+            <input className="input" type="text" value={name} onChange={(e) => setName(e.target.value)} required />
+          </div>
+          <div className="auth-field">
+            <label>Email</label>
+            <input className="input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          </div>
+          {profileError && <p style={{ color: "var(--danger)", fontSize: "12px" }}>{profileError}</p>}
+          {profileSuccess && <p style={{ color: "var(--status-delivered)", fontSize: "12px" }}>{profileSuccess}</p>}
+          <button type="submit" className="btn btn-primary" disabled={isSavingProfile}>
+            {isSavingProfile ? "Saving..." : "Save Changes"}
+          </button>
+        </form>
+      </div>
+
+      <div className="card">
+        <strong style={{ fontSize: "13.5px" }}>Change Password</strong>
+        <form onSubmit={handleChangePassword} style={{ marginTop: "12px" }}>
+          <div className="auth-field">
+            <label>Current Password</label>
+            <input className="input" type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} required />
+          </div>
+          <div className="auth-field">
+            <label>New Password</label>
+            <input className="input" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required minLength={6} />
+          </div>
+          {passwordError && <p style={{ color: "var(--danger)", fontSize: "12px" }}>{passwordError}</p>}
+          {passwordSuccess && <p style={{ color: "var(--status-delivered)", fontSize: "12px" }}>{passwordSuccess}</p>}
+          <button type="submit" className="btn btn-primary" disabled={isChangingPassword}>
+            {isChangingPassword ? "Changing..." : "Change Password"}
+          </button>
+        </form>
       </div>
     </div>
   );

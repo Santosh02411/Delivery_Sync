@@ -10,7 +10,7 @@ account, or for sharing a single order with someone else).
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -397,3 +397,41 @@ def mark_all_notifications_read(
     ).update({"is_read": True})
     db.commit()
     return {"message": "All notifications marked as read."}
+
+
+@router.delete("/notifications/{notification_id}")
+def delete_notification(
+    notification_id: str,
+    db: Session = Depends(get_db),
+    current_customer: CustomerDB = Depends(get_current_customer),
+):
+    notification = db.query(CustomerNotificationDB).filter(
+        CustomerNotificationDB.id == notification_id,
+        CustomerNotificationDB.customer_id == current_customer.id,
+    ).first()
+    if not notification:
+        raise HTTPException(status_code=404, detail="Notification not found.")
+
+    db.delete(notification)
+    db.commit()
+    return {"message": "Notification deleted."}
+
+
+@router.delete("/notifications")
+def clear_notifications(
+    only_read: bool = Query(True, description="If true (default), only deletes already-read notifications. If false, deletes everything."),
+    db: Session = Depends(get_db),
+    current_customer: CustomerDB = Depends(get_current_customer),
+):
+    """
+    Bulk-clears notifications — defaults to only the already-read ones
+    (the safe, "clean up what I've already seen" action a bell-icon
+    clear button usually means), with `only_read=false` available for a
+    genuine "clear everything" action.
+    """
+    query = db.query(CustomerNotificationDB).filter(CustomerNotificationDB.customer_id == current_customer.id)
+    if only_read:
+        query = query.filter(CustomerNotificationDB.is_read == True)  # noqa: E712
+    deleted_count = query.delete()
+    db.commit()
+    return {"message": f"Deleted {deleted_count} notification(s)."}

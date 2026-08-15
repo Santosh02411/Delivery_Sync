@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models.customer import CustomerDB, CustomerSignup, CustomerLogin, CustomerTokenResponse
+from app.models.customer import CustomerDB, CustomerSignup, CustomerLogin, CustomerTokenResponse, CustomerOut, CustomerProfileUpdate, CustomerPasswordChange
 from app.models.delivery import DeliveryRecordDB
 from app.services.auth import hash_password, verify_password, create_access_token, decode_access_token
 from app.services.rate_limiter import limiter
@@ -79,3 +79,51 @@ def get_current_customer(
         raise HTTPException(status_code=401, detail="Your session expired. Log in again.")
 
     return customer
+
+
+@router.get("/me", response_model=CustomerOut)
+def get_my_profile(current_customer: CustomerDB = Depends(get_current_customer)):
+    return current_customer
+
+
+@router.patch("/me", response_model=CustomerOut)
+def update_my_profile(
+    payload: CustomerProfileUpdate,
+    db: Session = Depends(get_db),
+    current_customer: CustomerDB = Depends(get_current_customer),
+):
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Name can't be empty.")
+        current_customer.name = name
+
+    if payload.email is not None:
+        email = payload.email.strip()
+        if not email:
+            raise HTTPException(status_code=400, detail="Email can't be empty.")
+        if email != current_customer.email:
+            existing = db.query(CustomerDB).filter(CustomerDB.email == email).first()
+            if existing:
+                raise HTTPException(status_code=400, detail="Another account already uses that email.")
+            current_customer.email = email
+
+    db.commit()
+    db.refresh(current_customer)
+    return current_customer
+
+
+@router.post("/me/change-password")
+def change_my_password(
+    payload: CustomerPasswordChange,
+    db: Session = Depends(get_db),
+    current_customer: CustomerDB = Depends(get_current_customer),
+):
+    if not verify_password(payload.current_password, current_customer.hashed_password):
+        raise HTTPException(status_code=401, detail="Current password is incorrect.")
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters.")
+
+    current_customer.hashed_password = hash_password(payload.new_password)
+    db.commit()
+    return {"message": "Password changed."}

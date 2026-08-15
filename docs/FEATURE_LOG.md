@@ -1024,13 +1024,13 @@ and the offline-queued-then-synced confirmation messages.
 ## Config Fix: `FRONTEND_URL` Port Mismatch (Password Reset Links)
 
 **What was wrong:** `frontend/vite.config.js` runs the dev server on
-port **3100**, but `backend/.env.example`'s `FRONTEND_URL` example value
+port **3200**, but `backend/.env.example`'s `FRONTEND_URL` example value
 said **5173** (Vite's own default, not what this project actually
 uses). Copying `.env.example` to `.env` without editing that line means
 every password-reset email links to a port nothing is listening on —
 "this site can't be reached."
 
-**The fix:** `.env.example` now matches the real port (3100) with a
+**The fix:** `.env.example` now matches the real port (3200) with a
 comment explaining why it has to match whatever `npm run dev` actually
 prints, rather than assuming Vite's default.
 
@@ -1070,6 +1070,78 @@ confirmed it completes. Also confirmed a totally fresh install (no
 `database.db` at all) still works with zero regressions. This means an
 existing local database now survives every future schema change this
 project makes, without ever needing to be deleted and started over.
+
+---
+
+---
+
+## Real Bug Fix: "My Orders" Showing on Every Customer Page
+
+**What was wrong:** The customer dashboard's Shop/Addresses/Privacy
+sections were each an independent toggle-boolean that could all be open
+simultaneously, and "My Orders" wasn't gated behind any of them at all —
+it just always rendered underneath whatever else was open, so it showed
+up no matter which button you'd clicked.
+
+**The fix:** Replaced the three separate booleans with one `activeView`
+tab state ("orders" | "shop" | "addresses" | "privacy" | "profile"), so
+exactly one section is visible at a time, with the active tab visually
+highlighted. "My Orders" is now genuinely its own page.
+
+---
+
+## Checkout Now Uses Saved Addresses
+
+**What was missing:** Saved addresses (added earlier for multi-address
+profiles) were never actually connected to checkout — there was no way
+to pick one, and nothing prefilled.
+
+**What it does:** `Storefront.jsx` loads saved addresses on open and
+auto-fills the checkout form from the default (or the only) saved
+address. A dropdown above the address field lets you switch between any
+saved address or "enter a new address" instead — editing the fields
+directly also switches it to "new" automatically so it's clear you're
+not silently overwriting a saved address.
+
+---
+
+## Agent Area: Manual Selection, Not Just GPS
+
+**What was missing:** The only way to set an agent's coverage area was
+GPS detection — no way to pick or type an area directly (useful when
+the reverse-geocoded name doesn't match what dispatchers actually call
+a zone, or GPS just isn't available/accurate).
+
+**What it does:** New `POST /users/me/area/set` sets an area directly by
+name (no coordinates — there's no real GPS fix behind a manually-typed
+area, and zone-matching only ever compares names anyway). New `GET
+/users/me/area/suggestions` returns area names already in use across
+the org (other agents' areas + zones dispatchers have typed onto
+deliveries), so picking an area can be "choose from what's already used
+here" via a dropdown, with a free-text box alongside it for anything
+new. `AgentDeliveryList.jsx`'s area section now offers all three: GPS
+detect, pick-from-list, or type-your-own.
+
+---
+
+## Customer Profile + Notification Cleanup
+
+**What was missing:** No way for a customer to view/edit their own
+name or email, or change their password — genuinely no profile page
+existed at all. Also no way to delete notifications; they only ever
+accumulated.
+
+**What it does:**
+
+- New `GET/PATCH /customer/me` (name/email, with email-uniqueness
+  checking) and `POST /customer/me/change-password` (requires the
+  current password, same re-auth-to-change-something-sensitive pattern
+  used for staff 2FA disable). New "👤 Profile" tab with both forms.
+- New `DELETE /customer/notifications/{id}` (single) and `DELETE
+/customer/notifications?only_read=true/false` (bulk — defaults to
+  only clearing already-read ones, the safer default for a "clean up"
+  action, with a full-clear option available). Notification panel
+  gained a 🗑 delete button per item and a "Clear read" button.
 
 ---
 
