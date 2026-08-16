@@ -39,6 +39,7 @@ export default function ResetPasswordPage({ token, onDone }) {
 
   return (
     <div className="auth-page-wrapper">
+            <div className="auth-wordmark">Delivery Sync</div>
       <button className="auth-theme-toggle" onClick={toggleTheme}>
         {theme === "dark" ? "☀ Light" : "☾ Dark"}
       </button>

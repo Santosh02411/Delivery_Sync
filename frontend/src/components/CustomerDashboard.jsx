@@ -357,10 +357,14 @@ export default function CustomerDashboard() {
         {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
 
         {deliveries.length === 0 && (
-          <p style={{ color: "var(--text-secondary)" }}>
-            No orders linked to your account yet. Orders placed under this
-            email address will show up here automatically.
-          </p>
+          <div className="empty-state" style={{ marginBottom: "16px" }}>
+            <div className="empty-state-icon">📦</div>
+            <div className="empty-state-title">No orders yet</div>
+            <div className="empty-state-body">
+              Orders placed under this email address show up here automatically.
+              Head to Shop to place your first one.
+            </div>
+          </div>
         )}
 
         <ClaimOrderPanel token={token} onLinked={loadDeliveries} />
