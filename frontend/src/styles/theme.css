@@ -320,6 +320,15 @@ h1, h2, h3, h4 {
   padding: 16px;
 }
 
+.card-clickable {
+  cursor: pointer;
+  transition: border-color 0.12s ease;
+}
+
+.card-clickable:hover {
+  border-color: var(--accent);
+}
+
 .stat-card {
   background-color: var(--bg-surface);
   border: 1px solid var(--border-color);

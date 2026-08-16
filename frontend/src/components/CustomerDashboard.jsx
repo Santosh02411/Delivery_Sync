@@ -68,6 +68,7 @@ export default function CustomerDashboard() {
   const [isOffline, setIsOffline] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [pendingActionSyncMsg, setPendingActionSyncMsg] = useState(null);
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
 
   useEffect(() => {
     if (customer?.id) {
@@ -188,99 +189,101 @@ export default function CustomerDashboard() {
 
   const unreadCount = notifications.filter((n) => !n.is_read).length;
 
+  const navLinks = [
+    { key: "orders", label: "My Orders", icon: "\u25A4" },
+    { key: "shop", label: "Shop", icon: "\u25A3" },
+    { key: "addresses", label: "Addresses", icon: "\u2691" },
+    { key: "privacy", label: "Privacy", icon: "\u26BF" },
+    { key: "profile", label: "Profile", icon: "\u25C9" },
+  ];
+
+  function handleNavigate(key) {
+    setActiveView(key);
+    setIsMobileNavOpen(false); // close the drawer after picking a page, on mobile
+  }
+
   return (
-    <div style={{ minHeight: "100vh", backgroundColor: "var(--bg-page)" }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          padding: "16px 24px",
-          backgroundColor: "var(--bg-surface)",
-          borderBottom: "1px solid var(--border-color)",
-          flexWrap: "wrap",
-          gap: "8px",
-        }}
-      >
-        <span style={{ fontFamily: "var(--font-display)", fontWeight: 700, color: "var(--accent)" }}>
-          Delivery Sync
-        </span>
-        <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
-          <span style={{ fontSize: "13px", color: "var(--text-secondary)" }}>Hi, {customer.name}</span>
+    <div className="app-shell">
+      <div className="mobile-topbar">
+        <span className="mobile-topbar-brand">Delivery Sync</span>
+        <button
+          className="mobile-menu-btn"
+          onClick={() => setIsMobileNavOpen(!isMobileNavOpen)}
+          aria-label="Toggle menu"
+        >
+          {isMobileNavOpen ? "\u2715" : "\u2630"}
+        </button>
+      </div>
+
+      {isMobileNavOpen && (
+        <div className="sidebar-overlay" onClick={() => setIsMobileNavOpen(false)} />
+      )}
+
+      <div className={`sidebar ${isMobileNavOpen ? "mobile-open" : ""}`}>
+        <div className="sidebar-brand">Delivery Sync</div>
+        <div className="sidebar-section-label">Customer</div>
+
+        {navLinks.map((link) => (
+          <div
+            key={link.key}
+            className={`sidebar-link ${activeView === link.key ? "active" : ""}`}
+            onClick={() => handleNavigate(link.key)}
+          >
+            <span aria-hidden="true">{link.icon}</span>
+            {link.label}
+          </div>
+        ))}
+
+        <div className="sidebar-footer">
+          <div className="sidebar-user">
+            <strong>{customer.name}</strong>
+            Customer
+          </div>
           {pushStatus !== "enabled" && pushStatus !== "unsupported" && (
-            <button className="btn" onClick={handleEnablePush} disabled={pushStatus === "enabling"}>
+            <button className="btn sidebar-action-btn" onClick={handleEnablePush} disabled={pushStatus === "enabling"}>
               {pushStatus === "enabling" ? "Enabling..." : pushStatus === "denied" ? "Notifications Blocked" : "🔔 Enable Push"}
             </button>
           )}
-          <button
-            className="btn btn-primary"
-            style={activeView === "orders" ? { outline: "2px solid var(--accent)" } : undefined}
-            onClick={() => setActiveView("orders")}
-          >
-            📦 My Orders
+          <button className="btn sidebar-action-btn" onClick={() => setShowNotifications(!showNotifications)}>
+            🔔 Notifications{unreadCount > 0 && ` (${unreadCount})`}
           </button>
-          <button
-            className="btn btn-primary"
-            style={activeView === "shop" ? { outline: "2px solid var(--accent)" } : undefined}
-            onClick={() => setActiveView("shop")}
-          >
-            🛍️ Shop
+          <button className="btn sidebar-action-btn" onClick={toggleTheme}>
+            {theme === "dark" ? "☀ Light Mode" : "☾ Dark Mode"}
           </button>
-          <button
-            className="btn"
-            style={activeView === "addresses" ? { outline: "2px solid var(--accent)" } : undefined}
-            onClick={() => setActiveView("addresses")}
-          >
-            📍 Addresses
+          <button className="btn sidebar-action-btn" onClick={logout}>
+            Log out
           </button>
-          <button
-            className="btn"
-            style={activeView === "privacy" ? { outline: "2px solid var(--accent)" } : undefined}
-            onClick={() => setActiveView("privacy")}
-          >
-            🔒 Privacy
-          </button>
-          <button
-            className="btn"
-            style={activeView === "profile" ? { outline: "2px solid var(--accent)" } : undefined}
-            onClick={() => setActiveView("profile")}
-          >
-            👤 Profile
-          </button>
-          <button className="btn" onClick={() => setShowNotifications(!showNotifications)}>
-            🔔{unreadCount > 0 && ` (${unreadCount})`}
-          </button>
-          <button className="btn" onClick={toggleTheme}>{theme === "dark" ? "☀" : "☾"}</button>
-          <button className="btn" onClick={logout}>Log out</button>
         </div>
       </div>
 
+      <div className="main-content">
+
       {activeView === "shop" && (
-        <div style={{ margin: "16px 24px" }}>
+        <div>
           <Storefront token={token} onOrderPlaced={() => { loadDeliveries(); setActiveView("orders"); }} />
         </div>
       )}
 
       {activeView === "addresses" && (
-        <div style={{ margin: "16px 24px" }}>
+        <div>
           <AddressBook token={token} />
         </div>
       )}
 
       {activeView === "privacy" && (
-        <div style={{ margin: "16px 24px" }}>
+        <div>
           <PrivacyPanel token={token} onAccountDeleted={logout} />
         </div>
       )}
 
       {activeView === "profile" && (
-        <div style={{ margin: "16px 24px" }}>
+        <div>
           <ProfilePanel token={token} customer={customer} />
         </div>
       )}
 
       {showNotifications && (
-        <div className="card" style={{ margin: "16px 24px", maxWidth: "420px" }}>
+        <div className="card" style={{ marginBottom: "20px", maxWidth: "420px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
             <strong style={{ fontSize: "13.5px" }}>Notifications</strong>
             <div style={{ display: "flex", gap: "6px" }}>
@@ -334,7 +337,7 @@ export default function CustomerDashboard() {
       )}
 
       {activeView === "orders" && (
-      <div style={{ padding: "24px", maxWidth: "700px", margin: "0 auto" }}>
+      <div style={{ maxWidth: "700px" }}>
         <h2 className="page-title">My Orders</h2>
 
         {isOffline && (
@@ -372,6 +375,8 @@ export default function CustomerDashboard() {
         ))}
       </div>
       )}
+
+      </div>
     </div>
   );
 }

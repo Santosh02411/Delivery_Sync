@@ -703,8 +703,23 @@ export default function Storefront({ token, onOrderPlaced }) {
       {!selectedStore && (
         <div style={{ display: "grid", gap: "10px" }}>
           {stores.map((store) => (
-            <div key={store.id} className="card" style={{ cursor: "pointer" }} onClick={() => openStore(store)}>
-              <strong style={{ fontSize: "14px" }}>{store.name}</strong>
+            <div
+              key={store.id}
+              className="card card-clickable"
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+              onClick={() => openStore(store)}
+            >
+              <div>
+                <strong style={{ fontSize: "14.5px" }}>{store.name}</strong>
+                <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
+                  Tap to browse products
+                </div>
+              </div>
+              <span style={{ color: "var(--text-muted)", fontSize: "16px" }} aria-hidden="true">→</span>
             </div>
           ))}
           {stores.length === 0 && (
