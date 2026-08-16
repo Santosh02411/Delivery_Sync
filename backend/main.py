@@ -34,7 +34,7 @@ import os
 from app.db.session import Base, engine
 from app.db.migrate import run_lightweight_migrations
 from app.services.rate_limiter import limiter
-from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots
+from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets
 
 # Create all database tables on startup (if they don't already exist),
 # then catch up any EXISTING table to the model's current columns — see
@@ -130,6 +130,10 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(bulk_import.router)
 app.include_router(admin.router)
+app.include_router(zones.router)
+app.include_router(returns.customer_router)
+app.include_router(returns.admin_router)
+app.include_router(websockets.router)
 app.include_router(messages.router)
 app.include_router(tracking.router)
 app.include_router(customer_auth.router)

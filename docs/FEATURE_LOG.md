@@ -1214,6 +1214,94 @@ card in the app.
 
 ---
 
+---
+
+## Delivery Zones/Territories (Real Entity, Not Just Free Text)
+
+**What was missing:** Deliveries had a free-text `zone` field a
+dispatcher could type anything into, and agents had a GPS-detected
+`area_name` — both loose string matches, no real geographic boundary,
+and nothing actually restricted auto-assignment to a territory.
+
+**What it does:** New `ZoneDB` — a real circular territory (center
+lat/lon + radius_km), tested with actual point-in-circle math
+(`services/geo.py`'s `find_zone_for_point`), not string comparison.
+Deliberately a circle rather than a drawn polygon: trivial to test a
+point against and trivial to edit (three numbers), while still being a
+genuine geographic boundary — see `models/zone.py` for the full
+reasoning. Admin CRUD (`/admin/zones/`) plus per-zone agent coverage
+assignment (many-to-many — an agent can cover multiple zones). The real
+payoff: `POST /deliveries/{id}/auto-assign` now HARD-RESTRICTS to a
+zone's covering agents when the delivery's coordinates fall inside a
+defined zone that has coverage — verified directly: a covering agent
+1111km away correctly won over a non-covering agent 0.16km away.
+Falls back gracefully to org-wide ranking when there's no matched zone
+or the matched zone has no agents assigned yet. New admin `ZoneManager.jsx`
+page; `DispatcherTable.jsx`'s suggested-agents panel now shows the
+matched zone name and which agents actually cover it.
+
+---
+
+## Returns/Exchange Workflow (Distinct from Cancellation)
+
+**What was missing:** Only pre-delivery cancellation existed. Nothing
+handled "the customer already has this delivered item and wants to
+send it back or swap it" — a completely different situation (the item
+has to physically come back first) that cancellation's logic doesn't
+fit.
+
+**What it does:** New `ReturnRequestDB` — only allowed on a `delivered`
+order. A customer requests a return (refund) or exchange (replacement)
+with a reason; a dispatcher/admin approves or rejects it
+(`/admin/return-requests/`). Approving creates a REAL new delivery
+(`delivery_type="return_pickup"`) that flows through the exact same
+unassigned-queue → assign → picked_up → delivered lifecycle as any
+normal delivery — reusing all of that existing infrastructure rather
+than building parallel plumbing. When that pickup delivery reaches
+"delivered" (item physically back at the store), the request
+auto-completes: a **return** triggers a real refund (reusing
+`services/refund.py`'s existing real/test-mode-aware logic) and
+restocks the item; an **exchange** restocks the item AND creates a
+brand-new forward delivery for the replacement — no refund, since the
+customer's getting a swap instead. Verified both paths fully
+end-to-end, including duplicate-request rejection and the eligibility
+check (can't return something not yet delivered). Same hook added to
+`services/conflict_resolver.py` for offline-sync parity. Customer-side
+request form + status lives in `CustomerDeliveryCard`; dispatcher/admin
+review lives in new `ReturnRequestsPanel.jsx`.
+
+---
+
+## WebSocket Live Updates (Chat, Dispatcher Queue, Tracking)
+
+**What was missing:** Three screens were all on a polling timer instead
+of getting real updates: delivery chat (5s), the dispatcher's
+unassigned-orders queue (15s), and the customer's live tracking map
+(8s) — meaningful lag on all three, plus a steady drip of wasted
+requests while nothing had actually changed.
+
+**What it does:** New `services/websocket_manager.py` — a simple
+room-based connection manager (`chat:{id}`, `dispatcher_queue:{org_id}`,
+`tracking:{id}`) and three WebSocket endpoints
+(`routes/websockets.py`). REST endpoints stay the write path
+unchanged (sending a chat message, changing a delivery's status, etc.)
+— WebSocket is push-only, broadcasting to connected clients as a side
+effect after each write succeeds, verified individually end-to-end: a
+new chat message reaches a connected agent instantly, an order
+assignment pushes a queue-changed event to connected dispatchers, and
+both delivery status changes and agent location pings push live to the
+customer's tracking map. Frontend gained a reconnecting WebSocket
+helper (`services/websocket.js`, exponential backoff up to 15s) used by
+all three screens; the tracking map keeps a slow 30s poll running
+alongside its socket purely as a safety net for networks that block
+WebSocket upgrades entirely. Auth: staff sockets take the JWT as a
+`?token=` query param (a browser WebSocket can't set custom headers on
+the handshake); the tracking socket needs none — scoped to one
+unguessable delivery UUID, the same model the existing public tracking
+page already uses.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
