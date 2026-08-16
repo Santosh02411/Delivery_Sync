@@ -1142,6 +1142,78 @@ accumulated.
 
 ---
 
+---
+
+## Real Bug Fix: Push Notifications Broken by a Blank `.env` Line
+
+**What was wrong:** `services/push.py` has a real, working default VAPID
+keypair checked in — push was meant to work with zero configuration.
+But it read the key as `os.environ.get("VAPID_PUBLIC_KEY",
+DEFAULT_VAPID_PUBLIC_KEY)`, and `backend/.env.example` had
+`VAPID_PUBLIC_KEY=` (present, but blank). `os.environ.get(key,
+default)`'s default only applies when the key is entirely ABSENT — a
+blank-but-present value is not the same thing, and silently overrode
+the working default with an empty string. That's a browser-side
+"applicationServerKey is not valid" error, and — worth naming plainly —
+a regression from this project's own earlier `.env`-loading fix:
+`.env` not being loaded at all previously masked this from ever
+mattering.
+
+**The fix:** `services/push.py` now uses `os.environ.get(key) or
+default` for all three VAPID settings — `or` correctly treats
+blank-and-absent the same way, so a leftover blank line in `.env` can
+never again shadow the working built-in keypair. `.env.example`'s VAPID
+key lines are now commented out by default (so copying it doesn't set
+anything blank in the first place), with an explicit warning about why
+that matters. Verified directly: an env var explicitly set to `""`
+now correctly falls back to the real default key.
+
+---
+
+## Real Reverse Geocoding via Google Maps API (Optional)
+
+**What was asked:** a "real" location provider, with an API key to be
+supplied. Worth being precise about what an API key can and can't
+improve here, since it came up directly: the raw GPS COORDINATE's
+accuracy is entirely determined by the requesting device's own
+hardware/OS location services (GPS chip, WiFi, cell signal) — no
+server-side API key changes that. What a paid provider genuinely
+improves is turning that coordinate into an ADDRESS, which is this
+feature's actual job.
+
+**What it does:** `services/geocoding.py` now uses Google's Maps
+Geocoding API when `GOOGLE_MAPS_API_KEY` is set (real address data,
+generally more complete than the free default), automatically falling
+back to free Nominatim if Google fails (bad key, quota, network) or if
+no key is configured at all — same "real if configured, free fallback
+otherwise" pattern as this project's SMTP/Twilio/Razorpay integrations.
+Verified both paths directly, including the Google-fails-falls-back-to-
+Nominatim case.
+
+---
+
+## Customer Dashboard: Real Layout Redesign
+
+**What was wrong:** the customer dashboard never adopted this project's
+own "fleet ops console" design system (`.sidebar`/`.app-shell`, already
+used throughout the staff side) — it was a bespoke top-bar-with-seven-
+crammed-buttons layout built with raw inline styles, which is exactly
+why it read as inconsistent/unpolished next to the rest of the app.
+
+**The fix:** rebuilt the customer dashboard's shell to use the exact
+same sidebar navigation pattern as the staff side (`Sidebar.jsx`) —
+same classes, same mobile off-canvas drawer behavior, same footer
+structure for account actions (push toggle, notifications, theme,
+logout) — so a customer and a staff member looking at their respective
+dashboards now see one consistent product, not two different ones
+stitched together. Also gave the plain, unstyled store-list rows in
+`Storefront.jsx` (just a bare name with no visual affordance) a real
+list-item treatment: a secondary line, a directional arrow, and a new
+`.card-clickable` hover state now used consistently for every clickable
+card in the app.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
