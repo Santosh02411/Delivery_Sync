@@ -35,9 +35,22 @@ jXunE5hbTIMiAnsyvYKAc6cUMzdMx7kK69PUugUvTq3qPZGjsumdtq2u
 -----END PRIVATE KEY-----"""
 DEFAULT_VAPID_PUBLIC_KEY = "BLpN_7cg7kMEkHXiS9iM_4GkB6G8ch-Ne6cTmFtMgyICezK9goBzpxQzN0zHuQrr09S6BS9Oreo9kaOy6Z22ra4"
 
-VAPID_PRIVATE_KEY_PEM = os.environ.get("VAPID_PRIVATE_KEY_PEM", _DEFAULT_PRIVATE_KEY_PEM)
-VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", DEFAULT_VAPID_PUBLIC_KEY)
-VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL", "mailto:admin@deliverysync.local")
+VAPID_PRIVATE_KEY_PEM = os.environ.get("VAPID_PRIVATE_KEY_PEM") or _DEFAULT_PRIVATE_KEY_PEM
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY") or DEFAULT_VAPID_PUBLIC_KEY
+VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL") or "mailto:admin@deliverysync.local"
+# Deliberately `or` here, NOT os.environ.get(key, default) — an env var
+# that's PRESENT but set to an empty string (e.g. `VAPID_PUBLIC_KEY=`
+# left blank in a copied .env file, which is exactly what
+# backend/.env.example has by default) is not the same as the var
+# being absent, and os.environ.get()'s default only kicks in for the
+# latter. With `.get(key, default)`, a blank .env line silently
+# replaces this project's real, working checked-in keypair with an
+# empty string — which is invalid for a push subscription and fails
+# with a browser error like "applicationServerKey is not valid" the
+# next time a customer tries to enable push notifications, even though
+# nothing about push was ever meant to require configuration at all.
+# `or` correctly treats blank-but-present the same as absent for every
+# one of these three.
 
 
 def send_web_push(subscription_info: dict, title: str, body: str, url: str = "/") -> bool:
