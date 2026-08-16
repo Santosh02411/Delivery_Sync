@@ -11,7 +11,7 @@ import { getPendingDeliveries, markAsSynced } from "./indexedDb";
 import { syncPendingDeliveries } from "./api";
 
 const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 3200;
+const RETRY_DELAY_MS = 3000;
 const PERIODIC_SYNC_INTERVAL_MS = 15000; // check every 15 seconds while online
 
 function wait(ms) {
@@ -25,9 +25,7 @@ function wait(ms) {
  * with no trace anywhere in the interface.
  */
 export function describeConflict(conflict) {
-  const who = conflict.kept_by
-    ? `${conflict.kept_by} already updated it`
-    : "it was already updated";
+  const who = conflict.kept_by ? `${conflict.kept_by} already updated it` : "it was already updated";
   return `Order ${conflict.order_id}: your change to "${conflict.your_status}" was overridden — ${who} to "${conflict.kept_status}" more recently, so that's what was kept.`;
 }
 
