@@ -32,11 +32,8 @@ from app.models.delivery_history import DeliveryHistoryDB, DeliveryHistoryOut
 from app.services.history import record_history_entry
 from app.services.notifications import notify_customer_of_status_change, notify_agent_of_new_assignment
 from app.services.refund import refund_order_for_delivery
-from app.services.returns_workflow import handle_return_pickup_completion
-from app.services.websocket_manager import broadcast_sync, dispatcher_queue_room, tracking_room
 from app.models.agent_location import AgentLocationDB
-from app.models.zone import ZoneDB, AgentZoneAssignmentDB
-from app.services.geo import haversine_km, find_zone_for_point
+from app.services.geo import haversine_km
 from app.routes.auth import get_current_user
 
 router = APIRouter(prefix="/deliveries", tags=["deliveries"])
@@ -177,8 +174,6 @@ def _apply_agent_assignment(db: Session, current_user: UserDB, db_record: Delive
         customer_id=db_record.customer_id,
     )
     notify_agent_of_new_assignment(db, delivery_id=db_record.id, order_id=db_record.order_id, agent_id=target_agent.id)
-    broadcast_sync(dispatcher_queue_room(db_record.org_id), {"event": "queue_changed", "reason": "assigned"})
-    broadcast_sync(tracking_room(db_record.id), {"event": "status_changed", "status": db_record.status.value})
     return db_record
 
 
@@ -189,16 +184,12 @@ class AgentSuggestionOut(BaseModel):
     active_delivery_count: int
     has_location: bool
     area_name: Optional[str] = None
-    zone_match: bool = False  # True when this agent's detected area matches the delivery's free-text `zone` field
-    covers_matched_zone: bool = False  # True when this agent is an assigned coverer of the real Zone (see models/zone.py) the delivery's coordinates fall inside
+    zone_match: bool = False  # True when this agent's detected area matches the delivery's zone
 
 
 class SuggestedAgentsOut(BaseModel):
     suggestions: List[AgentSuggestionOut]
     ranked_by_distance: bool  # False when the delivery has no coordinates — suggestions fall back to workload-only ranking
-    matched_zone_id: Optional[str] = None
-    matched_zone_name: Optional[str] = None
-    zone_restricted: bool = False  # True when auto-assign would restrict candidates to the matched zone's coverers (POST /auto-assign only — this endpoint never hard-filters, just reports what auto-assign would do)
 
 
 def _zone_matches_area(zone: Optional[str], area_name: Optional[str]) -> bool:
@@ -219,7 +210,7 @@ def _zone_matches_area(zone: Optional[str], area_name: Optional[str]) -> bool:
     return zone_norm in area_norm or area_norm in zone_norm
 
 
-def _rank_agents_for_delivery(db: Session, org_id: str, db_record: DeliveryRecordDB):
+def _rank_agents_for_delivery(db: Session, org_id: str, db_record: DeliveryRecordDB) -> tuple[list[AgentSuggestionOut], bool]:
     """
     Core of "smart assignment": ranks every agent in the org by how good
     a fit they are for one specific delivery, using the same live GPS
@@ -228,36 +219,26 @@ def _rank_agents_for_delivery(db: Session, org_id: str, db_record: DeliveryRecor
     help a dispatcher decide who to assign.
 
     Ranking, in order:
-    1. Real Zone coverage FIRST — if the delivery's coordinates fall
-       inside an admin-defined Zone (models/zone.py — a real circular
-       territory, not just a string), agents assigned to COVER that
-       zone are placed ahead of everyone else. This is what
-       POST /auto-assign actually restricts to (see there); this
-       function still ranks and returns every agent so a dispatcher
-       manually assigning retains full override power.
-    2. Free-text zone match — an agent whose GPS-detected coverage area
-       (UserDB.area_name) matches this delivery's `zone` string is
-       placed ahead of any remaining non-matching agents. This is the
-       older, looser signal — still useful for orgs that haven't set up
-       formal Zones yet, or for a delivery whose coordinates don't fall
-       inside any defined Zone.
-    3. Within each of those groups, distance from the agent's last-known
-       position to the delivery's coordinates (haversine, straight-line
-       — good enough for ranking without a paid routing API).
-    4. Workload (active delivery count) as the final tiebreaker.
+    1. Zone match FIRST — an agent whose real GPS-detected coverage area
+       (UserDB.area_name, from /users/me/area/detect) matches this
+       delivery's `zone` is placed ahead of every non-matching agent,
+       regardless of raw distance. A dispatcher marking a delivery
+       "Koramangala" wants it going to someone who actually covers
+       Koramangala, not just whoever happens to be a few hundred meters
+       closer to that one address.
+    2. Within each of those two groups (zone match / no zone match),
+       distance from the agent's last-known position to the delivery's
+       coordinates (haversine, straight-line — good enough for ranking
+       without a paid routing API).
+    3. Workload (active delivery count) as the final tiebreaker.
 
-    Falls back gracefully at every level: no matched zone, no zone on
-    the delivery, no area on an agent, no coordinates, no shared
-    location — all just mean that particular signal doesn't contribute,
-    not that ranking fails.
-
-    Returns (suggestions, ranked_by_distance, matched_zone) where
-    matched_zone is the ZoneDB row the delivery's coordinates fall
-    inside, or None.
+    Falls back gracefully at every level: no zone on the delivery, no
+    area on an agent, no coordinates, no shared location — all just mean
+    that particular signal doesn't contribute, not that ranking fails.
     """
     agents = db.query(UserDB).filter(UserDB.org_id == org_id, UserDB.role == UserRole.agent).all()
     if not agents:
-        return [], False, None
+        return [], False
 
     locations = {
         loc.agent_id: loc
@@ -272,17 +253,6 @@ def _rank_agents_for_delivery(db: Session, org_id: str, db_record: DeliveryRecor
         except (TypeError, ValueError):
             delivery_lat = delivery_lon = None
     ranked_by_distance = delivery_lat is not None and delivery_lon is not None
-
-    matched_zone = None
-    covering_agent_ids = set()
-    if ranked_by_distance:
-        org_zones = db.query(ZoneDB).filter(ZoneDB.org_id == org_id).all()
-        matched_zone = find_zone_for_point(org_zones, delivery_lat, delivery_lon)
-        if matched_zone:
-            covering_agent_ids = {
-                row.agent_id for row in
-                db.query(AgentZoneAssignmentDB).filter(AgentZoneAssignmentDB.zone_id == matched_zone.id).all()
-            }
 
     suggestions = []
     for agent in agents:
@@ -305,21 +275,19 @@ def _rank_agents_for_delivery(db: Session, org_id: str, db_record: DeliveryRecor
             has_location=location is not None,
             area_name=agent.area_name,
             zone_match=_zone_matches_area(db_record.zone, agent.area_name),
-            covers_matched_zone=agent.id in covering_agent_ids,
         ))
 
-    # Sort: zone-coverers first, then free-text zone-matched agents,
-    # then agents with a computed distance (nearest first), then
-    # workload as the final tiebreaker; agents with no distance
-    # available sort after, ordered by workload alone within their group.
+    # Sort: zone-matched agents first, then agents with a computed
+    # distance (nearest first), then workload as the final tiebreaker;
+    # agents with no distance available sort after, ordered by workload
+    # alone within their zone-match group.
     suggestions.sort(key=lambda s: (
-        not s.covers_matched_zone,
         not s.zone_match,
         s.distance_km is None,
         s.distance_km if s.distance_km is not None else 0,
         s.active_delivery_count,
     ))
-    return suggestions, ranked_by_distance, matched_zone
+    return suggestions, ranked_by_distance
 
 
 @router.get("/{delivery_id}/suggested-agents", response_model=SuggestedAgentsOut)
@@ -341,15 +309,8 @@ def get_suggested_agents(
     if not db_record:
         raise HTTPException(status_code=404, detail="Delivery record not found")
 
-    suggestions, ranked_by_distance, matched_zone = _rank_agents_for_delivery(db, current_user.org_id, db_record)
-    zone_has_coverers = bool(matched_zone and any(s.covers_matched_zone for s in suggestions))
-    return SuggestedAgentsOut(
-        suggestions=suggestions,
-        ranked_by_distance=ranked_by_distance,
-        matched_zone_id=matched_zone.id if matched_zone else None,
-        matched_zone_name=matched_zone.name if matched_zone else None,
-        zone_restricted=zone_has_coverers,
-    )
+    suggestions, ranked_by_distance = _rank_agents_for_delivery(db, current_user.org_id, db_record)
+    return SuggestedAgentsOut(suggestions=suggestions, ranked_by_distance=ranked_by_distance)
 
 
 @router.post("/{delivery_id}/auto-assign", response_model=DeliveryRecordOut)
@@ -364,16 +325,6 @@ def auto_assign_delivery(
     dispatcher pick required. Same eligibility rule as the manual assign
     endpoint: only unassigned customer (checkout) orders can be assigned
     this way.
-
-    REAL zone restriction happens here (not just ranking): if the
-    delivery's coordinates fall inside an admin-defined Zone that has at
-    least one agent assigned to cover it, candidates are hard-filtered
-    to ONLY those covering agents before picking the best one — an
-    auto-assign inside a defined zone can never silently hand the
-    delivery to someone who doesn't cover that territory. Falls back to
-    org-wide ranking when there's no matched zone, or the matched zone
-    has no covering agents assigned yet (an empty zone can't block
-    deliveries from being assigned at all).
     """
     db_record = db.query(DeliveryRecordDB).filter(
         DeliveryRecordDB.id == delivery_id,
@@ -384,21 +335,11 @@ def auto_assign_delivery(
     if db_record.status != DeliveryStatus.pending or not db_record.customer_id:
         raise HTTPException(status_code=400, detail="Only unassigned customer orders can be assigned this way.")
 
-    suggestions, _, matched_zone = _rank_agents_for_delivery(db, current_user.org_id, db_record)
+    suggestions, _ = _rank_agents_for_delivery(db, current_user.org_id, db_record)
     if not suggestions:
         raise HTTPException(status_code=400, detail="There are no agents in your organization to assign.")
 
-    zone_coverers = [s for s in suggestions if s.covers_matched_zone]
-    if matched_zone and zone_coverers:
-        # Real restriction: only agents covering the matched zone are
-        # eligible at all — already sorted first by _rank_agents_for_delivery,
-        # but filtering explicitly here makes the restriction airtight
-        # rather than just "probably first in the list".
-        candidates = zone_coverers
-    else:
-        candidates = suggestions
-
-    best = candidates[0]
+    best = suggestions[0]
     target_agent = db.query(UserDB).filter(UserDB.id == best.agent_id, UserDB.org_id == current_user.org_id).first()
     return _apply_agent_assignment(db, current_user, db_record, target_agent)
 
@@ -495,19 +436,12 @@ def update_delivery(
             customer_phone=db_record.customer_phone,
             customer_id=db_record.customer_id,
         )
-        broadcast_sync(tracking_room(db_record.id), {"event": "status_changed", "status": db_record.status.value})
 
         if update.status == DeliveryStatus.cancelled:
             # Dispatcher/admin-side cancellation of a paid checkout order
             # needs the same real refund as the customer's own self-serve
             # cancel button — see services/refund.py.
             refund_order_for_delivery(db, db_record.id)
-
-        if update.status == DeliveryStatus.delivered:
-            # No-op for a normal delivery — only actually does anything
-            # when this delivery is a return_pickup (see
-            # services/returns_workflow.py).
-            handle_return_pickup_completion(db, db_record)
 
     return db_record
 

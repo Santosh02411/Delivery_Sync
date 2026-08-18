@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
-import { connectWebSocket } from "../services/websocket";
 import {
   fetchAllDeliveriesFromServer,
   fetchAgentsList,
@@ -552,18 +551,8 @@ function UnassignedOrdersPanel({ token, agents, onAssigned, onActionQueued }) {
 
   useEffect(() => {
     load();
-    // Live-updated instead of polled: the dispatcher queue socket
-    // (routes/websockets.py) pushes a "queue_changed" event whenever a
-    // new checkout order lands, an order gets assigned, or a return/
-    // exchange pickup is created — this just re-fetches on that signal
-    // rather than re-fetching blindly every 15s regardless of whether
-    // anything actually changed.
-    const socket = connectWebSocket(`/ws/dispatcher/queue?token=${encodeURIComponent(token)}`, {
-      onMessage: (data) => {
-        if (data.event === "queue_changed") load();
-      },
-    });
-    return () => socket.close();
+    const intervalId = setInterval(load, 15000); // catches new checkout orders without a manual refresh
+    return () => clearInterval(intervalId);
   }, []);
 
   async function load() {
@@ -705,10 +694,10 @@ function UnassignedOrdersPanel({ token, agents, onAssigned, onActionQueued }) {
                     <option value="">Select agent...</option>
                     {agents.map((a) => {
                       const s = suggestionMap?.get(a.id);
-                      const coverTag = s?.covers_matched_zone ? "\u2b21 zone coverer — " : s?.zone_match ? "\u2713 zone match — " : "";
+                      const zoneTag = s?.zone_match ? "✓ zone match — " : "";
                       const areaTag = a.area_name ? ` (${a.area_name})` : "";
                       const label = s
-                        ? `${coverTag}${a.display_name}${areaTag}${s.distance_km !== null ? ` — ${s.distance_km} km away` : " — no location"}, ${s.active_delivery_count} active`
+                        ? `${zoneTag}${a.display_name}${areaTag}${s.distance_km !== null ? ` — ${s.distance_km} km away` : " — no location"}, ${s.active_delivery_count} active`
                         : `${a.display_name}${areaTag}`;
                       return (
                         <option key={a.id} value={a.id}>{label}</option>
@@ -737,13 +726,6 @@ function UnassignedOrdersPanel({ token, agents, onAssigned, onActionQueued }) {
               {suggestionData && !suggestionData.ranked_by_distance && (
                 <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>
                   This order has no delivery coordinates — ranked by current workload only.
-                </p>
-              )}
-              {suggestionData && suggestionData.matched_zone_name && (
-                <p style={{ fontSize: "11px", color: suggestionData.zone_restricted ? "var(--accent)" : "var(--text-muted)", marginTop: "4px" }}>
-                  {suggestionData.zone_restricted
-                    ? `\u2b21 Inside zone "${suggestionData.matched_zone_name}" — Auto-assign will restrict to that zone's covering agents.`
-                    : `\u2b21 Inside zone "${suggestionData.matched_zone_name}", but no agents cover it yet — auto-assign will fall back to org-wide ranking.`}
                 </p>
               )}
             </div>

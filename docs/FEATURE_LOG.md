@@ -3,8 +3,8 @@
 This file tracks every feature built into this project, in the order it
 was added: what was missing before it existed, why it was needed, and
 what it actually does now. This is different from `PROJECT_WORKFLOW.md`
-(which logs bugs and how they were fixed) — this file is about _decisions_
-and _reasoning_, so you can explain not just how something works, but why
+(which logs bugs and how they were fixed) — this file is about *decisions*
+and *reasoning*, so you can explain not just how something works, but why
 it exists at all.
 
 This file is maintained going forward — every new feature gets an entry
@@ -144,7 +144,7 @@ dropdown, and a click-through modal showing a delivery's full details.
 
 ## Status History / Audit Log
 
-**What was missing:** The detail modal showed a delivery's _current_
+**What was missing:** The detail modal showed a delivery's *current*
 state, but nothing about how it got there — no record of who changed
 what, or when.
 
@@ -359,7 +359,7 @@ organizations and confirmed each saw zero of the other's data.
 **A real vulnerability found and fixed while building this:** the offline
 `/sync` endpoint is intentionally unauthenticated (see Rate Limiting
 below for why), which meant a crafted payload could reference an
-existing delivery ID belonging to a _different_ organization and
+existing delivery ID belonging to a *different* organization and
 overwrite it, as long as it paired that ID with one of its own agent
 IDs. Fixed by verifying the existing record's organization matches the
 requesting agent's organization before allowing any update — confirmed
@@ -383,7 +383,7 @@ multi-user product, not an optional extra.
 organization becomes its admin automatically) can view every user in
 their organization, deactivate or reactivate an agent's account
 (deactivation takes effect immediately — even blocking that user's
-_already-issued_ login token, not just future login attempts), and reset
+*already-issued* login token, not just future login attempts), and reset
 a user's password directly. Honest, disclosed limitation: since there's
 no email service, "reset password" means the admin sets a new one and
 shares it with the person themselves — not an emailed reset link, which
@@ -417,7 +417,7 @@ organization's deliveries, optionally filtered to a date range using the
 same From/To fields already used for table filtering. Built with
 Python's built-in `csv` module (not hand-built comma-joined strings), so
 a notes field containing a comma still exports correctly — deliberately
-avoiding the exact category of bug the bulk-import CSV _parser_ was
+avoiding the exact category of bug the bulk-import CSV *parser* was
 built to prevent on the way in, this time on the way out.
 
 ---
@@ -434,7 +434,6 @@ and CORS was wide open to any origin.
 before this could honestly be called ready for any real deployment.
 
 **What it does:**
-
 - Signup and login are rate-limited per IP (5/min and 10/min
   respectively) using `slowapi`, confirmed by actually sending 7 rapid
   signup requests and watching the 6th and 7th get correctly rejected
@@ -883,7 +882,7 @@ those are security credentials, not personal data worth exposing in a
 downloadable file). `DELETE /customer/account` requires the password
 again (not just an active session) and deletes purely personal data
 outright (cart, addresses, notifications, push subscriptions) — but
-_anonymizes_ rather than deletes orders/deliveries/reviews, since a
+*anonymizes* rather than deletes orders/deliveries/reviews, since a
 store has a legitimate business reason to retain its own transaction
 and refund records even after a customer's account is gone, the same
 pattern real e-commerce platforms (Amazon, Shopify) use. New
@@ -982,12 +981,11 @@ rather than a clean error response — which the checkout code's
 real problem. The customer saw "You're offline" while genuinely online.
 
 **The fix, at both ends:**
-
 - `routes/checkout.py` now wraps the Razorpay call in a real
   try/except — an authentication failure returns a clean `502` with an
   actionable message (check `RAZORPAY_KEY_ID`/`SECRET` in `.env`, or
   unset them to use the built-in test-mode path) instead of crashing.
-- `main.py`'s security-headers middleware is now a backstop for _any_
+- `main.py`'s security-headers middleware is now a backstop for *any*
   unhandled exception anywhere in the app — logs it server-side and
   always returns a clean `500 {"detail": "..."}` JSON response, so a
   future bug in a completely different route can never again show up in
@@ -1024,13 +1022,13 @@ and the offline-queued-then-synced confirmation messages.
 ## Config Fix: `FRONTEND_URL` Port Mismatch (Password Reset Links)
 
 **What was wrong:** `frontend/vite.config.js` runs the dev server on
-port **3500**, but `backend/.env.example`'s `FRONTEND_URL` example value
+port **3000**, but `backend/.env.example`'s `FRONTEND_URL` example value
 said **5173** (Vite's own default, not what this project actually
 uses). Copying `.env.example` to `.env` without editing that line means
 every password-reset email links to a port nothing is listening on —
 "this site can't be reached."
 
-**The fix:** `.env.example` now matches the real port (3500) with a
+**The fix:** `.env.example` now matches the real port (3000) with a
 comment explaining why it has to match whatever `npm run dev` actually
 prints, rather than assuming Vite's default.
 
@@ -1132,13 +1130,12 @@ existed at all. Also no way to delete notifications; they only ever
 accumulated.
 
 **What it does:**
-
 - New `GET/PATCH /customer/me` (name/email, with email-uniqueness
   checking) and `POST /customer/me/change-password` (requires the
   current password, same re-auth-to-change-something-sensitive pattern
   used for staff 2FA disable). New "👤 Profile" tab with both forms.
 - New `DELETE /customer/notifications/{id}` (single) and `DELETE
-/customer/notifications?only_read=true/false` (bulk — defaults to
+  /customer/notifications?only_read=true/false` (bulk — defaults to
   only clearing already-read ones, the safer default for a "clean up"
   action, with a full-clear option available). Notification panel
   gained a 🗑 delete button per item and a "Clear read" button.
@@ -1214,152 +1211,6 @@ stitched together. Also gave the plain, unstyled store-list rows in
 list-item treatment: a secondary line, a directional arrow, and a new
 `.card-clickable` hover state now used consistently for every clickable
 card in the app.
-
----
-
----
-
-## Delivery Zones/Territories (Real Entity, Not Just Free Text)
-
-**What was missing:** Deliveries had a free-text `zone` field a
-dispatcher could type anything into, and agents had a GPS-detected
-`area_name` — both loose string matches, no real geographic boundary,
-and nothing actually restricted auto-assignment to a territory.
-
-**What it does:** New `ZoneDB` — a real circular territory (center
-lat/lon + radius_km), tested with actual point-in-circle math
-(`services/geo.py`'s `find_zone_for_point`), not string comparison.
-Deliberately a circle rather than a drawn polygon: trivial to test a
-point against and trivial to edit (three numbers), while still being a
-genuine geographic boundary — see `models/zone.py` for the full
-reasoning. Admin CRUD (`/admin/zones/`) plus per-zone agent coverage
-assignment (many-to-many — an agent can cover multiple zones). The real
-payoff: `POST /deliveries/{id}/auto-assign` now HARD-RESTRICTS to a
-zone's covering agents when the delivery's coordinates fall inside a
-defined zone that has coverage — verified directly: a covering agent
-1111km away correctly won over a non-covering agent 0.16km away.
-Falls back gracefully to org-wide ranking when there's no matched zone
-or the matched zone has no agents assigned yet. New admin `ZoneManager.jsx`
-page; `DispatcherTable.jsx`'s suggested-agents panel now shows the
-matched zone name and which agents actually cover it.
-
----
-
-## Returns/Exchange Workflow (Distinct from Cancellation)
-
-**What was missing:** Only pre-delivery cancellation existed. Nothing
-handled "the customer already has this delivered item and wants to
-send it back or swap it" — a completely different situation (the item
-has to physically come back first) that cancellation's logic doesn't
-fit.
-
-**What it does:** New `ReturnRequestDB` — only allowed on a `delivered`
-order. A customer requests a return (refund) or exchange (replacement)
-with a reason; a dispatcher/admin approves or rejects it
-(`/admin/return-requests/`). Approving creates a REAL new delivery
-(`delivery_type="return_pickup"`) that flows through the exact same
-unassigned-queue → assign → picked_up → delivered lifecycle as any
-normal delivery — reusing all of that existing infrastructure rather
-than building parallel plumbing. When that pickup delivery reaches
-"delivered" (item physically back at the store), the request
-auto-completes: a **return** triggers a real refund (reusing
-`services/refund.py`'s existing real/test-mode-aware logic) and
-restocks the item; an **exchange** restocks the item AND creates a
-brand-new forward delivery for the replacement — no refund, since the
-customer's getting a swap instead. Verified both paths fully
-end-to-end, including duplicate-request rejection and the eligibility
-check (can't return something not yet delivered). Same hook added to
-`services/conflict_resolver.py` for offline-sync parity. Customer-side
-request form + status lives in `CustomerDeliveryCard`; dispatcher/admin
-review lives in new `ReturnRequestsPanel.jsx`.
-
----
-
-## WebSocket Live Updates (Chat, Dispatcher Queue, Tracking)
-
-**What was missing:** Three screens were all on a polling timer instead
-of getting real updates: delivery chat (5s), the dispatcher's
-unassigned-orders queue (15s), and the customer's live tracking map
-(8s) — meaningful lag on all three, plus a steady drip of wasted
-requests while nothing had actually changed.
-
-**What it does:** New `services/websocket_manager.py` — a simple
-room-based connection manager (`chat:{id}`, `dispatcher_queue:{org_id}`,
-`tracking:{id}`) and three WebSocket endpoints
-(`routes/websockets.py`). REST endpoints stay the write path
-unchanged (sending a chat message, changing a delivery's status, etc.)
-— WebSocket is push-only, broadcasting to connected clients as a side
-effect after each write succeeds, verified individually end-to-end: a
-new chat message reaches a connected agent instantly, an order
-assignment pushes a queue-changed event to connected dispatchers, and
-both delivery status changes and agent location pings push live to the
-customer's tracking map. Frontend gained a reconnecting WebSocket
-helper (`services/websocket.js`, exponential backoff up to 15s) used by
-all three screens; the tracking map keeps a slow 30s poll running
-alongside its socket purely as a safety net for networks that block
-WebSocket upgrades entirely. Auth: staff sockets take the JWT as a
-`?token=` query param (a browser WebSocket can't set custom headers on
-the handshake); the tracking socket needs none — scoped to one
-unguessable delivery UUID, the same model the existing public tracking
-page already uses.
-
----
-
----
-
-## Frontend Visual Polish Pass
-
-**What was asked:** make the frontend "complete and beautiful."
-
-**What was already there, worth naming:** the app already had a real,
-distinctive design system — "Fleet Ops Console": Space Grotesk (display)
-
-- Inter (body) + JetBrains Mono (data/mono) as a deliberate three-font
-  pairing, a near-black dispatch-console palette with a warm amber accent
-  (`#f2a93b` — chosen specifically to avoid both the acid-green-on-black
-  and warm-terracotta-on-cream looks that AI-generated designs default
-  to), and a light-theme override sharing every variable name. That
-  wasn't templated — it just wasn't being refined, and the customer
-  dashboard wasn't using it consistently (fixed in an earlier session).
-  This pass builds on that existing identity rather than replacing it.
-
-**What changed, all in `theme.css`/`auth.css` so it applies everywhere
-at once:**
-
-- Real depth: a proper shadow scale (`--shadow-sm/md/lg`, black-based
-  for the dark theme since gray shadows look like mistakes on
-  near-black, gray-based for light) applied to cards, the sidebar,
-  modals, buttons.
-- Refined motion: buttons get a focus glow + press-down on click, cards
-  lift slightly on hover, modals rise in rather than just appearing,
-  in-transit status badges get a subtle "live" pulsing dot — all
-  wrapped in a single `prefers-reduced-motion` rule that kills every
-  animation at once for anyone who needs that.
-- A signature moment for the auth pages (login/signup/forgot/reset —
-  previously just a bare centered card with zero brand identity): a
-  soft accent-colored glow anchored in the corner, a faint diagonal
-  "route line" motif in the background, and a wordmark above the card
-  — the one deliberate flourish on the product's most-seen screen,
-  evoking a delivery route without literally drawing a map.
-- Small details that add up: a themed thin scrollbar (replacing the
-  default OS one, which was the one remaining unstyled surface), a
-  very faint dot-grid page background (a nod to a dispatch console's
-  map grid, low enough contrast to never compete with real content), a
-  colored text-selection style, an accent-colored `page-title` tick
-  mark, a reusable `.empty-state` treatment (icon + title + guidance,
-  applied to the customer's empty order list and the agent's empty
-  delivery list — "an empty screen is an invitation to act," not a
-  gray sentence in a lot of blank space).
-- Left the dispatcher's empty unassigned-queue as a bare `null` render
-  on purpose, not an oversight: for a working dispatcher, an empty
-  queue is good news that doesn't need a call-to-action box taking up
-  space on an otherwise busy screen — the empty-state treatment above
-  is for "you haven't done the thing yet," not "there's nothing to do
-  right now."
-
-Verified: both CSS files brace-balanced, every touched JSX file
-esbuild-clean individually, and the full app bundle builds clean end to
-end with no regressions.
 
 ---
 

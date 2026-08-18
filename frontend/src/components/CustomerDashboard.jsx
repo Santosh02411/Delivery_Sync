@@ -26,8 +26,6 @@ import {
   fetchMyCustomerProfile,
   updateMyCustomerProfile,
   changeMyCustomerPassword,
-  createReturnRequest,
-  fetchMyReturnRequests,
   API_BASE_URL,
 } from "../services/api";
 import StatusBadge from "./StatusBadge";
@@ -357,14 +355,10 @@ export default function CustomerDashboard() {
         {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
 
         {deliveries.length === 0 && (
-          <div className="empty-state" style={{ marginBottom: "16px" }}>
-            <div className="empty-state-icon">📦</div>
-            <div className="empty-state-title">No orders yet</div>
-            <div className="empty-state-body">
-              Orders placed under this email address show up here automatically.
-              Head to Shop to place your first one.
-            </div>
-          </div>
+          <p style={{ color: "var(--text-secondary)" }}>
+            No orders linked to your account yet. Orders placed under this
+            email address will show up here automatically.
+          </p>
         )}
 
         <ClaimOrderPanel token={token} onLinked={loadDeliveries} />
@@ -788,12 +782,6 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
   const [isReordering, setIsReordering] = useState(false);
   const [reviewableItems, setReviewableItems] = useState([]);
   const [refundInfo, setRefundInfo] = useState(null);
-  const [returnRequest, setReturnRequest] = useState(null);
-  const [showReturnForm, setShowReturnForm] = useState(false);
-  const [returnType, setReturnType] = useState("return");
-  const [returnReason, setReturnReason] = useState("");
-  const [isSubmittingReturn, setIsSubmittingReturn] = useState(false);
-  const [returnError, setReturnError] = useState(null);
 
   useEffect(() => {
     if (isExpanded) loadDetails();
@@ -825,35 +813,6 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
       } catch (err) {
         console.warn("Could not load refund status:", err.message);
       }
-    }
-    if (delivery.status === "delivered") {
-      try {
-        const requests = await fetchMyReturnRequests(token);
-        const match = requests.find((r) => r.delivery_id === delivery.id && r.status !== "rejected");
-        setReturnRequest(match || null);
-      } catch (err) {
-        console.warn("Could not load return request status:", err.message);
-      }
-    }
-  }
-
-  async function handleSubmitReturnRequest(e) {
-    e.preventDefault();
-    if (!returnReason.trim()) {
-      setReturnError("Please describe the reason.");
-      return;
-    }
-    setIsSubmittingReturn(true);
-    setReturnError(null);
-    try {
-      const created = await createReturnRequest(token, delivery.id, returnType, returnReason.trim());
-      setReturnRequest(created);
-      setShowReturnForm(false);
-      setReturnReason("");
-    } catch (err) {
-      setReturnError(err.message);
-    } finally {
-      setIsSubmittingReturn(false);
     }
   }
 
@@ -949,61 +908,7 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
             {isReordering ? "Placing..." : "Reorder"}
           </button>
         )}
-        {delivery.status === "delivered" && !returnRequest && (
-          <button className="btn" onClick={() => setShowReturnForm(!showReturnForm)}>
-            {showReturnForm ? "Cancel" : "Return / Exchange"}
-          </button>
-        )}
       </div>
-
-      {showReturnForm && (
-        <form onSubmit={handleSubmitReturnRequest} className="card" style={{ marginTop: "10px", padding: "12px" }}>
-          <div style={{ display: "flex", gap: "8px", marginBottom: "8px" }}>
-            <button
-              type="button"
-              className="btn"
-              style={returnType === "return" ? { background: "var(--accent)", color: "white" } : undefined}
-              onClick={() => setReturnType("return")}
-            >
-              Return for refund
-            </button>
-            <button
-              type="button"
-              className="btn"
-              style={returnType === "exchange" ? { background: "var(--accent)", color: "white" } : undefined}
-              onClick={() => setReturnType("exchange")}
-            >
-              Exchange
-            </button>
-          </div>
-          <div className="auth-field">
-            <label>Reason</label>
-            <input
-              className="input"
-              type="text"
-              value={returnReason}
-              onChange={(e) => setReturnReason(e.target.value)}
-              placeholder="e.g. wrong item, damaged on arrival"
-              required
-            />
-          </div>
-          {returnError && <p style={{ color: "var(--danger)", fontSize: "12px" }}>{returnError}</p>}
-          <button type="submit" className="btn btn-primary" disabled={isSubmittingReturn}>
-            {isSubmittingReturn ? "Submitting..." : "Submit Request"}
-          </button>
-        </form>
-      )}
-
-      {returnRequest && (
-        <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "8px" }}>
-          {returnRequest.request_type === "return" ? "Return" : "Exchange"} request:{" "}
-          <strong style={{ color: "var(--text-primary)" }}>
-            {returnRequest.status === "requested" && "Awaiting review"}
-            {returnRequest.status === "approved" && "Approved — pickup scheduled"}
-            {returnRequest.status === "completed" && (returnRequest.request_type === "return" ? "Completed — refund issued" : "Completed — replacement on the way")}
-          </strong>
-        </p>
-      )}
       {actionError && <p style={{ color: "var(--danger)", fontSize: "12px", marginTop: "6px" }}>{actionError}</p>}
       {refundInfo && refundInfo.refund_status === "refunded" && (
         <p style={{ color: "var(--accent)", fontSize: "12px", marginTop: "6px" }}>

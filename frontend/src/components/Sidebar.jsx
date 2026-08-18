@@ -72,7 +72,6 @@ export default function Sidebar({ activeView, onNavigate }) {
   const dispatcherLinks = [
     { key: "dashboard", label: "Dashboard", icon: "\u25A4" },
     { key: "products", label: "Products", icon: "\u25A3" },
-    { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
     { key: "security", label: "Security", icon: "\u26BF" },
   ];
 
@@ -81,8 +80,6 @@ export default function Sidebar({ activeView, onNavigate }) {
     { key: "analytics", label: "Analytics", icon: "\u25C8" },
     { key: "products", label: "Products", icon: "\u25A3" },
     { key: "admin", label: "Manage Users", icon: "\u2699" },
-    { key: "zones", label: "Zones", icon: "\u2b21" },
-    { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
     { key: "audit-log", label: "Audit Log", icon: "\u2637" },
     { key: "security", label: "Security", icon: "\u26BF" },
   ];

@@ -43,7 +43,6 @@ from app.services.notifications import notify_customer_of_status_change, notify_
 from app.services.inventory import check_stock_available, decrement_stock_for_order, InsufficientStockError
 from app.services.coupons import find_and_validate_coupon, compute_discount, CouponError
 from app.services.slots import validate_slot
-from app.services.websocket_manager import broadcast_sync, dispatcher_queue_room
 
 router = APIRouter(prefix="/customer", tags=["checkout"])
 
@@ -395,7 +394,6 @@ def verify_payment(
         customer_id=delivery.customer_id,
     )
     notify_dispatchers_of_new_order(db, org_id=order.org_id, order_id=delivery.order_id)
-    broadcast_sync(dispatcher_queue_room(order.org_id), {"event": "queue_changed", "reason": "new_order"})
 
     # Re-query items fresh rather than reusing the pre-commit list above -
     # SQLAlchemy expires all session objects on commit by default, and

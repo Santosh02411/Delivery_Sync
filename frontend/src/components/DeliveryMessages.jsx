@@ -9,7 +9,8 @@ import {
 import { startChatAutoSync } from "../services/chatSyncEngine";
 import { writeSyncContext } from "../services/backgroundSyncContext";
 import { API_BASE_URL } from "../services/api";
-import { connectWebSocket } from "../services/websocket";
+
+const POLL_INTERVAL_MS = 5000;
 
 /**
  * A simple chat thread for one delivery, between the assigned agent and
@@ -23,10 +24,10 @@ import { connectWebSocket } from "../services/websocket";
  * it's sent automatically the moment connectivity returns — the same
  * pattern already used for delivery status updates.
  *
- * New messages arrive over a live WebSocket connection (routes/websockets.py)
- * instead of polling — the other person's reply shows up the moment
- * they send it, with no 5-second lag and no wasted requests while the
- * thread just sits idle.
+ * Polls for new messages every 5s while the modal is open, rather than
+ * requiring a manual refresh — a chat thread that doesn't show the
+ * other person's reply without being told to check again isn't a very
+ * useful chat thread.
  */
 export default function DeliveryMessages({ deliveryId, isSyncedToServer }) {
   const { token, user } = useAuth();
@@ -45,25 +46,14 @@ export default function DeliveryMessages({ deliveryId, isSyncedToServer }) {
     loadMessages();
     loadQueuedMessages();
 
-    const socket = connectWebSocket(
-      `/ws/deliveries/${deliveryId}/messages?token=${encodeURIComponent(token)}`,
-      {
-        onMessage: (data) => {
-          if (data.event !== "new_message") return;
-          setMessages((prev) => {
-            if (prev.some((m) => m.id === data.message.id)) return prev; // already have it (e.g. we sent it ourselves)
-            return [...prev, data.message];
-          });
-        },
-      }
-    );
+    const intervalId = setInterval(loadMessages, POLL_INTERVAL_MS);
     const stopChatSync = startChatAutoSync(token, () => {
       loadMessages();
       loadQueuedMessages();
     });
 
     return () => {
-      socket.close();
+      clearInterval(intervalId);
       stopChatSync();
     };
   }, [deliveryId, isSyncedToServer]);

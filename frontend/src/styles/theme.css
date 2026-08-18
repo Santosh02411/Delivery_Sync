@@ -30,7 +30,6 @@
   --accent: #f2a93b;
   --accent-hover: #d6941f;
   --accent-text-on: #14100a;
-  --accent-glow: rgba(242, 169, 59, 0.18);
 
   /* Status colors */
   --status-picked-up: #4fa3f7;
@@ -52,14 +51,6 @@
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
-
-  /* Depth — soft, low-opacity shadows tuned for a near-black surface.
-     Dark UIs need shadows built from pure black at low opacity rather
-     than the gray drop-shadows that work on white; a gray shadow on a
-     dark card just looks like a mistake. */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.24), 0 1px 1px rgba(0, 0, 0, 0.18);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.32), 0 1px 2px rgba(0, 0, 0, 0.2);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.4), 0 2px 6px rgba(0, 0, 0, 0.24);
 }
 
 /* ---------- Light theme overrides ----------
@@ -98,13 +89,6 @@ html[data-theme="light"] {
   --success: #1e7e4f;
   --danger: #c62828;
   --info: #1565c0;
-
-  /* Light theme shadows: real gray, much softer — black-based shadows
-     that work on near-black look muddy on white. */
-  --shadow-sm: 0 1px 2px rgba(20, 24, 33, 0.06), 0 1px 1px rgba(20, 24, 33, 0.04);
-  --shadow-md: 0 4px 14px rgba(20, 24, 33, 0.08), 0 1px 3px rgba(20, 24, 33, 0.06);
-  --shadow-lg: 0 16px 36px rgba(20, 24, 33, 0.12), 0 2px 8px rgba(20, 24, 33, 0.06);
-  --accent-glow: rgba(201, 122, 16, 0.12);
 }
 
 * {
@@ -113,63 +97,16 @@ html[data-theme="light"] {
 
 body {
   margin: 0;
-  /* A very faint dot-grid on the page background — a nod to a
-     dispatch console's map grid, subtle enough to never compete with
-     real content (opacity is baked into the dot color itself, not a
-     layered overlay, so it can't accidentally darken text). */
   background-color: var(--bg-page);
-  background-image: radial-gradient(circle, var(--border-color) 1px, transparent 1px);
-  background-size: 28px 28px;
   color: var(--text-primary);
   font-family: var(--font-body);
   font-size: 14px;
-  -webkit-font-smoothing: antialiased;
-}
-
-html[data-theme="light"] body {
-  background-image: radial-gradient(circle, #e6e8ec 1px, transparent 1px);
 }
 
 h1, h2, h3, h4 {
   font-family: var(--font-display);
   font-weight: 600;
   margin: 0;
-}
-
-::selection {
-  background-color: var(--accent);
-  color: var(--accent-text-on);
-}
-
-:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* Thin, theme-matched scrollbars — the default OS scrollbar is the one
-   remaining thing on this page that never picked up the theme. */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background-color: var(--border-color-light);
-  border-radius: 20px;
-  border: 2px solid var(--bg-page);
-}
-::-webkit-scrollbar-thumb:hover {
-  background-color: var(--text-muted);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-  }
 }
 
 /* ---------- Layout shell ---------- */
@@ -187,9 +124,6 @@ h1, h2, h3, h4 {
   display: flex;
   flex-direction: column;
   padding: 20px 0;
-  box-shadow: var(--shadow-md);
-  position: relative;
-  z-index: 10;
 }
 
 .sidebar-brand {
@@ -221,7 +155,7 @@ h1, h2, h3, h4 {
   font-weight: 500;
   cursor: pointer;
   border-left: 3px solid transparent;
-  transition: background-color 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  transition: background-color 0.12s ease, color 0.12s ease;
 }
 
 .sidebar-link:hover {
@@ -233,7 +167,6 @@ h1, h2, h3, h4 {
   color: var(--accent);
   border-left-color: var(--accent);
   background-color: var(--bg-surface-elevated);
-  font-weight: 600;
 }
 
 .sidebar-footer {
@@ -277,19 +210,6 @@ h1, h2, h3, h4 {
 .page-title {
   font-size: 22px;
   margin-bottom: 20px;
-  position: relative;
-  padding-left: 14px;
-}
-
-.page-title::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 3px;
-  bottom: 3px;
-  width: 4px;
-  border-radius: 2px;
-  background-color: var(--accent);
 }
 
 /* ---------- Mobile responsive layout ----------
@@ -398,18 +318,15 @@ h1, h2, h3, h4 {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   padding: 16px;
-  box-shadow: var(--shadow-sm);
-  transition: box-shadow 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
 
 .card-clickable {
   cursor: pointer;
+  transition: border-color 0.12s ease;
 }
 
 .card-clickable:hover {
   border-color: var(--accent);
-  box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
 }
 
 .stat-card {
@@ -419,14 +336,12 @@ h1, h2, h3, h4 {
   padding: 14px 18px;
   min-width: 130px;
   border-top: 3px solid var(--accent);
-  box-shadow: var(--shadow-sm);
 }
 
 .stat-card-value {
   font-family: var(--font-display);
   font-size: 26px;
   font-weight: 700;
-  font-variant-numeric: tabular-nums;
 }
 
 .stat-card-label {
@@ -449,16 +364,11 @@ h1, h2, h3, h4 {
   background-color: var(--bg-surface-elevated);
   color: var(--text-primary);
   cursor: pointer;
-  transition: border-color 0.12s ease, background-color 0.12s ease, transform 0.08s ease, box-shadow 0.12s ease;
+  transition: all 0.12s ease;
 }
 
 .btn:hover:not(:disabled) {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
-}
-
-.btn:active:not(:disabled) {
-  transform: translateY(1px);
 }
 
 .btn:disabled {
@@ -470,13 +380,11 @@ h1, h2, h3, h4 {
   background-color: var(--accent);
   border-color: var(--accent);
   color: var(--accent-text-on);
-  box-shadow: var(--shadow-sm);
 }
 
 .btn-primary:hover:not(:disabled) {
   background-color: var(--accent-hover);
   border-color: var(--accent-hover);
-  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .btn-danger-outline {
@@ -509,13 +417,11 @@ h1, h2, h3, h4 {
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   font-size: 13.5px;
-  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 }
 
 .input:focus, select.input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .input::placeholder {
@@ -534,9 +440,7 @@ h1, h2, h3, h4 {
 /* ---------- Status badges ---------- */
 
 .status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
+  display: inline-block;
   padding: 3px 10px;
   border-radius: 20px;
   font-size: 11.5px;
@@ -546,35 +450,12 @@ h1, h2, h3, h4 {
   letter-spacing: 0.02em;
 }
 
-.status-badge::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background-color: currentColor;
-  flex-shrink: 0;
-}
-
 .status-badge.picked_up { background-color: rgba(79,163,247,0.15); color: var(--status-picked-up); }
 .status-badge.out_for_delivery { background-color: rgba(242,169,59,0.15); color: var(--status-out-for-delivery); }
 .status-badge.delivered { background-color: rgba(61,214,140,0.15); color: var(--status-delivered); }
 .status-badge.failed_attempt { background-color: rgba(239,83,80,0.15); color: var(--status-failed); }
 .status-badge.cancelled { background-color: rgba(148,158,171,0.15); color: var(--text-secondary); }
 .status-badge.pending { background-color: rgba(155,109,247,0.15); color: #9b6df7; }
-
-/* A delivery actively in motion gets a gently pulsing dot — a small,
-   deliberate signal that this status is "live" right now, not just a
-   label. Kept to exactly the two in-transit states so it reads as
-   meaningful rather than decorative. */
-.status-badge.picked_up::before,
-.status-badge.out_for_delivery::before {
-  animation: status-pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes status-pulse {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 currentColor; }
-  50% { opacity: 0.55; box-shadow: 0 0 0 3px transparent; }
-}
 
 .sync-badge {
   display: inline-block;
@@ -621,43 +502,6 @@ h1, h2, h3, h4 {
   background-color: var(--bg-surface-elevated);
 }
 
-/* ---------- Empty states ----------
-   "An empty screen is an invitation to act" — a plain gray sentence
-   floating in a lot of blank space reads as a bug, not a deliberate
-   state. This gives every empty list/queue in the app the same quiet,
-   centered treatment instead of each screen inventing its own. */
-
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  padding: 48px 24px;
-  color: var(--text-secondary);
-  border: 1px dashed var(--border-color);
-  border-radius: var(--radius-md);
-}
-
-.empty-state-icon {
-  font-size: 28px;
-  margin-bottom: 10px;
-  opacity: 0.7;
-}
-
-.empty-state-title {
-  font-family: var(--font-display);
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 4px;
-}
-
-.empty-state-body {
-  font-size: 13px;
-  max-width: 340px;
-  line-height: 1.5;
-}
-
 /* ---------- Delivery card (agent view) ---------- */
 
 .delivery-card {
@@ -666,13 +510,6 @@ h1, h2, h3, h4 {
   border-radius: var(--radius-md);
   padding: 14px 16px;
   margin-bottom: 12px;
-  box-shadow: var(--shadow-sm);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.delivery-card:hover {
-  border-color: var(--border-color-light);
-  box-shadow: var(--shadow-md);
 }
 
 .delivery-card-order-id {
@@ -698,12 +535,10 @@ h1, h2, h3, h4 {
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
   background-color: rgba(0,0,0,0.6);
-  backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 1000;
-  animation: modal-fade-in 0.15s ease;
 }
 
 .modal-card {
@@ -715,16 +550,4 @@ h1, h2, h3, h4 {
   max-width: 480px;
   max-height: 80vh;
   overflow-y: auto;
-  box-shadow: var(--shadow-lg);
-  animation: modal-rise-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes modal-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@keyframes modal-rise-in {
-  from { opacity: 0; transform: translateY(8px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
 }

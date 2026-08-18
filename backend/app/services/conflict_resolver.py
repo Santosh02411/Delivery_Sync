@@ -8,13 +8,11 @@ limitations of this approach.
 
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from app.models.delivery import DeliveryRecordDB, DeliveryStatus
+from app.models.delivery import DeliveryRecordDB
 from app.models.delivery_history import DeliveryHistoryDB
 from app.models.user import UserDB
 from app.services.history import record_history_entry
 from app.services.notifications import notify_customer_of_status_change
-from app.services.returns_workflow import handle_return_pickup_completion
-from app.services.websocket_manager import broadcast_sync, tracking_room
 
 
 def _normalize_to_naive_utc(dt: datetime) -> datetime:
@@ -149,16 +147,6 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
                 customer_phone=existing.customer_phone,
                 customer_id=existing.customer_id,
             )
-            broadcast_sync(tracking_room(existing.id), {
-                "event": "status_changed",
-                "status": existing.status.value if hasattr(existing.status, "value") else existing.status,
-            })
-            if existing.status == DeliveryStatus.delivered:
-                # Same return/exchange completion hook as the online PATCH
-                # path (routes/deliveries.py) — an agent completing a
-                # return pickup while offline still needs to trigger the
-                # refund/exchange once it syncs back.
-                handle_return_pickup_completion(db, existing)
         return existing, None
     else:
         # Server's existing version is newer or equal — keep it, discard

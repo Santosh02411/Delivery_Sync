@@ -13,12 +13,11 @@ from datetime import datetime
 from app.db.session import get_db
 from app.models.user import UserDB, UserRole, UserOut, AreaDetectRequest, AreaSetRequest, AreaOut
 from app.models.agent_location import AgentLocationDB, AgentLocationUpdate, AgentLocationOut
-from app.models.delivery import DeliveryRecordDB, DeliveryStatus
+from app.models.delivery import DeliveryRecordDB
 from app.models.push_subscription import PushSubscriptionDB, PushSubscriptionCreate
 from app.routes.deliveries import require_dispatcher
 from app.routes.auth import get_current_user
 from app.services.push import VAPID_PUBLIC_KEY
-from app.services.websocket_manager import broadcast_sync, tracking_room
 from app.services.geocoding import reverse_geocode_area
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -68,25 +67,6 @@ def update_my_location(
         db.add(existing)
     db.commit()
     db.refresh(existing)
-
-    # Push the new position to anyone watching this agent's active
-    # deliveries live (the customer tracking page / LiveTrackingMap) —
-    # broadcasts to every delivery currently out with this agent, since
-    # one location update covers all of them at once.
-    active_delivery_ids = [
-        row.id for row in
-        db.query(DeliveryRecordDB.id).filter(
-            DeliveryRecordDB.agent_id == current_user.id,
-            DeliveryRecordDB.status.in_([DeliveryStatus.picked_up, DeliveryStatus.out_for_delivery]),
-        ).all()
-    ]
-    for delivery_id in active_delivery_ids:
-        broadcast_sync(tracking_room(delivery_id), {
-            "event": "location_update",
-            "latitude": payload.latitude,
-            "longitude": payload.longitude,
-        })
-
     return existing
 
 
