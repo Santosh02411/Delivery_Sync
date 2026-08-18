@@ -1302,6 +1302,62 @@ page already uses.
 
 ---
 
+---
+
+## Frontend Visual Polish Pass
+
+**What was asked:** make the frontend "complete and beautiful."
+
+**What was already there, worth naming:** the app already had a real,
+distinctive design system — "Fleet Ops Console": Space Grotesk (display)
++ Inter (body) + JetBrains Mono (data/mono) as a deliberate three-font
+pairing, a near-black dispatch-console palette with a warm amber accent
+(`#f2a93b` — chosen specifically to avoid both the acid-green-on-black
+and warm-terracotta-on-cream looks that AI-generated designs default
+to), and a light-theme override sharing every variable name. That
+wasn't templated — it just wasn't being refined, and the customer
+dashboard wasn't using it consistently (fixed in an earlier session).
+This pass builds on that existing identity rather than replacing it.
+
+**What changed, all in `theme.css`/`auth.css` so it applies everywhere
+at once:**
+- Real depth: a proper shadow scale (`--shadow-sm/md/lg`, black-based
+  for the dark theme since gray shadows look like mistakes on
+  near-black, gray-based for light) applied to cards, the sidebar,
+  modals, buttons.
+- Refined motion: buttons get a focus glow + press-down on click, cards
+  lift slightly on hover, modals rise in rather than just appearing,
+  in-transit status badges get a subtle "live" pulsing dot — all
+  wrapped in a single `prefers-reduced-motion` rule that kills every
+  animation at once for anyone who needs that.
+- A signature moment for the auth pages (login/signup/forgot/reset —
+  previously just a bare centered card with zero brand identity): a
+  soft accent-colored glow anchored in the corner, a faint diagonal
+  "route line" motif in the background, and a wordmark above the card
+  — the one deliberate flourish on the product's most-seen screen,
+  evoking a delivery route without literally drawing a map.
+- Small details that add up: a themed thin scrollbar (replacing the
+  default OS one, which was the one remaining unstyled surface), a
+  very faint dot-grid page background (a nod to a dispatch console's
+  map grid, low enough contrast to never compete with real content), a
+  colored text-selection style, an accent-colored `page-title` tick
+  mark, a reusable `.empty-state` treatment (icon + title + guidance,
+  applied to the customer's empty order list and the agent's empty
+  delivery list — "an empty screen is an invitation to act," not a
+  gray sentence in a lot of blank space).
+- Left the dispatcher's empty unassigned-queue as a bare `null` render
+  on purpose, not an oversight: for a working dispatcher, an empty
+  queue is good news that doesn't need a call-to-action box taking up
+  space on an otherwise busy screen — the empty-state treatment above
+  is for "you haven't done the thing yet," not "there's nothing to do
+  right now."
+
+Verified: both CSS files brace-balanced, every touched JSX file
+esbuild-clean individually, and the full app bundle builds clean end to
+end with no regressions.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

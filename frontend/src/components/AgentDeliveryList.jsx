@@ -498,9 +498,11 @@ export default function AgentDeliveryList() {
       )}
 
       {filteredDeliveries.length === 0 && deliveries.length === 0 && (
-        <p style={{ color: "var(--text-secondary)" }}>
-          No deliveries assigned yet. Check back soon, or ask your dispatcher.
-        </p>
+        <div className="empty-state">
+          <div className="empty-state-icon">🚚</div>
+          <div className="empty-state-title">No deliveries assigned yet</div>
+          <div className="empty-state-body">Check back soon, or ask your dispatcher.</div>
+        </div>
       )}
       {filteredDeliveries.length === 0 && deliveries.length > 0 && (
         <p style={{ color: "var(--text-secondary)" }}>No deliveries match "{searchQuery}".</p>
