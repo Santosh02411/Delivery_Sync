@@ -1358,6 +1358,108 @@ end with no regressions.
 
 ---
 
+---
+
+## Postgres + Docker + Environment Separation
+
+**What was missing:** SQLite file + `uvicorn --reload` was the only way
+to run this project — no real database option, no containerized setup,
+and no distinction in app behavior between "someone's laptop" and "a
+real deployment."
+
+**What it does:**
+- `app/db/session.py` now reads `DATABASE_URL` — unset (default) still
+  means the zero-setup SQLite file; set to a real Postgres URL and the
+  exact same models/migrations/queries work against it instead, since
+  nothing in this codebase writes raw SQLite-specific SQL. Along the
+  way, found and fixed a real cross-dialect bug in the lightweight
+  migration system (`app/db/migrate.py`): boolean column defaults were
+  hand-formatted as `1`/`0`, which is valid SQLite but a type error
+  against a real Postgres boolean column. Now rendered through
+  SQLAlchemy's own literal compiler, which gets it right per-dialect —
+  verified directly against both dialects.
+- `ENVIRONMENT=production` is a real safety switch, not just a label:
+  the interactive `/docs` explorer gets disabled, `ALLOWED_ORIGINS`
+  must be set explicitly (no silent wide-open CORS default), and the
+  app now refuses to even START if `JWT_SECRET_KEY` is left at its
+  insecure default — a hard failure instead of a warning that's easy to
+  miss in a deploy log. Verified both the failure and the
+  properly-configured success path directly.
+- `backend/Dockerfile`, `frontend/Dockerfile` (a real two-stage build —
+  `npm run build`'s static output served by nginx, no Node in the final
+  image), and a root `docker-compose.yml` wiring up Postgres + backend
+  + frontend together, all with `ENVIRONMENT=production` set. New
+  `docs/DOCKER.md` covers running it and what's actually different from
+  local dev. `frontend/src/services/api.js`'s `API_BASE_URL` is now a
+  build-time `VITE_API_BASE_URL`, since a Docker/production build can't
+  assume the backend lives at `127.0.0.1:8000` the way local dev always
+  did.
+- Docker itself isn't available in the environment this was built in,
+  so the Dockerfiles/compose file are validated as far as reasonably
+  possible without a live daemon: YAML syntax-checked, and every actual
+  behavior change they configure (DATABASE_URL switching,
+  ENVIRONMENT=production's three effects) tested directly against the
+  real code paths.
+
+---
+
+## Real Routing (OSRM / Google Directions)
+
+**What was missing:** every distance used for agent-ranking and route
+ordering was straight-line haversine — fine for a rough sort, but not
+what a road actually looks like (a river, a highway with no nearby
+crossing, one-way streets can all make the "closer" agent by
+straight-line distance actually take longer to arrive).
+
+**What it does:** new `services/routing.py` — real road distance/time
+(`get_route_distance`) and real multi-stop route optimization
+(`optimize_stop_order`, an actual TSP-approximation via OSRM's `/trip`
+endpoint or Google Directions' waypoint optimization, not hand-rolled
+nearest-neighbor) — via Google Directions when `GOOGLE_MAPS_API_KEY` is
+set, free OSRM otherwise (same "real if configured, free fallback
+otherwise" pattern as this project's other integrations; OSRM's public
+demo server is explicitly not meant for production load, disclosed
+plainly rather than glossed over).
+
+Agent ranking (`_rank_agents_for_delivery`) now refines the top few
+candidates with a real routed distance instead of leaving everything on
+haversine — bounded to a small candidate set (a routing call is neither
+free nor instant the way haversine is) and, importantly, scoped to
+never cross a zone-coverage tier boundary, so a shorter real route can
+never let a non-zone-covering agent leapfrog a zone-covering one — that
+would have silently undermined the zone-restriction feature. Verified
+directly: with a mocked route reversing which agent was actually
+closer, the real-routing-refined ranking correctly picked the agent
+haversine had ranked second.
+
+New `POST /deliveries/optimize-route` gives an agent's batch of active
+deliveries a real optimized visiting order; `SuggestedRoute.jsx` tries
+this first and falls back to the original client-side nearest-neighbor
+heuristic (`routeOptimizer.js`) when real routing isn't available for
+that batch (no coordinates, no provider reachable) — a route is always
+produced, real routing or not. Both changes verified end-to-end.
+
+---
+
+## Map Picker for Coordinates (No More Typing Lat/Lng)
+
+**What was asked:** nobody has latitude/longitude memorized — picking
+a zone's center or a delivery's coordinates by typing numbers into two
+boxes was a real usability gap, not a minor one.
+
+**What it does:** new reusable `LocationPicker.jsx` — a click-anywhere
+Leaflet map (same free OpenStreetMap tiles as the existing tracking
+map, no API key) with a draggable marker for fine-tuning, and a live
+radius circle when picking a zone center. Wired into both places that
+asked for raw coordinates: `ZoneManager.jsx`'s zone creation form and
+`DispatcherTable.jsx`'s manual delivery creation form — both keep exact
+numeric entry available behind a collapsed "enter exact coordinates
+instead" fallback for anyone who does have precise coordinates on hand
+(e.g. copied from Google Maps), but the map is now the primary,
+obvious way to set a point.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
