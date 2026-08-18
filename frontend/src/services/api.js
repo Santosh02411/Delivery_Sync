@@ -812,6 +812,121 @@ export async function fetchAuditLog(token, { dateFrom, dateTo, changedByUserId, 
   return data;
 }
 
+// ---------- Delivery zones/territories ----------
+
+export async function fetchZones(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/zones/`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load zones");
+  return data;
+}
+
+export async function createZone(token, zone) {
+  const response = await fetch(`${API_BASE_URL}/admin/zones/`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify(zone),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create zone");
+  return data;
+}
+
+export async function updateZone(token, zoneId, updates) {
+  const response = await fetch(`${API_BASE_URL}/admin/zones/${zoneId}`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify(updates),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update zone");
+  return data;
+}
+
+export async function deleteZone(token, zoneId) {
+  const response = await fetch(`${API_BASE_URL}/admin/zones/${zoneId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to delete zone");
+  return data;
+}
+
+export async function assignAgentToZone(token, zoneId, agentId) {
+  const response = await fetch(`${API_BASE_URL}/admin/zones/${zoneId}/agents/${agentId}`, {
+    method: "POST",
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to assign agent to zone");
+  return data;
+}
+
+export async function unassignAgentFromZone(token, zoneId, agentId) {
+  const response = await fetch(`${API_BASE_URL}/admin/zones/${zoneId}/agents/${agentId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to remove agent from zone");
+  return data;
+}
+
+// ---------- Returns / exchanges ----------
+
+export async function createReturnRequest(token, deliveryId, requestType, reason) {
+  const response = await fetch(`${API_BASE_URL}/customer/return-requests/`, {
+    method: "POST",
+    headers: customerAuthHeaders(token),
+    body: JSON.stringify({ delivery_id: deliveryId, request_type: requestType, reason }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to submit request");
+  return data;
+}
+
+export async function fetchMyReturnRequests(token) {
+  const response = await fetch(`${API_BASE_URL}/customer/return-requests/`, {
+    headers: customerAuthHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load return requests");
+  return data;
+}
+
+export async function fetchReturnRequests(token, statusFilter) {
+  const params = statusFilter ? `?status=${statusFilter}` : "";
+  const response = await fetch(`${API_BASE_URL}/admin/return-requests/${params}`, {
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load return requests");
+  return data;
+}
+
+export async function approveReturnRequest(token, requestId, resolutionNote) {
+  const response = await fetch(`${API_BASE_URL}/admin/return-requests/${requestId}/approve`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ resolution_note: resolutionNote || null }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to approve request");
+  return data;
+}
+
+export async function rejectReturnRequest(token, requestId, resolutionNote) {
+  const response = await fetch(`${API_BASE_URL}/admin/return-requests/${requestId}/reject`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ resolution_note: resolutionNote || null }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to reject request");
+  return data;
+}
+
 // ---------- Customer data privacy (GDPR export / delete) ----------
 
 export async function exportCustomerData(token) {

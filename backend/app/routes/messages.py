@@ -17,6 +17,7 @@ from app.models.delivery import DeliveryRecordDB
 from app.models.delivery_message import DeliveryMessageDB, MessageCreate, MessageOut
 from app.models.user import UserDB, UserRole
 from app.routes.auth import get_current_user
+from app.services.websocket_manager import broadcast_sync, chat_room
 
 router = APIRouter(prefix="/deliveries", tags=["messages"])
 
@@ -73,4 +74,10 @@ def send_message(
     db.add(message)
     db.commit()
     db.refresh(message)
+
+    broadcast_sync(chat_room(delivery_id), {
+        "event": "new_message",
+        "message": MessageOut.model_validate(message).model_dump(mode="json"),
+    })
+
     return message

@@ -3,6 +3,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { fetchCustomerDeliveryAgentLocation } from "../services/api";
 import { cacheTile, getCachedTile } from "../services/tileCache";
+import { connectWebSocket } from "../services/websocket";
 
 // Leaflet's default marker icon references image files by a relative
 // path that doesn't survive bundling — this is the standard fix,
@@ -74,10 +75,17 @@ const CachedTileLayer = L.TileLayer.extend({
 });
 
 /**
- * Live GPS tracking map for one delivery — polls the agent's real
- * current position every 8s and moves the marker. Uses OpenStreetMap
- * tiles (free, no API key) via Leaflet, not Google Maps, since Google
- * Maps requires a billing-enabled API key.
+ * Live GPS tracking map for one delivery — moves the marker in real
+ * time as the agent's position updates, pushed over a WebSocket
+ * (routes/websockets.py's tracking room) rather than polled. No auth
+ * needed for that socket: it's scoped to one delivery_id (an
+ * unguessable UUID), the same security model the public tracking page
+ * already uses. A slow (30s) background poll still runs alongside it
+ * purely as a safety net — if a network blocks WebSocket upgrades
+ * entirely (some restrictive corporate/mobile networks do), the map
+ * still stays roughly current instead of freezing forever. Uses
+ * OpenStreetMap tiles (free, no API key) via Leaflet, not Google Maps,
+ * since Google Maps requires a billing-enabled API key.
  */
 export default function LiveTrackingMap({ token, deliveryId }) {
   const mapContainerRef = useRef(null);
@@ -89,47 +97,59 @@ export default function LiveTrackingMap({ token, deliveryId }) {
     let intervalId;
     let cancelled = false;
 
+    function applyLocation(latitude, longitude) {
+      if (cancelled) return;
+      setStatus("live");
+      const latLng = [latitude, longitude];
+
+      if (!mapRef.current && mapContainerRef.current) {
+        mapRef.current = L.map(mapContainerRef.current, {
+          zoomControl: true,
+          attributionControl: true,
+        }).setView(latLng, 14);
+
+        new CachedTileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          maxZoom: 19,
+          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        }).addTo(mapRef.current);
+
+        markerRef.current = L.marker(latLng).addTo(mapRef.current)
+          .bindPopup("Your delivery agent");
+      } else if (mapRef.current && markerRef.current) {
+        markerRef.current.setLatLng(latLng);
+        mapRef.current.panTo(latLng);
+      }
+    }
+
     async function poll() {
       try {
         const loc = await fetchCustomerDeliveryAgentLocation(token, deliveryId);
         if (cancelled) return;
-
         if (!loc) {
           setStatus((prev) => (prev === "live" ? "live" : "unavailable"));
           return;
         }
-
-        setStatus("live");
-        const latLng = [loc.latitude, loc.longitude];
-
-        if (!mapRef.current && mapContainerRef.current) {
-          mapRef.current = L.map(mapContainerRef.current, {
-            zoomControl: true,
-            attributionControl: true,
-          }).setView(latLng, 14);
-
-          new CachedTileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-            maxZoom: 19,
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-          }).addTo(mapRef.current);
-
-          markerRef.current = L.marker(latLng).addTo(mapRef.current)
-            .bindPopup("Your delivery agent");
-        } else if (mapRef.current && markerRef.current) {
-          markerRef.current.setLatLng(latLng);
-          mapRef.current.panTo(latLng);
-        }
+        applyLocation(loc.latitude, loc.longitude);
       } catch (err) {
-        if (!cancelled) setStatus("unavailable");
+        if (!cancelled) setStatus((prev) => (prev === "live" ? "live" : "unavailable"));
       }
     }
 
-    poll();
-    intervalId = setInterval(poll, 8000);
+    poll(); // initial fetch so the map isn't blank while the socket connects
+    intervalId = setInterval(poll, 30000); // safety net — see module docstring
+
+    const socket = connectWebSocket(`/ws/tracking/${deliveryId}`, {
+      onMessage: (data) => {
+        if (data.event === "location_update") {
+          applyLocation(data.latitude, data.longitude);
+        }
+      },
+    });
 
     return () => {
       cancelled = true;
       clearInterval(intervalId);
+      socket.close();
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;

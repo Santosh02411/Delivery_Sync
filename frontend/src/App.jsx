@@ -12,6 +12,8 @@ import ProductManager from "./components/ProductManager";
 import AnalyticsDashboard from "./components/AnalyticsDashboard";
 import AdminPanel from "./components/AdminPanel";
 import AuditLogViewer from "./components/AuditLogViewer";
+import ZoneManager from "./components/ZoneManager";
+import ReturnRequestsPanel from "./components/ReturnRequestsPanel";
 import TwoFactorSettings from "./components/TwoFactorSettings";
 import LoginPage from "./components/LoginPage";
 import SignupPage from "./components/SignupPage";
@@ -36,6 +38,10 @@ function StaffDashboard({ user }) {
             <DispatcherTable />
           )}
           {user.role === "admin" && currentView === "admin" && <AdminPanel />}
+          {user.role === "admin" && currentView === "zones" && <ZoneManager />}
+          {(user.role === "dispatcher" || user.role === "admin") && currentView === "returns" && (
+            <ReturnRequestsPanel />
+          )}
           {user.role === "admin" && currentView === "audit-log" && <AuditLogViewer />}
           {user.role === "admin" && currentView === "analytics" && <AnalyticsDashboard />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "products" && (

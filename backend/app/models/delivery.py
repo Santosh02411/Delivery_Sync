@@ -97,6 +97,16 @@ class DeliveryRecordDB(Base):
     # link, just not tied to a logged-in dashboard.
     customer_id = Column(String, nullable=True, index=True)
 
+    # "delivery" (default — a normal forward delivery to the customer)
+    # or "return_pickup" (an agent collecting an item BACK from the
+    # customer, created when a return/exchange request is approved —
+    # see models/return_request.py). A return_pickup flows through the
+    # exact same pending -> picked_up -> delivered status lifecycle as
+    # a normal delivery; "delivered" for one of these means "brought
+    # back to the store", which is what triggers the return/exchange to
+    # complete (see routes/deliveries.py's update_delivery).
+    delivery_type = Column(String, nullable=False, default="delivery")
+
 
 # ---------- Pydantic Schemas (API request/response shapes) ----------
 
@@ -163,6 +173,7 @@ class DeliveryRecordOut(BaseModel):
     customer_email: Optional[str] = None
     customer_phone: Optional[str] = None
     customer_id: Optional[str] = None
+    delivery_type: str = "delivery"
 
     class Config:
         from_attributes = True  # allows conversion from SQLAlchemy objects
