@@ -3,8 +3,8 @@
 This file tracks every feature built into this project, in the order it
 was added: what was missing before it existed, why it was needed, and
 what it actually does now. This is different from `PROJECT_WORKFLOW.md`
-(which logs bugs and how they were fixed) — this file is about *decisions*
-and *reasoning*, so you can explain not just how something works, but why
+(which logs bugs and how they were fixed) — this file is about _decisions_
+and _reasoning_, so you can explain not just how something works, but why
 it exists at all.
 
 This file is maintained going forward — every new feature gets an entry
@@ -144,7 +144,7 @@ dropdown, and a click-through modal showing a delivery's full details.
 
 ## Status History / Audit Log
 
-**What was missing:** The detail modal showed a delivery's *current*
+**What was missing:** The detail modal showed a delivery's _current_
 state, but nothing about how it got there — no record of who changed
 what, or when.
 
@@ -359,7 +359,7 @@ organizations and confirmed each saw zero of the other's data.
 **A real vulnerability found and fixed while building this:** the offline
 `/sync` endpoint is intentionally unauthenticated (see Rate Limiting
 below for why), which meant a crafted payload could reference an
-existing delivery ID belonging to a *different* organization and
+existing delivery ID belonging to a _different_ organization and
 overwrite it, as long as it paired that ID with one of its own agent
 IDs. Fixed by verifying the existing record's organization matches the
 requesting agent's organization before allowing any update — confirmed
@@ -383,7 +383,7 @@ multi-user product, not an optional extra.
 organization becomes its admin automatically) can view every user in
 their organization, deactivate or reactivate an agent's account
 (deactivation takes effect immediately — even blocking that user's
-*already-issued* login token, not just future login attempts), and reset
+_already-issued_ login token, not just future login attempts), and reset
 a user's password directly. Honest, disclosed limitation: since there's
 no email service, "reset password" means the admin sets a new one and
 shares it with the person themselves — not an emailed reset link, which
@@ -417,7 +417,7 @@ organization's deliveries, optionally filtered to a date range using the
 same From/To fields already used for table filtering. Built with
 Python's built-in `csv` module (not hand-built comma-joined strings), so
 a notes field containing a comma still exports correctly — deliberately
-avoiding the exact category of bug the bulk-import CSV *parser* was
+avoiding the exact category of bug the bulk-import CSV _parser_ was
 built to prevent on the way in, this time on the way out.
 
 ---
@@ -434,6 +434,7 @@ and CORS was wide open to any origin.
 before this could honestly be called ready for any real deployment.
 
 **What it does:**
+
 - Signup and login are rate-limited per IP (5/min and 10/min
   respectively) using `slowapi`, confirmed by actually sending 7 rapid
   signup requests and watching the 6th and 7th get correctly rejected
@@ -882,7 +883,7 @@ those are security credentials, not personal data worth exposing in a
 downloadable file). `DELETE /customer/account` requires the password
 again (not just an active session) and deletes purely personal data
 outright (cart, addresses, notifications, push subscriptions) — but
-*anonymizes* rather than deletes orders/deliveries/reviews, since a
+_anonymizes_ rather than deletes orders/deliveries/reviews, since a
 store has a legitimate business reason to retain its own transaction
 and refund records even after a customer's account is gone, the same
 pattern real e-commerce platforms (Amazon, Shopify) use. New
@@ -981,11 +982,12 @@ rather than a clean error response — which the checkout code's
 real problem. The customer saw "You're offline" while genuinely online.
 
 **The fix, at both ends:**
+
 - `routes/checkout.py` now wraps the Razorpay call in a real
   try/except — an authentication failure returns a clean `502` with an
   actionable message (check `RAZORPAY_KEY_ID`/`SECRET` in `.env`, or
   unset them to use the built-in test-mode path) instead of crashing.
-- `main.py`'s security-headers middleware is now a backstop for *any*
+- `main.py`'s security-headers middleware is now a backstop for _any_
   unhandled exception anywhere in the app — logs it server-side and
   always returns a clean `500 {"detail": "..."}` JSON response, so a
   future bug in a completely different route can never again show up in
@@ -1022,13 +1024,13 @@ and the offline-queued-then-synced confirmation messages.
 ## Config Fix: `FRONTEND_URL` Port Mismatch (Password Reset Links)
 
 **What was wrong:** `frontend/vite.config.js` runs the dev server on
-port **3000**, but `backend/.env.example`'s `FRONTEND_URL` example value
+port **3500**, but `backend/.env.example`'s `FRONTEND_URL` example value
 said **5173** (Vite's own default, not what this project actually
 uses). Copying `.env.example` to `.env` without editing that line means
 every password-reset email links to a port nothing is listening on —
 "this site can't be reached."
 
-**The fix:** `.env.example` now matches the real port (3000) with a
+**The fix:** `.env.example` now matches the real port (3500) with a
 comment explaining why it has to match whatever `npm run dev` actually
 prints, rather than assuming Vite's default.
 
@@ -1130,12 +1132,13 @@ existed at all. Also no way to delete notifications; they only ever
 accumulated.
 
 **What it does:**
+
 - New `GET/PATCH /customer/me` (name/email, with email-uniqueness
   checking) and `POST /customer/me/change-password` (requires the
   current password, same re-auth-to-change-something-sensitive pattern
   used for staff 2FA disable). New "👤 Profile" tab with both forms.
 - New `DELETE /customer/notifications/{id}` (single) and `DELETE
-  /customer/notifications?only_read=true/false` (bulk — defaults to
+/customer/notifications?only_read=true/false` (bulk — defaults to
   only clearing already-read ones, the safer default for a "clean up"
   action, with a full-clear option available). Notification panel
   gained a 🗑 delete button per item and a "Clear read" button.
@@ -1310,17 +1313,19 @@ page already uses.
 
 **What was already there, worth naming:** the app already had a real,
 distinctive design system — "Fleet Ops Console": Space Grotesk (display)
-+ Inter (body) + JetBrains Mono (data/mono) as a deliberate three-font
-pairing, a near-black dispatch-console palette with a warm amber accent
-(`#f2a93b` — chosen specifically to avoid both the acid-green-on-black
-and warm-terracotta-on-cream looks that AI-generated designs default
-to), and a light-theme override sharing every variable name. That
-wasn't templated — it just wasn't being refined, and the customer
-dashboard wasn't using it consistently (fixed in an earlier session).
-This pass builds on that existing identity rather than replacing it.
+
+- Inter (body) + JetBrains Mono (data/mono) as a deliberate three-font
+  pairing, a near-black dispatch-console palette with a warm amber accent
+  (`#f2a93b` — chosen specifically to avoid both the acid-green-on-black
+  and warm-terracotta-on-cream looks that AI-generated designs default
+  to), and a light-theme override sharing every variable name. That
+  wasn't templated — it just wasn't being refined, and the customer
+  dashboard wasn't using it consistently (fixed in an earlier session).
+  This pass builds on that existing identity rather than replacing it.
 
 **What changed, all in `theme.css`/`auth.css` so it applies everywhere
 at once:**
+
 - Real depth: a proper shadow scale (`--shadow-sm/md/lg`, black-based
   for the dark theme since gray shadows look like mistakes on
   near-black, gray-based for light) applied to cards, the sidebar,
@@ -1368,6 +1373,7 @@ and no distinction in app behavior between "someone's laptop" and "a
 real deployment."
 
 **What it does:**
+
 - `app/db/session.py` now reads `DATABASE_URL` — unset (default) still
   means the zero-setup SQLite file; set to a real Postgres URL and the
   exact same models/migrations/queries work against it instead, since
@@ -1388,12 +1394,12 @@ real deployment."
 - `backend/Dockerfile`, `frontend/Dockerfile` (a real two-stage build —
   `npm run build`'s static output served by nginx, no Node in the final
   image), and a root `docker-compose.yml` wiring up Postgres + backend
-  + frontend together, all with `ENVIRONMENT=production` set. New
-  `docs/DOCKER.md` covers running it and what's actually different from
-  local dev. `frontend/src/services/api.js`'s `API_BASE_URL` is now a
-  build-time `VITE_API_BASE_URL`, since a Docker/production build can't
-  assume the backend lives at `127.0.0.1:8000` the way local dev always
-  did.
+  - frontend together, all with `ENVIRONMENT=production` set. New
+    `docs/DOCKER.md` covers running it and what's actually different from
+    local dev. `frontend/src/services/api.js`'s `API_BASE_URL` is now a
+    build-time `VITE_API_BASE_URL`, since a Docker/production build can't
+    assume the backend lives at `127.0.0.1:8000` the way local dev always
+    did.
 - Docker itself isn't available in the environment this was built in,
   so the Dockerfiles/compose file are validated as far as reasonably
   possible without a live daemon: YAML syntax-checked, and every actual
