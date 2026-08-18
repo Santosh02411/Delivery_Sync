@@ -37,6 +37,9 @@ from app.services.websocket_manager import broadcast_sync, dispatcher_queue_room
 from app.models.agent_location import AgentLocationDB
 from app.models.zone import ZoneDB, AgentZoneAssignmentDB
 from app.services.geo import haversine_km, find_zone_for_point
+from app.services.routing import get_route_distance, optimize_stop_order
+
+REAL_ROUTING_TOP_K = 3  # how many top-tier candidates get a real routing call, per suggested-agents/auto-assign request
 from app.routes.auth import get_current_user
 
 router = APIRouter(prefix="/deliveries", tags=["deliveries"])
@@ -191,6 +194,7 @@ class AgentSuggestionOut(BaseModel):
     area_name: Optional[str] = None
     zone_match: bool = False  # True when this agent's detected area matches the delivery's free-text `zone` field
     covers_matched_zone: bool = False  # True when this agent is an assigned coverer of the real Zone (see models/zone.py) the delivery's coordinates fall inside
+    routed: bool = False  # True when distance_km is a real road distance (services/routing.py), False when it's straight-line haversine
 
 
 class SuggestedAgentsOut(BaseModel):
@@ -199,6 +203,7 @@ class SuggestedAgentsOut(BaseModel):
     matched_zone_id: Optional[str] = None
     matched_zone_name: Optional[str] = None
     zone_restricted: bool = False  # True when auto-assign would restrict candidates to the matched zone's coverers (POST /auto-assign only — this endpoint never hard-filters, just reports what auto-assign would do)
+    used_real_routing: bool = False  # True when at least one candidate's distance reflects real road distance rather than straight-line
 
 
 def _zone_matches_area(zone: Optional[str], area_name: Optional[str]) -> bool:
@@ -319,6 +324,36 @@ def _rank_agents_for_delivery(db: Session, org_id: str, db_record: DeliveryRecor
         s.distance_km if s.distance_km is not None else 0,
         s.active_delivery_count,
     ))
+
+    # Real-routing refinement: replace haversine with actual road
+    # distance for a small, bounded set of candidates — specifically
+    # the leading run that already shares the TOP priority tier
+    # (zone-coverage / zone-match), never mixed across tiers, so a real
+    # route can never let a non-zone-covering agent leapfrog a
+    # zone-covering one just because the road happens to be shorter —
+    # that would silently undermine the zone restriction this same
+    # function enforces. See services/routing.py's module docstring for
+    # why this is bounded to a handful of candidates rather than every
+    # agent: a real routing call is neither free nor instant the way
+    # haversine is.
+    if suggestions and ranked_by_distance:
+        top_tier_key = (suggestions[0].covers_matched_zone, suggestions[0].zone_match)
+        run_end = 0
+        while run_end < len(suggestions) and (suggestions[run_end].covers_matched_zone, suggestions[run_end].zone_match) == top_tier_key:
+            run_end += 1
+
+        candidates = [s for s in suggestions[:run_end] if s.has_location][:REAL_ROUTING_TOP_K]
+        if candidates:
+            for s in candidates:
+                location = locations[s.agent_id]
+                real = get_route_distance(delivery_lat, delivery_lon, location.latitude, location.longitude)
+                if real:
+                    s.distance_km = round(real["distance_km"], 2)
+                    s.routed = True
+            top_run = suggestions[:run_end]
+            top_run.sort(key=lambda s: (s.distance_km is None, s.distance_km if s.distance_km is not None else 0, s.active_delivery_count))
+            suggestions = top_run + suggestions[run_end:]
+
     return suggestions, ranked_by_distance, matched_zone
 
 
@@ -349,6 +384,7 @@ def get_suggested_agents(
         matched_zone_id=matched_zone.id if matched_zone else None,
         matched_zone_name=matched_zone.name if matched_zone else None,
         zone_restricted=zone_has_coverers,
+        used_real_routing=any(s.routed for s in suggestions),
     )
 
 
@@ -510,6 +546,68 @@ def update_delivery(
             handle_return_pickup_completion(db, db_record)
 
     return db_record
+
+
+class RouteOptimizeRequest(BaseModel):
+    delivery_ids: List[str]
+    start_latitude: Optional[float] = None
+    start_longitude: Optional[float] = None
+
+
+class RouteOptimizeOut(BaseModel):
+    ordered_delivery_ids: List[str]
+    used_real_routing: bool  # False means every delivery lacked coordinates, or no routing provider was reachable — caller should fall back to the client-side heuristic (routeOptimizer.js)
+
+
+@router.post("/optimize-route", response_model=RouteOptimizeOut)
+def optimize_route(
+    payload: RouteOptimizeRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """
+    Real multi-stop route optimization (services/routing.py — an actual
+    TSP-approximation via OSRM/Google, not hand-rolled nearest-neighbor)
+    for a batch of an agent's own deliveries. Falls back to returning
+    the original order (used_real_routing=False) when deliveries lack
+    coordinates or no routing provider is reachable — the frontend's
+    existing client-side heuristic (routeOptimizer.js) takes over in
+    that case, so a batch of deliveries always gets SOME ordering, real
+    routing or not.
+    """
+    deliveries = db.query(DeliveryRecordDB).filter(
+        DeliveryRecordDB.id.in_(payload.delivery_ids),
+        DeliveryRecordDB.org_id == current_user.org_id,
+    ).all()
+    if current_user.role == UserRole.agent:
+        deliveries = [d for d in deliveries if d.agent_id == current_user.id]
+
+    stops = []
+    for d in deliveries:
+        if not d.latitude or not d.longitude:
+            continue
+        try:
+            stops.append({"id": d.id, "latitude": float(d.latitude), "longitude": float(d.longitude)})
+        except (TypeError, ValueError):
+            continue
+
+    if len(stops) < 2:
+        return RouteOptimizeOut(ordered_delivery_ids=[d.id for d in deliveries], used_real_routing=False)
+
+    start = None
+    if payload.start_latitude is not None and payload.start_longitude is not None:
+        start = {"latitude": payload.start_latitude, "longitude": payload.start_longitude}
+
+    ordered_ids = optimize_stop_order(stops, start)
+    if not ordered_ids:
+        return RouteOptimizeOut(ordered_delivery_ids=[d.id for d in deliveries], used_real_routing=False)
+
+    # Any delivery that had no usable coordinates rides along at the
+    # end, in its original order — real routing can't place a stop it
+    # was never given a location for, but it shouldn't just disappear
+    # from the batch either.
+    no_coord_ids = [d.id for d in deliveries if d.id not in {s["id"] for s in stops}]
+    return RouteOptimizeOut(ordered_delivery_ids=ordered_ids + no_coord_ids, used_real_routing=True)
 
 
 @router.get("/", response_model=List[DeliveryRecordOut])

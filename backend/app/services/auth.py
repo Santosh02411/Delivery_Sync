@@ -9,6 +9,11 @@ that still uses it. Before deploying this publicly, set JWT_SECRET_KEY to
 a long, random, secret value (e.g. `python -c "import secrets;
 print(secrets.token_hex(32))"`). Documented as a known v1 gap in
 docs/SECURITY_AND_ACCESS.md.
+
+When ENVIRONMENT=production, this stops being a warning and becomes a
+hard startup failure instead — see the ENVIRONMENT block below. A
+warning that scrolls by in a terminal is easy to miss; a real
+deployment refusing to start with the insecure default key is not.
 """
 
 import os
@@ -17,10 +22,20 @@ from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
+
 _DEV_FALLBACK_SECRET = "dev-only-secret-change-before-deploying"
 SECRET_KEY = os.environ.get("JWT_SECRET_KEY", _DEV_FALLBACK_SECRET)
 
 if SECRET_KEY == _DEV_FALLBACK_SECRET:
+    if ENVIRONMENT == "production":
+        raise RuntimeError(
+            "Refusing to start with ENVIRONMENT=production and no JWT_SECRET_KEY set. "
+            "The fallback signing key is a fixed, publicly-known string — running "
+            "production with it means anyone can forge valid login tokens for any "
+            "account. Set JWT_SECRET_KEY to a long, random value, e.g.: "
+            "python -c \"import secrets; print(secrets.token_hex(32))\""
+        )
     warnings.warn(
         "JWT_SECRET_KEY is not set — using an insecure, publicly-known "
         "default signing key. This is fine for local development only. "
