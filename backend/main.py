@@ -44,10 +44,26 @@ from app.routes import deliveries, sync, auth, users, bulk_import, admin, export
 Base.metadata.create_all(bind=engine)
 run_lightweight_migrations(engine, Base)
 
+# ENVIRONMENT selects a few real, safety-relevant behaviors — not just
+# a label. "development" (the default, zero-config) keeps everything
+# permissive for local work: the interactive /docs explorer stays on,
+# and CORS defaults to allowing any origin if ALLOWED_ORIGINS isn't
+# set. "production" tightens both: /docs and /redoc are hidden by
+# default (a public API explorer is routinely how people find
+# undocumented-but-live endpoints on a real deployment), and an unset
+# ALLOWED_ORIGINS is treated as a configuration mistake worth failing
+# loudly on rather than silently defaulting to wide-open CORS. See
+# services/auth.py for the third piece: refusing to start at all in
+# production with the insecure default JWT signing key.
+ENVIRONMENT = os.environ.get("ENVIRONMENT", "development")
+IS_PRODUCTION = ENVIRONMENT == "production"
+
 app = FastAPI(
     title="Offline-First Delivery Sync API",
     description="Backend for the offline-first delivery status tracking project",
     version="0.1.0",
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
 )
 
 # Rate limiting: protects against brute-force login attempts, signup spam,
@@ -67,7 +83,17 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # ALLOWED_ORIGINS environment variable to a comma-separated list of exact
 # frontend URLs instead of leaving this wide open.
 allowed_origins_env = os.environ.get("ALLOWED_ORIGINS")
-allowed_origins = allowed_origins_env.split(",") if allowed_origins_env else ["*"]
+if allowed_origins_env:
+    allowed_origins = allowed_origins_env.split(",")
+elif IS_PRODUCTION:
+    raise RuntimeError(
+        "Refusing to start with ENVIRONMENT=production and no ALLOWED_ORIGINS set. "
+        "Defaulting to '*' in production would mean any website can call this API "
+        "as the logged-in user. Set ALLOWED_ORIGINS to a comma-separated list of "
+        "your real frontend URL(s), e.g. https://app.example.com"
+    )
+else:
+    allowed_origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
