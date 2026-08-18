@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
+import LocationPicker from "./LocationPicker";
 import {
   fetchZones,
   createZone,
@@ -57,6 +58,10 @@ export default function ZoneManager() {
 
   async function handleCreate(e) {
     e.preventDefault();
+    if (!centerLat || !centerLng) {
+      showToast("Click the map (or enter coordinates) to set the zone's center first.", "error");
+      return;
+    }
     setIsCreating(true);
     try {
       await createZone(token, {
@@ -140,24 +145,45 @@ export default function ZoneManager() {
             <label>Description (optional)</label>
             <input className="input" type="text" value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
-          <div style={{ display: "flex", gap: "8px" }}>
-            <div className="auth-field" style={{ flex: 1 }}>
-              <label>Center latitude</label>
-              <input className="input" type="number" step="any" value={centerLat} onChange={(e) => setCenterLat(e.target.value)} required />
-            </div>
-            <div className="auth-field" style={{ flex: 1 }}>
-              <label>Center longitude</label>
-              <input className="input" type="number" step="any" value={centerLng} onChange={(e) => setCenterLng(e.target.value)} required />
-            </div>
-          </div>
-          <button type="button" className="btn" style={{ marginBottom: "12px" }} onClick={useMyLocationForCenter}>
-            📍 Use my current location
-          </button>
+
           <div className="auth-field">
             <label>Radius (km)</label>
             <input className="input" type="number" step="any" min="0.1" value={radiusKm} onChange={(e) => setRadiusKm(e.target.value)} required />
           </div>
-          <button type="submit" className="btn btn-primary" disabled={isCreating}>
+
+          <div className="auth-field">
+            <label>Center point</label>
+            <LocationPicker
+              latitude={centerLat ? parseFloat(centerLat) : null}
+              longitude={centerLng ? parseFloat(centerLng) : null}
+              radiusKm={radiusKm ? parseFloat(radiusKm) : null}
+              onChange={(lat, lng) => {
+                setCenterLat(lat.toFixed(6));
+                setCenterLng(lng.toFixed(6));
+              }}
+            />
+            <button type="button" className="btn" style={{ marginTop: "8px", fontSize: "12px" }} onClick={useMyLocationForCenter}>
+              📍 Use my current location
+            </button>
+          </div>
+
+          <details style={{ marginBottom: "12px" }}>
+            <summary style={{ fontSize: "12px", color: "var(--text-secondary)", cursor: "pointer" }}>
+              Enter exact coordinates instead
+            </summary>
+            <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+              <div className="auth-field" style={{ flex: 1, marginBottom: 0 }}>
+                <label>Latitude</label>
+                <input className="input" type="number" step="any" value={centerLat} onChange={(e) => setCenterLat(e.target.value)} />
+              </div>
+              <div className="auth-field" style={{ flex: 1, marginBottom: 0 }}>
+                <label>Longitude</label>
+                <input className="input" type="number" step="any" value={centerLng} onChange={(e) => setCenterLng(e.target.value)} />
+              </div>
+            </div>
+          </details>
+
+          <button type="submit" className="btn btn-primary" disabled={isCreating || !centerLat || !centerLng}>
             {isCreating ? "Creating..." : "Create Zone"}
           </button>
         </form>

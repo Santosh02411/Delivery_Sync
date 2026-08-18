@@ -390,7 +390,7 @@ export default function AgentDeliveryList() {
         </div>
       )}
 
-      <SuggestedRoute deliveries={deliveries} />
+      <SuggestedRoute deliveries={deliveries} token={token} />
 
       <div style={{ display: "flex", gap: "8px", marginBottom: "20px", flexWrap: "wrap" }}>
         <button className="btn btn-primary" onClick={handleManualSync}>

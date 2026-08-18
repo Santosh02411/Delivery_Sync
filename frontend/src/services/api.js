@@ -7,7 +7,13 @@
  * `useAuth()` and pass it in.
  */
 
-export const API_BASE_URL = "http://127.0.0.1:8000";
+// Defaults to the local FastAPI dev server so `npm run dev` works with
+// zero config, same as always. VITE_API_BASE_URL lets a real build
+// (Docker, or any other deployment) point at a different backend URL —
+// Vite only inlines `import.meta.env.VITE_*` vars at BUILD time, not
+// runtime, so this has to be set when the frontend is built (a
+// `--build-arg` in Docker, or a `.env` file Vite reads), not afterwards.
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
 function authHeaders(token) {
   return {
@@ -646,6 +652,21 @@ export async function fetchSuggestedAgents(token, deliveryId) {
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Failed to load agent suggestions");
   return data;
+}
+
+export async function optimizeRouteOnServer(token, deliveryIds, startLatitude, startLongitude) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/optimize-route`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({
+      delivery_ids: deliveryIds,
+      start_latitude: startLatitude ?? null,
+      start_longitude: startLongitude ?? null,
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to optimize route");
+  return data; // { ordered_delivery_ids, used_real_routing }
 }
 
 export async function autoAssignDelivery(token, deliveryId) {

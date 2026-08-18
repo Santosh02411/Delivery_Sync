@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { connectWebSocket } from "../services/websocket";
+import LocationPicker from "./LocationPicker";
 import {
   fetchAllDeliveriesFromServer,
   fetchAgentsList,
@@ -393,14 +394,25 @@ export default function DispatcherTable() {
             </div>
 
             {showCoordFields && (
-              <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-                <div>
-                  <label className="field-label">Latitude</label>
-                  <input className="input" type="text" value={newLatitude} onChange={(e) => setNewLatitude(e.target.value)} placeholder="12.9716" />
-                </div>
-                <div>
-                  <label className="field-label">Longitude</label>
-                  <input className="input" type="text" value={newLongitude} onChange={(e) => setNewLongitude(e.target.value)} placeholder="77.5946" />
+              <div>
+                <LocationPicker
+                  latitude={newLatitude ? parseFloat(newLatitude) : null}
+                  longitude={newLongitude ? parseFloat(newLongitude) : null}
+                  onChange={(lat, lng) => {
+                    setNewLatitude(lat.toFixed(6));
+                    setNewLongitude(lng.toFixed(6));
+                  }}
+                  height={200}
+                />
+                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginTop: "6px" }}>
+                  <div>
+                    <label className="field-label">Latitude</label>
+                    <input className="input" type="text" value={newLatitude} onChange={(e) => setNewLatitude(e.target.value)} placeholder="12.9716" />
+                  </div>
+                  <div>
+                    <label className="field-label">Longitude</label>
+                    <input className="input" type="text" value={newLongitude} onChange={(e) => setNewLongitude(e.target.value)} placeholder="77.5946" />
+                  </div>
                 </div>
               </div>
             )}
@@ -744,6 +756,11 @@ function UnassignedOrdersPanel({ token, agents, onAssigned, onActionQueued }) {
                   {suggestionData.zone_restricted
                     ? `\u2b21 Inside zone "${suggestionData.matched_zone_name}" — Auto-assign will restrict to that zone's covering agents.`
                     : `\u2b21 Inside zone "${suggestionData.matched_zone_name}", but no agents cover it yet — auto-assign will fall back to org-wide ranking.`}
+                </p>
+              )}
+              {suggestionData && suggestionData.used_real_routing && (
+                <p style={{ fontSize: "11px", color: "var(--accent)", marginTop: "4px" }}>
+                  ⬡ Top candidates ranked using real road distance, not straight-line.
                 </p>
               )}
             </div>
