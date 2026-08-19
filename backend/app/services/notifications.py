@@ -47,7 +47,7 @@ from app.models.customer_notification import CustomerNotificationDB
 from app.models.push_subscription import PushSubscriptionDB
 from app.models.user import UserDB, UserRole
 
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3500")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
 STATUS_LABELS = {
     "confirmed": "Order Confirmed",
@@ -128,6 +128,48 @@ def notify_customer_of_status_change(
                 )
         except Exception as error:  # noqa: BLE001
             print(f"Web push notification failed for {order_id}: {error}")
+
+
+def notify_customer_of_subscription_order_ready(db: Session, customer_id: str, order) -> None:
+    """
+    In-app notification (+ push, if subscribed) that a recurring order's
+    next cycle is ready and waiting on payment. Deliberately doesn't
+    reuse notify_customer_of_status_change above: there is no
+    DeliveryRecordDB yet at this point (that's only created once the
+    order is actually paid — see routes/checkout.py's verify_payment),
+    so this notifies against the order_id alone rather than a
+    delivery_id/status change. Same "never let a notification failure
+    break the caller" treatment as the rest of this module.
+    """
+    tracking_link = f"{FRONTEND_URL}/?subscriptions=1"
+    try:
+        notification = CustomerNotificationDB(
+            customer_id=customer_id,
+            delivery_id="",
+            order_id=order.id,
+            message=f"Your recurring order is ready — ₹{order.total:.2f}. Confirm & pay to send it out.",
+        )
+        db.add(notification)
+        db.commit()
+    except Exception as error:  # noqa: BLE001
+        print(f"Subscription in-app notification failed for {order.id}: {error}")
+
+    try:
+        subscriptions = db.query(PushSubscriptionDB).filter(
+            PushSubscriptionDB.customer_id == customer_id
+        ).all()
+        for sub in subscriptions:
+            send_web_push(
+                subscription_info={
+                    "endpoint": sub.endpoint,
+                    "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+                },
+                title="Recurring order ready",
+                body=f"₹{order.total:.2f} — confirm & pay to send it out.",
+                url=tracking_link,
+            )
+    except Exception as error:  # noqa: BLE001
+        print(f"Subscription push notification failed for {order.id}: {error}")
 
 
 def _push_to_user_ids(db: Session, user_ids: list[str], title: str, body: str, url: str) -> None:

@@ -18,6 +18,7 @@ import uuid
 from sqlalchemy import Column, String, DateTime, Boolean, Float, Integer
 from pydantic import BaseModel
 from datetime import datetime
+from typing import Optional
 
 from app.db.session import Base
 
@@ -56,6 +57,19 @@ class OrganizationDB(Base):
     slot_window_end_hour = Column(Integer, nullable=False, default=21)    # 0-23, exclusive of the last slot's end
     max_orders_per_slot = Column(Integer, nullable=False, default=10)
 
+    # Marketplace profile — every org is still exactly one store (no
+    # shared/multi-vendor cart or order), but a customer browsing GET
+    # /stores across many independently-run orgs needs more than just a
+    # name to tell them apart and find what they want: a category to
+    # filter by (e.g. "Grocery", "Electronics", "Pharmacy" — free text,
+    # admin's own words, not an enum, since a real marketplace has
+    # vendor categories nobody anticipated in advance) and a short
+    # description shown on the store's card. Both optional/nullable —
+    # an org that hasn't set them just shows a plain name, same as
+    # before this feature existed.
+    category = Column(String, nullable=True)
+    description = Column(String, nullable=True)
+
 
 class OrganizationOut(BaseModel):
     id: str
@@ -68,6 +82,8 @@ class OrganizationOut(BaseModel):
     slot_window_start_hour: int = 9
     slot_window_end_hour: int = 21
     max_orders_per_slot: int = 10
+    category: Optional[str] = None
+    description: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -89,6 +105,11 @@ class StoreSlotSettingsUpdate(BaseModel):
     max_orders_per_slot: int
 
 
+class StoreProfileUpdate(BaseModel):
+    category: Optional[str] = None
+    description: Optional[str] = None
+
+
 class PublicOrganizationOut(BaseModel):
     """
     Public storefront listing shape — deliberately excludes invite_code.
@@ -107,6 +128,8 @@ class PublicOrganizationOut(BaseModel):
     slot_duration_minutes: int = 120
     slot_window_start_hour: int = 9
     slot_window_end_hour: int = 21
+    category: Optional[str] = None
+    description: Optional[str] = None
 
     class Config:
         from_attributes = True

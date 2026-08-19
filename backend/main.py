@@ -34,7 +34,9 @@ import os
 from app.db.session import Base, engine
 from app.db.migrate import run_lightweight_migrations
 from app.services.rate_limiter import limiter
-from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets
+from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions
+from app.db.session import SessionLocal
+from app.services.subscription_scheduler import start_subscription_scheduler
 
 # Create all database tables on startup (if they don't already exist),
 # then catch up any EXISTING table to the model's current columns — see
@@ -174,6 +176,15 @@ app.include_router(reviews.router)
 app.include_router(coupons.router)
 app.include_router(analytics.router)
 app.include_router(slots.router)
+app.include_router(subscriptions.router)
+
+
+# Background task reference kept on app.state so it isn't garbage
+# collected mid-run (asyncio only holds a weak reference to a bare
+# fire-and-forget task) — see services/subscription_scheduler.py.
+@app.on_event("startup")
+async def _launch_subscription_scheduler():
+    app.state.subscription_scheduler_task = start_subscription_scheduler(SessionLocal)
 
 
 @app.get("/")

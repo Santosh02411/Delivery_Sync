@@ -17,7 +17,7 @@ from app.db.session import get_db
 from app.models.product import ProductDB, ProductCreate, ProductUpdate, ProductOut, ProductImageUploadOut
 from app.models.product_review import ProductReviewDB
 from app.models.user import UserDB
-from app.models.organization import OrganizationDB, StoreVisibilityUpdate, StorePricingUpdate, StoreSlotSettingsUpdate, OrganizationOut
+from app.models.organization import OrganizationDB, StoreVisibilityUpdate, StorePricingUpdate, StoreSlotSettingsUpdate, StoreProfileUpdate, OrganizationOut
 from app.routes.deliveries import require_dispatcher
 from app.routes.admin import require_admin
 
@@ -249,6 +249,30 @@ def set_store_slot_settings(
     org.slot_window_start_hour = payload.slot_window_start_hour
     org.slot_window_end_hour = payload.slot_window_end_hour
     org.max_orders_per_slot = payload.max_orders_per_slot
+    db.commit()
+    db.refresh(org)
+    return org
+
+
+@store_router.patch("/profile", response_model=OrganizationOut)
+def set_store_profile(
+    payload: StoreProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_admin),
+):
+    """
+    Admin-only: the store's marketplace listing details — a free-text
+    category (used for the filter dropdown on the public /stores
+    marketplace) and a short description shown on its store card. Both
+    optional; either can be cleared by sending an empty string.
+    """
+    org = db.query(OrganizationDB).filter(OrganizationDB.id == current_user.org_id).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+    if payload.category is not None:
+        org.category = payload.category or None
+    if payload.description is not None:
+        org.description = payload.description or None
     db.commit()
     db.refresh(org)
     return org
