@@ -8,6 +8,7 @@ import {
   setStoreVisibility,
   setStorePricing,
   setStoreSlotSettings,
+  setStoreProfile,
   fetchMyOrganization,
   uploadProductImage,
   fetchMyCoupons,
@@ -50,6 +51,11 @@ export default function ProductManager() {
   const [isSlotSettingsSaving, setIsSlotSettingsSaving] = useState(false);
   const [slotSettingsError, setSlotSettingsError] = useState(null);
   const [slotSettingsSaved, setSlotSettingsSaved] = useState(false);
+  const [storeCategory, setStoreCategory] = useState("");
+  const [storeDescription, setStoreDescription] = useState("");
+  const [isProfileSaving, setIsProfileSaving] = useState(false);
+  const [profileError, setProfileError] = useState(null);
+  const [profileSaved, setProfileSaved] = useState(false);
   const [coupons, setCoupons] = useState([]);
   const [isAddingCoupon, setIsAddingCoupon] = useState(false);
   const [couponCode, setCouponCode] = useState("");
@@ -109,6 +115,8 @@ export default function ProductManager() {
       setSlotWindowStartHour(String(org.slot_window_start_hour ?? 9));
       setSlotWindowEndHour(String(org.slot_window_end_hour ?? 21));
       setMaxOrdersPerSlot(String(org.max_orders_per_slot ?? 10));
+      setStoreCategory(org.category || "");
+      setStoreDescription(org.description || "");
     } catch (err) {
       console.warn("Could not load store visibility:", err.message);
     }
@@ -154,6 +162,21 @@ export default function ProductManager() {
       setSlotSettingsError(err instanceof TypeError ? "You're offline — try again once you're back online." : err.message);
     } finally {
       setIsSlotSettingsSaving(false);
+    }
+  }
+
+  async function handleSaveProfile(e) {
+    e.preventDefault();
+    setProfileError(null);
+    setProfileSaved(false);
+    setIsProfileSaving(true);
+    try {
+      await setStoreProfile(token, storeCategory.trim(), storeDescription.trim());
+      setProfileSaved(true);
+    } catch (err) {
+      setProfileError(err instanceof TypeError ? "You're offline — try again once you're back online." : err.message);
+    } finally {
+      setIsProfileSaving(false);
     }
   }
 
@@ -366,6 +389,36 @@ export default function ProductManager() {
               </div>
             </div>
           </label>
+        </div>
+      )}
+
+      {user.role === "admin" && (
+        <div className="card" style={{ marginBottom: "20px", maxWidth: "500px" }}>
+          <strong style={{ fontSize: "13.5px" }}>Marketplace Listing</strong>
+          <p style={{ fontSize: "12px", color: "var(--text-secondary)", margin: "4px 0 10px" }}>
+            Shown on the public store directory — helps customers find and filter your store.
+          </p>
+          <form onSubmit={handleSaveProfile} style={{ display: "grid", gap: "8px" }}>
+            <div className="auth-field">
+              <label>Category</label>
+              <input
+                className="input" type="text" placeholder="e.g. Grocery, Electronics, Pharmacy"
+                value={storeCategory} onChange={(e) => setStoreCategory(e.target.value)}
+              />
+            </div>
+            <div className="auth-field">
+              <label>Description</label>
+              <input
+                className="input" type="text" placeholder="A short line shown on your store card"
+                value={storeDescription} onChange={(e) => setStoreDescription(e.target.value)}
+              />
+            </div>
+            <button type="submit" className="btn btn-primary" style={{ fontSize: "12px" }} disabled={isProfileSaving}>
+              {isProfileSaving ? "Saving..." : "Save"}
+            </button>
+            {profileSaved && <p style={{ fontSize: "12px", color: "var(--accent)", marginTop: "4px" }}>Saved.</p>}
+            {profileError && <p style={{ fontSize: "12px", color: "var(--danger)", marginTop: "4px" }}>{profileError}</p>}
+          </form>
         </div>
       )}
 

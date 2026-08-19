@@ -33,6 +33,7 @@ import {
 import StatusBadge from "./StatusBadge";
 import LiveTrackingMap from "./LiveTrackingMap";
 import Storefront from "./Storefront";
+import SubscriptionManager from "./SubscriptionManager";
 import "../styles/auth.css";
 import {
   setActiveCustomer,
@@ -194,6 +195,7 @@ export default function CustomerDashboard() {
   const navLinks = [
     { key: "orders", label: "My Orders", icon: "\u25A4" },
     { key: "shop", label: "Shop", icon: "\u25A3" },
+    { key: "subscriptions", label: "Recurring Orders", icon: "\u27F3" },
     { key: "addresses", label: "Addresses", icon: "\u2691" },
     { key: "privacy", label: "Privacy", icon: "\u26BF" },
     { key: "profile", label: "Profile", icon: "\u25C9" },
@@ -263,6 +265,12 @@ export default function CustomerDashboard() {
       {activeView === "shop" && (
         <div>
           <Storefront token={token} onOrderPlaced={() => { loadDeliveries(); setActiveView("orders"); }} />
+        </div>
+      )}
+
+      {activeView === "subscriptions" && (
+        <div>
+          <SubscriptionManager token={token} />
         </div>
       )}
 

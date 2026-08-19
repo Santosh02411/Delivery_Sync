@@ -439,6 +439,57 @@ deliveries at once from a CSV instead of one at a time.
 
 ---
 
+## Phase 10 — Recurring Orders & Marketplace Polish
+
+**Recurring/subscription orders**, built on top of a design decision
+made explicitly up front (avoids the two easy wrong turns a "make it
+recurring" feature invites): payment is never auto-charged — every
+cycle is a real `pending_payment` Order the customer must confirm and
+pay themselves, same as an abandoned-cart order today. This meant the
+actual engineering work was almost entirely reuse rather than new
+payment logic: `routes/subscriptions.py`'s `initiate-payment` endpoint
+is a near-line-for-line copy of `checkout()`'s Razorpay/COD/test-mode
+tail, applied to an order the scheduler already built instead of one
+built fresh from a cart — and `POST /customer/checkout/verify` needed
+zero changes at all, since it was already written generically against
+"any pending_payment order owned by this customer," not "an order this
+endpoint just created." The one real new piece is
+`services/subscription_scheduler.py`'s `run_subscription_cycle` — an
+`asyncio` background task (not APScheduler/Celery — this project stays
+zero-extra-infra, and a 60-second `asyncio.sleep` loop started from
+FastAPI's `on_event("startup")` is genuinely sufficient at this scale)
+that finds every due subscription, builds its order at *today's* stock
+and prices (never the prices from when the subscription was created —
+a subscription is "reorder this," not "re-charge this exact receipt"),
+and always advances `next_run_date` by the interval regardless of
+whether that cycle's order ever gets paid, so an ignored reminder can't
+silently freeze every future cycle too.
+
+**Multi-vendor marketplace**: investigating this ticket turned up that
+the hard part — real multi-tenancy — already existed. `OrganizationDB`
+was already "one org = one independently-run store"; `CustomerDB` was
+already a global identity deliberately separate from the org-scoped
+staff `UserDB` specifically because a customer "may have deliveries
+from many different companies" (see that model's own docstring);
+`CartItemDB` was already scoped to one store at a time "same behavior
+as Swiggy/Zomato/Amazon-marketplace carts"; and `GET /stores` already
+listed every opted-in store to browse. What was missing was purely
+findability: a store had nothing beyond a bare name to distinguish it
+in a directory of many, and no way to search or filter that directory
+at all. Fixed with two new optional `OrganizationDB` columns
+(`category`, `description`) and query params on the existing `GET
+/stores` endpoint — no new tables, no change to the cart/checkout
+architecture, because none was needed.
+
+Both features passed full TestClient verification (subscription
+create → run-now → initiate-payment → verify → paid-with-real-delivery;
+insufficient-stock line-skipping; cross-customer subscription-ownership
+isolation; invalid-interval rejection; marketplace search/category
+filtering, case-insensitive) and a full-project `esbuild` bundle check
+came back clean.
+
+---
+
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something

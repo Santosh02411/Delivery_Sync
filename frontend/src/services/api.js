@@ -1064,3 +1064,88 @@ export async function syncPendingDeliveries(pendingRecords) {
   if (!response.ok) throw new Error("Sync request failed");
   return response.json();
 }
+
+// ---------- Marketplace search (stores) ----------
+
+export async function fetchPublicStoresFiltered(search, category) {
+  const params = new URLSearchParams();
+  if (search) params.set("search", search);
+  if (category) params.set("category", category);
+  const qs = params.toString();
+  const response = await fetch(`${API_BASE_URL}/stores/${qs ? `?${qs}` : ""}`);
+  return response.json();
+}
+
+export async function fetchStoreCategories() {
+  const response = await fetch(`${API_BASE_URL}/stores/categories`);
+  return response.json();
+}
+
+export async function setStoreProfile(token, category, description) {
+  const response = await fetch(`${API_BASE_URL}/admin/store/profile`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ category: category || null, description: description || null }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update store profile");
+  return data;
+}
+
+// ---------- Recurring / subscription orders ----------
+
+export async function fetchMySubscriptions(token) {
+  const response = await fetch(`${API_BASE_URL}/customer/subscriptions/`, {
+    headers: customerAuthHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load subscriptions");
+  return data;
+}
+
+export async function createSubscription(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/customer/subscriptions/`, {
+    method: "POST",
+    headers: customerAuthHeaders(token),
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create subscription");
+  return data;
+}
+
+export async function updateSubscription(token, subscriptionId, payload) {
+  const response = await fetch(`${API_BASE_URL}/customer/subscriptions/${subscriptionId}`, {
+    method: "PATCH",
+    headers: customerAuthHeaders(token),
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update subscription");
+  return data;
+}
+
+async function _subscriptionAction(token, subscriptionId, action) {
+  const response = await fetch(`${API_BASE_URL}/customer/subscriptions/${subscriptionId}/${action}`, {
+    method: "POST",
+    headers: customerAuthHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || `Failed to ${action} subscription`);
+  return data;
+}
+
+export const pauseSubscription = (token, id) => _subscriptionAction(token, id, "pause");
+export const resumeSubscription = (token, id) => _subscriptionAction(token, id, "resume");
+export const cancelSubscription = (token, id) => _subscriptionAction(token, id, "cancel");
+export const runSubscriptionNow = (token, id) => _subscriptionAction(token, id, "run-now");
+
+export async function initiateSubscriptionOrderPayment(token, orderId) {
+  const response = await fetch(`${API_BASE_URL}/customer/subscriptions/orders/${orderId}/initiate-payment`, {
+    method: "POST",
+    headers: customerAuthHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to start payment");
+  return data;
+}

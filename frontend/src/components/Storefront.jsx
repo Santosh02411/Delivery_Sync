@@ -7,6 +7,7 @@ import {
   validateCoupon,
   fetchDeliverySlots,
   fetchMyCustomerAddresses,
+  createSubscription,
   API_BASE_URL,
 } from "../services/api";
 import {
@@ -97,6 +98,18 @@ export default function Storefront({ token, onOrderPlaced }) {
   const [successMessage, setSuccessMessage] = useState(null);
   const [isOffline, setIsOffline] = useState(false);
   const [pendingCheckout, setPendingCheckoutState] = useState(null);
+  const [subscribingProduct, setSubscribingProduct] = useState(null);
+  const [subscribeInterval, setSubscribeInterval] = useState("7");
+  const [subscribeQuantity, setSubscribeQuantity] = useState(1);
+  const [subscribeAddress, setSubscribeAddress] = useState("");
+  const [subscribeCity, setSubscribeCity] = useState("");
+  const [subscribePhone, setSubscribePhone] = useState("");
+  const [subscribePaymentMethod, setSubscribePaymentMethod] = useState("online");
+  const [isCreatingSubscription, setIsCreatingSubscription] = useState(false);
+  const [subscribeError, setSubscribeError] = useState(null);
+  const [subscribeSuccess, setSubscribeSuccess] = useState(null);
+  const [storeSearch, setStoreSearch] = useState("");
+  const [storeCategory, setStoreCategory] = useState("");
 
   useEffect(() => {
     loadStores();
@@ -311,6 +324,50 @@ export default function Storefront({ token, onOrderPlaced }) {
       theme: { color: "#f2a93b" },
     });
     razorpay.open();
+  }
+
+  function openSubscribeForm(product) {
+    setSubscribingProduct(product);
+    setSubscribeInterval("7");
+    setSubscribeQuantity(1);
+    setSubscribeAddress(addressLine || "");
+    setSubscribeCity(city || "");
+    setSubscribePhone(phone || "");
+    setSubscribePaymentMethod("online");
+    setSubscribeError(null);
+  }
+
+  async function handleCreateSubscription(e) {
+    e.preventDefault();
+    if (!subscribingProduct || !selectedStore) return;
+    const intervalDays = parseInt(subscribeInterval, 10);
+    if (!intervalDays || intervalDays < 1) {
+      setSubscribeError("Interval must be at least 1 day.");
+      return;
+    }
+    if (!subscribeAddress.trim() || !subscribePhone.trim()) {
+      setSubscribeError("Address and phone are required.");
+      return;
+    }
+    setIsCreatingSubscription(true);
+    setSubscribeError(null);
+    try {
+      await createSubscription(token, {
+        org_id: selectedStore.id,
+        items: [{ product_id: subscribingProduct.id, quantity: subscribeQuantity }],
+        interval_days: intervalDays,
+        address_line: subscribeAddress.trim(),
+        city: subscribeCity.trim() || null,
+        phone: subscribePhone.trim(),
+        payment_method: subscribePaymentMethod,
+      });
+      setSubscribeSuccess(`Subscribed! "${subscribingProduct.name}" will reorder every ${intervalDays} day(s).`);
+      setSubscribingProduct(null);
+    } catch (err) {
+      setSubscribeError(err.message);
+    } finally {
+      setIsCreatingSubscription(false);
+    }
   }
 
   async function handleApplyCoupon(e) {
@@ -701,30 +758,68 @@ export default function Storefront({ token, onOrderPlaced }) {
       )}
 
       {!selectedStore && (
-        <div style={{ display: "grid", gap: "10px" }}>
-          {stores.map((store) => (
-            <div
-              key={store.id}
-              className="card card-clickable"
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-              }}
-              onClick={() => openStore(store)}
-            >
-              <div>
-                <strong style={{ fontSize: "14.5px" }}>{store.name}</strong>
-                <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
-                  Tap to browse products
-                </div>
-              </div>
-              <span style={{ color: "var(--text-muted)", fontSize: "16px" }} aria-hidden="true">→</span>
+        <div>
+          {stores.length > 0 && (
+            <div style={{ display: "flex", gap: "8px", marginBottom: "12px", flexWrap: "wrap" }}>
+              <input
+                className="input"
+                type="text"
+                placeholder="Search stores..."
+                value={storeSearch}
+                onChange={(e) => setStoreSearch(e.target.value)}
+                style={{ flex: "1 1 180px" }}
+              />
+              <select
+                className="input"
+                value={storeCategory}
+                onChange={(e) => setStoreCategory(e.target.value)}
+                style={{ flex: "0 1 160px" }}
+              >
+                <option value="">All categories</option>
+                {[...new Set(stores.map((s) => s.category).filter(Boolean))].sort().map((cat) => (
+                  <option key={cat} value={cat}>{cat}</option>
+                ))}
+              </select>
             </div>
-          ))}
-          {stores.length === 0 && (
-            <p style={{ color: "var(--text-secondary)", fontSize: "13px" }}>No stores are open for shopping yet.</p>
           )}
+          <div style={{ display: "grid", gap: "10px" }}>
+            {stores
+              .filter((store) => !storeSearch || store.name.toLowerCase().includes(storeSearch.toLowerCase()))
+              .filter((store) => !storeCategory || store.category === storeCategory)
+              .map((store) => (
+                <div
+                  key={store.id}
+                  className="card card-clickable"
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                  onClick={() => openStore(store)}
+                >
+                  <div>
+                    <strong style={{ fontSize: "14.5px" }}>{store.name}</strong>
+                    {store.category && (
+                      <span style={{ marginLeft: "8px", fontSize: "11px", color: "var(--text-muted)", border: "1px solid var(--border-color)", borderRadius: "10px", padding: "1px 7px" }}>
+                        {store.category}
+                      </span>
+                    )}
+                    <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
+                      {store.description || "Tap to browse products"}
+                    </div>
+                  </div>
+                  <span style={{ color: "var(--text-muted)", fontSize: "16px" }} aria-hidden="true">→</span>
+                </div>
+              ))}
+            {stores.length === 0 && (
+              <p style={{ color: "var(--text-secondary)", fontSize: "13px" }}>No stores are open for shopping yet.</p>
+            )}
+            {stores.length > 0 &&
+              stores.filter((store) => !storeSearch || store.name.toLowerCase().includes(storeSearch.toLowerCase()))
+                .filter((store) => !storeCategory || store.category === storeCategory).length === 0 && (
+                <p style={{ color: "var(--text-secondary)", fontSize: "13px" }}>No stores match that search.</p>
+              )}
+          </div>
         </div>
       )}
 
@@ -770,20 +865,109 @@ export default function Storefront({ token, onOrderPlaced }) {
                       ) : null}
                     </div>
                   </div>
-                  <button
-                    className="btn btn-primary"
-                    style={{ fontSize: "12px" }}
-                    onClick={() => handleAddToCart(product)}
-                    disabled={isOutOfStock || isAtStockLimit}
-                  >
-                    {isOutOfStock ? "Sold out" : isAtStockLimit ? "Max in cart" : "Add"}
-                  </button>
+                  <div style={{ display: "flex", flexDirection: "column", gap: "6px", alignItems: "flex-end" }}>
+                    <button
+                      className="btn btn-primary"
+                      style={{ fontSize: "12px" }}
+                      onClick={() => handleAddToCart(product)}
+                      disabled={isOutOfStock || isAtStockLimit}
+                    >
+                      {isOutOfStock ? "Sold out" : isAtStockLimit ? "Max in cart" : "Add"}
+                    </button>
+                    {!isOutOfStock && (
+                      <button
+                        className="btn"
+                        style={{ fontSize: "11px", padding: "2px 8px" }}
+                        onClick={() => openSubscribeForm(product)}
+                        title="Set up a recurring order for this item"
+                      >
+                        ⟳ Subscribe
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
             {products.length === 0 && (
               <p style={{ color: "var(--text-secondary)", fontSize: "13px" }}>No products available right now.</p>
             )}
+          </div>
+        </div>
+      )}
+
+      {subscribeSuccess && (
+        <div className="card" style={{ borderColor: "var(--accent)", margin: "16px 0" }}>
+          {subscribeSuccess}
+          <div style={{ marginTop: "8px" }}>
+            <button className="btn" style={{ fontSize: "12px" }} onClick={() => setSubscribeSuccess(null)}>
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {subscribingProduct && (
+        <div
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+            display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: "16px",
+          }}
+          onClick={() => setSubscribingProduct(null)}
+        >
+          <div className="card" style={{ maxWidth: "420px", width: "100%" }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>Subscribe to "{subscribingProduct.name}"</h3>
+            <p style={{ fontSize: "12.5px", color: "var(--text-muted)" }}>
+              We'll get an order ready for you every N days — you confirm and pay each time, nothing is ever
+              charged automatically.
+            </p>
+            {subscribeError && (
+              <div className="card" style={{ borderColor: "var(--danger)", marginBottom: "10px", fontSize: "13px" }}>
+                {subscribeError}
+              </div>
+            )}
+            <form onSubmit={handleCreateSubscription} style={{ display: "grid", gap: "10px" }}>
+              <div className="auth-field">
+                <label>Repeat every (days)</label>
+                <input
+                  className="input" type="number" min="1" value={subscribeInterval}
+                  onChange={(e) => setSubscribeInterval(e.target.value)} required
+                />
+              </div>
+              <div className="auth-field">
+                <label>Quantity</label>
+                <input
+                  className="input" type="number" min="1" value={subscribeQuantity}
+                  onChange={(e) => setSubscribeQuantity(parseInt(e.target.value, 10) || 1)} required
+                />
+              </div>
+              <div className="auth-field">
+                <label>Delivery address</label>
+                <input className="input" type="text" value={subscribeAddress} onChange={(e) => setSubscribeAddress(e.target.value)} required />
+              </div>
+              <div className="auth-field">
+                <label>City</label>
+                <input className="input" type="text" value={subscribeCity} onChange={(e) => setSubscribeCity(e.target.value)} />
+              </div>
+              <div className="auth-field">
+                <label>Phone</label>
+                <input className="input" type="tel" value={subscribePhone} onChange={(e) => setSubscribePhone(e.target.value)} required />
+              </div>
+              <div className="auth-field">
+                <label>Payment</label>
+                <select className="input" value={subscribePaymentMethod} onChange={(e) => setSubscribePaymentMethod(e.target.value)}>
+                  <option value="online">Online (pay each cycle)</option>
+                  <option value="cod">Cash on delivery</option>
+                </select>
+              </div>
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button type="submit" className="btn btn-primary" disabled={isCreatingSubscription}>
+                  {isCreatingSubscription ? "Setting up..." : "Start Subscription"}
+                </button>
+                <button type="button" className="btn" onClick={() => setSubscribingProduct(null)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
