@@ -204,6 +204,7 @@ export default function CustomerDashboard() {
   function handleNavigate(key) {
     setActiveView(key);
     setIsMobileNavOpen(false); // close the drawer after picking a page, on mobile
+    setShowNotifications(false); // close the notifications panel too, so it doesn't linger on the new page
   }
 
   return (
