@@ -1552,6 +1552,81 @@ Actions — three parallel jobs: `backend-tests`, `frontend-build`,
 
 ---
 
+## Admin Action Log & List Pagination
+
+**What was missing:** two gaps. First, the org-wide audit trail only
+covered delivery status changes (`DeliveryHistoryDB` /
+`/admin/audit-log`) — every OTHER admin write action (deactivating a
+user, resetting a password, editing a product, deleting a coupon,
+changing store pricing or visibility) left no trace an admin could
+later review. Second, several list endpoints returned every matching
+row in one response with no `limit`/`offset` at all: dispatcher/agent
+delivery lists, a customer's purchase history (`/customer/orders`),
+delivery history (`/customer/deliveries`), and notification inbox
+(`/customer/notifications`) — fine at demo scale, a real problem for
+an account with months of history.
+
+**Why it was needed:** "who changed what, when" is a basic expectation
+for anything calling itself admin tooling, and it's exactly the kind
+of thing that's awkward to retrofit later once real data (and real
+incidents needing investigation) exist. Unbounded list responses don't
+show up as a bug in testing with a handful of records — they show up
+as a slow, memory-heavy endpoint the day an org's history actually
+grows, which is the whole point of building this "for scale" now
+rather than after it becomes a problem.
+
+**What it does:**
+
+*Action log:* a new `ActionLogDB` table (`app/models/action_log.py`) —
+separate from `DeliveryHistoryDB`, which already covered its own
+narrower case well — records actor, action (`product.update`,
+`user.deactivate`, `coupon.delete`, `store_settings.update`, etc.),
+entity type/id/label, a one-line summary, and (for updates) a
+before/after diff of just the fields that changed. `services/action_log.py`
+centralizes the write + diffing logic; it's called from `admin.py`
+(user deactivate/activate/reset-password), `products.py` (product
+create/update/delete, and all four store-settings PATCH routes), and
+`coupons.py` (coupon create/update/delete). A new paginated
+`GET /admin/action-log` (filterable by entity type / actor, admin-only,
+org-scoped) exposes it. `AuditLogViewer.jsx` now has two tabs —
+"Delivery Status Changes" (unchanged) and "Admin Actions" (new) — so
+both logs live in one place without merging two differently-shaped
+tables into one query.
+
+*Pagination:* `GET /customer/orders` and `GET /customer/notifications`
+now default to `limit=20`/`offset`-based paging (bounded `limit<=100`).
+`GET /customer/deliveries` supports the same `limit`/`offset` but
+leaves them optional with no default — that response also seeds the
+customer's offline cache (`cacheCustomerDeliveries`), so the call that
+drives it still fetches everything, same as before; pagination is
+available for any caller that explicitly asks for a page. The
+dispatcher/agent delivery lists (`/deliveries/`, `/deliveries/mine`)
+were deliberately left as full, unpaginated fetches for the identical
+reason — they feed the dispatcher/agent offline IndexedDB cache that
+makes the app usable without a network, and capping that response
+server-side would silently make the offline fallback incomplete. That
+list already pages on-screen client-side (`PAGE_SIZE` in
+`DispatcherTable.jsx`), which is the right layer to page a dataset
+that's already local. On the frontend: `CustomerDashboard.jsx` now
+"Load more"s through the deliveries list (client-side, since the full
+set is already in memory) and the notification panel (server-paginated,
+tracked via a ref so the 10-second notification poll doesn't reset an
+already-expanded page back to the first one). One existing call site —
+looking up a cancelled order's refund status by its linked delivery —
+was switched to a new `delivery_id` filter on `GET /customer/orders`
+instead of scanning the (now paginated) full list, so that lookup
+can't silently miss an older order once the endpoint defaults to a
+small page size.
+
+**Tests:** `backend/tests/test_admin_action_log_and_pagination.py` (4
+new tests) — product CRUD writes the expected action-log entries with
+a correct diff, user-management actions are logged, the action log is
+both org-scoped and admin-only, and the three customer-facing list
+endpoints accept and honor `limit`/`offset`. Full suite: 30/30 passing.
+Frontend: `npm run build` clean.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

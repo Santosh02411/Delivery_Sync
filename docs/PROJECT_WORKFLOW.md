@@ -490,6 +490,66 @@ came back clean.
 
 ---
 
+## Adding Admin Action Logging Without Breaking Offline Caching
+
+Two features requested together: a general admin action log ("who
+changed what, when" beyond just delivery status), and pagination on
+the large list endpoints. The action log was straightforward — a new
+table, a small diffing helper, and a handful of `record_action(...)`
+calls dropped into existing write endpoints. The pagination part had
+a real trap in it.
+
+The naive version — add `limit`/`offset` with sane defaults to every
+unpaginated list endpoint — would have been wrong for two of them.
+`GET /deliveries/` and `GET /deliveries/mine` (the dispatcher/agent
+lists) don't just render a table; their response is also what gets
+written into IndexedDB via `cacheDispatcherDeliveries()` /
+`cacheCustomerDeliveries()`-equivalent calls, which is the entire
+mechanism that makes the dashboards usable when a delivery agent loses
+signal in the field — the whole premise of this being an "offline-
+first" app. Slapping a default `limit=100` on that endpoint (which I
+did briefly, then caught before shipping it) would have silently
+truncated the offline cache for any org with more than 100 delivery
+records — the kind of bug that wouldn't show up in a demo with a
+handful of seeded deliveries, only months later when it actually
+matters, and offline mode would just quietly stop working for older
+records with no error anywhere.
+
+The fix: leave those two endpoints as full, unpaginated fetches (with
+a comment explaining why), since the dispatcher table already paginates
+on-screen client-side over the fully-cached data — the right layer to
+page something that's already local. Applied real server-side
+pagination only where there's no offline-cache dependency:
+`/customer/orders` and `/customer/notifications` (default `limit=20`),
+plus `/customer/deliveries` with limit/offset made *optional* rather
+than defaulted, since that one endpoint does double duty — it's both
+the main "load my orders" call AND the seed for the customer's own
+offline delivery cache.
+
+That optional-pagination fix surfaced one more real bug in a code
+review pass: `CustomerDeliveryCard`'s cancelled-order handling called
+`fetchMyOrders(token)` with no filter, then searched the returned array
+client-side for the one order matching the current delivery, purely to
+read its refund status. Once `/customer/orders` got a `limit=20`
+default, that lookup would silently return nothing for any cancelled
+order more than 20 purchases back — refund status would just stop
+showing up for older cancellations, no error, easy to miss entirely in
+testing since it only breaks past the 20th order. Fixed by adding a
+`delivery_id` query filter to `GET /customer/orders` and switching that
+one call site to use it, instead of scanning an increasingly-partial
+list.
+
+Lesson worth remembering: "add pagination to the unpaginated endpoints"
+sounds like a mechanical, uniform change, but a couple of these
+endpoints were quietly load-bearing for something other than what a
+list endpoint normally does (seeding an offline cache; being scanned
+client-side as an ad-hoc lookup). Grepping for every call site of an
+endpoint before changing its default behavior — not just skimming the
+route handler itself — is what caught both issues here before they
+shipped.
+
+---
+
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something
