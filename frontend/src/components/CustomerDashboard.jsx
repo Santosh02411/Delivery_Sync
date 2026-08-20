@@ -58,10 +58,14 @@ const STATUS_LABELS = {
 
 const LIVE_TRACKABLE_STATUSES = ["picked_up", "out_for_delivery"];
 
+const DELIVERIES_PAGE_SIZE = 10;
+const NOTIFICATIONS_PAGE_SIZE = 15;
+
 export default function CustomerDashboard() {
   const { customer, token, logout, updateCustomer } = useCustomerAuth();
   const { theme, toggleTheme } = useTheme();
   const [deliveries, setDeliveries] = useState([]);
+  const [deliveriesVisibleCount, setDeliveriesVisibleCount] = useState(DELIVERIES_PAGE_SIZE);
   const [notifications, setNotifications] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [activeView, setActiveView] = useState("orders"); // "orders" | "shop" | "addresses" | "privacy" | "profile"
@@ -72,6 +76,8 @@ export default function CustomerDashboard() {
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [pendingActionSyncMsg, setPendingActionSyncMsg] = useState(null);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const notificationsLimitRef = React.useRef(NOTIFICATIONS_PAGE_SIZE);
+  const [notificationsHasMore, setNotificationsHasMore] = useState(false);
 
   useEffect(() => {
     if (customer?.id) {
@@ -135,11 +141,17 @@ export default function CustomerDashboard() {
 
   async function loadNotifications() {
     try {
-      const data = await fetchMyCustomerNotifications(token);
+      const data = await fetchMyCustomerNotifications(token, { limit: notificationsLimitRef.current, offset: 0 });
       setNotifications(data);
+      setNotificationsHasMore(data.length === notificationsLimitRef.current);
     } catch (err) {
       console.warn("Could not load notifications:", err.message);
     }
+  }
+
+  function handleLoadMoreNotifications() {
+    notificationsLimitRef.current += NOTIFICATIONS_PAGE_SIZE;
+    loadNotifications();
   }
 
   async function handleMarkAllRead() {
@@ -344,6 +356,15 @@ export default function CustomerDashboard() {
               </div>
             ))}
           </div>
+          {notificationsHasMore && (
+            <button
+              className="btn"
+              style={{ fontSize: "12px", padding: "4px 8px", marginTop: "8px", width: "100%" }}
+              onClick={handleLoadMoreNotifications}
+            >
+              Load more
+            </button>
+          )}
         </div>
       )}
 
@@ -378,7 +399,7 @@ export default function CustomerDashboard() {
 
         <ClaimOrderPanel token={token} onLinked={loadDeliveries} />
 
-        {deliveries.map((delivery) => (
+        {deliveries.slice(0, deliveriesVisibleCount).map((delivery) => (
           <CustomerDeliveryCard
             key={delivery.id}
             delivery={delivery}
@@ -388,6 +409,16 @@ export default function CustomerDashboard() {
             onChanged={loadDeliveries}
           />
         ))}
+
+        {deliveries.length > deliveriesVisibleCount && (
+          <button
+            className="btn"
+            style={{ marginTop: "8px" }}
+            onClick={() => setDeliveriesVisibleCount((prev) => prev + DELIVERIES_PAGE_SIZE)}
+          >
+            Load more ({deliveries.length - deliveriesVisibleCount} more)
+          </button>
+        )}
       </div>
       )}
 
@@ -828,7 +859,7 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
     }
     if (delivery.status === "cancelled") {
       try {
-        const orders = await fetchMyOrders(token);
+        const orders = await fetchMyOrders(token, { deliveryId: delivery.id });
         const match = orders.find((o) => o.delivery_id === delivery.id);
         if (match && match.refund_status) setRefundInfo(match);
       } catch (err) {

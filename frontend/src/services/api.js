@@ -206,8 +206,11 @@ function customerAuthHeaders(token) {
   };
 }
 
-export async function fetchMyCustomerDeliveries(token) {
-  const response = await fetch(`${API_BASE_URL}/customer/deliveries`, {
+export async function fetchMyCustomerDeliveries(token, { limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (limit) params.set("limit", limit);
+  if (offset) params.set("offset", offset);
+  const response = await fetch(`${API_BASE_URL}/customer/deliveries?${params.toString()}`, {
     headers: customerAuthHeaders(token),
   });
   const data = await response.json();
@@ -233,8 +236,11 @@ export async function fetchMyCustomerDeliveryFeedback(token, deliveryId) {
   return data;
 }
 
-export async function fetchMyCustomerNotifications(token) {
-  const response = await fetch(`${API_BASE_URL}/customer/notifications`, {
+export async function fetchMyCustomerNotifications(token, { limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (limit) params.set("limit", limit);
+  if (offset) params.set("offset", offset);
+  const response = await fetch(`${API_BASE_URL}/customer/notifications?${params.toString()}`, {
     headers: customerAuthHeaders(token),
   });
   const data = await response.json();
@@ -437,8 +443,12 @@ export async function verifyPayment(token, payload) {
   return data;
 }
 
-export async function fetchMyOrders(token) {
-  const response = await fetch(`${API_BASE_URL}/customer/orders`, {
+export async function fetchMyOrders(token, { limit, offset, deliveryId } = {}) {
+  const params = new URLSearchParams();
+  if (limit) params.set("limit", limit);
+  if (offset) params.set("offset", offset);
+  if (deliveryId) params.set("delivery_id", deliveryId);
+  const response = await fetch(`${API_BASE_URL}/customer/orders?${params.toString()}`, {
     headers: customerAuthHeaders(token),
   });
   return response.json();
@@ -830,6 +840,24 @@ export async function fetchAuditLog(token, { dateFrom, dateTo, changedByUserId, 
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Failed to load audit log");
+  return data;
+}
+
+// ---------- General admin action log (users/products/coupons/store settings) ----------
+
+export async function fetchActionLog(token, { action, entityType, actorUserId, limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (action) params.set("action", action);
+  if (entityType) params.set("entity_type", entityType);
+  if (actorUserId) params.set("actor_user_id", actorUserId);
+  if (limit) params.set("limit", limit);
+  if (offset) params.set("offset", offset);
+
+  const response = await fetch(`${API_BASE_URL}/admin/action-log?${params.toString()}`, {
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load action log");
   return data;
 }
 
