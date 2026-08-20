@@ -21,9 +21,9 @@ decrementing happens there and not here.
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from app.db.session import get_db
 from app.models.cart import CartItemDB
@@ -416,11 +416,33 @@ def verify_payment(
 
 @router.get("/orders", response_model=List[OrderOut])
 def list_my_orders(
+    limit: int = Query(20, ge=1, le=100, description="Max records to return"),
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
+    delivery_id: Optional[str] = Query(None, description="Filter to the order linked to one delivery"),
     db: Session = Depends(get_db),
     current_customer: CustomerDB = Depends(get_current_customer),
 ):
-    """Itemized purchase history - separate from /customer/deliveries, which tracks fulfillment/shipment status."""
-    orders = db.query(OrderDB).filter(OrderDB.customer_id == current_customer.id).order_by(OrderDB.created_at.desc()).all()
+    """
+    Itemized purchase history - separate from /customer/deliveries,
+    which tracks fulfillment/shipment status. Paginated (newest first).
+
+    `delivery_id` is a targeted filter, not part of the pagination
+    scheme: it exists because the frontend also uses this endpoint to
+    look up ONE order's refund status by its linked delivery (see
+    CustomerDeliveryCard's cancelled-order handling) — a lookup that
+    would otherwise silently miss older orders once the main list
+    became paginated with a small default page size.
+    """
+    query = db.query(OrderDB).filter(OrderDB.customer_id == current_customer.id)
+    if delivery_id:
+        query = query.filter(OrderDB.delivery_id == delivery_id)
+    orders = (
+        query
+        .order_by(OrderDB.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
     results = []
     for order in orders:
         items = db.query(OrderItemDB).filter(OrderItemDB.order_id == order.id).all()

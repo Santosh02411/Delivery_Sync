@@ -91,16 +91,31 @@ def claim_order(
 
 @router.get("/deliveries", response_model=List[DeliveryRecordOut])
 def list_my_deliveries(
+    limit: Optional[int] = Query(None, ge=1, le=200, description="Max records to return. Omit to fetch everything (used for the offline cache)."),
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
     db: Session = Depends(get_db),
     current_customer: CustomerDB = Depends(get_current_customer),
 ):
-    """Every delivery linked to this customer's account, across any organization."""
-    return (
+    """
+    Every delivery linked to this customer's account, across any
+    organization, newest-updated first.
+
+    `limit`/`offset` are optional, not defaulted: the main dashboard
+    call omits them on purpose — that response also seeds this
+    customer's offline cache (see cacheCustomerDeliveries() in the
+    frontend), so it needs to stay complete for the offline fallback to
+    actually work. When a caller DOES pass `limit` (e.g. a future
+    "load more" UI over an already-large history), this paginates like
+    any other list endpoint.
+    """
+    query = (
         db.query(DeliveryRecordDB)
         .filter(DeliveryRecordDB.customer_id == current_customer.id)
         .order_by(DeliveryRecordDB.updated_at.desc())
-        .all()
     )
+    if limit is not None:
+        query = query.offset(offset).limit(limit)
+    return query.all()
 
 
 @router.get("/deliveries/{delivery_id}/history", response_model=List[DeliveryHistoryOut])
@@ -356,13 +371,18 @@ def subscribe_to_push(
 
 @router.get("/notifications", response_model=List[CustomerNotificationOut])
 def list_my_notifications(
+    limit: int = Query(20, ge=1, le=100, description="Max records to return"),
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
     db: Session = Depends(get_db),
     current_customer: CustomerDB = Depends(get_current_customer),
 ):
+    """Paginated so the notification bell dropdown loads fast even after months of activity."""
     return (
         db.query(CustomerNotificationDB)
         .filter(CustomerNotificationDB.customer_id == current_customer.id)
         .order_by(CustomerNotificationDB.created_at.desc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )
 

@@ -12,7 +12,7 @@ separately in routes/sync.py, since it has different logic (see
 docs/TECHNICAL_ARCHITECTURE.md).
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
@@ -615,7 +615,19 @@ def list_deliveries(
     db: Session = Depends(get_db),
     current_user: UserDB = Depends(require_dispatcher),
 ):
-    """List all delivery records within the caller's organization — dispatcher/admin dashboard only."""
+    """
+    List all delivery records within the caller's organization —
+    dispatcher/admin dashboard only.
+
+    Deliberately NOT paginated server-side: this response is the
+    dispatcher's full offline cache (see cacheDispatcherDeliveries() in
+    the frontend), which is what makes the dashboard usable when the
+    network drops. Slicing this at the API would silently make the
+    offline fallback incomplete. The dispatcher TABLE itself still
+    paginates on screen (PAGE_SIZE in DispatcherTable.jsx) — that's a
+    display concern over data that's already local, which is the right
+    place to page a dataset this shape.
+    """
     return db.query(DeliveryRecordDB).filter(DeliveryRecordDB.org_id == current_user.org_id).all()
 
 
@@ -629,7 +641,9 @@ def list_my_deliveries(
     the Agent view "pulls" from the server, so dispatcher-assigned
     deliveries actually show up in the agent's local (IndexedDB) list —
     without this, an agent would only ever see deliveries they created
-    themselves, never ones assigned to them by a dispatcher.
+    themselves, never ones assigned to them by a dispatcher. Not
+    paginated server-side for the same offline-cache-completeness reason
+    as list_deliveries() above.
     """
     return db.query(DeliveryRecordDB).filter(
         DeliveryRecordDB.agent_id == current_user.id,

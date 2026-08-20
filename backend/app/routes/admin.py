@@ -23,8 +23,10 @@ from app.models.user import UserDB, UserRole, UserOut
 from app.models.organization import OrganizationDB, OrganizationOut
 from app.models.delivery import DeliveryRecordDB
 from app.models.delivery_history import DeliveryHistoryDB
+from app.models.action_log import ActionLogDB, ActionLogOut
 from app.routes.auth import get_current_user
 from app.services.auth import hash_password
+from app.services.action_log import record_action
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -83,6 +85,13 @@ def deactivate_user(
     target.is_active = False
     db.commit()
     db.refresh(target)
+    record_action(
+        db, org_id=current_user.org_id,
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="user.deactivate", entity_type="user", entity_id=target.id,
+        entity_label=target.display_name,
+        summary=f"Deactivated user {target.display_name}",
+    )
     return target
 
 
@@ -101,6 +110,13 @@ def activate_user(
     target.is_active = True
     db.commit()
     db.refresh(target)
+    record_action(
+        db, org_id=current_user.org_id,
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="user.activate", entity_type="user", entity_id=target.id,
+        entity_label=target.display_name,
+        summary=f"Reactivated user {target.display_name}",
+    )
     return target
 
 
@@ -122,6 +138,13 @@ def reset_user_password(
 
     target.hashed_password = hash_password(payload.new_password)
     db.commit()
+    record_action(
+        db, org_id=current_user.org_id,
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="user.reset_password", entity_type="user", entity_id=target.id,
+        entity_label=target.display_name,
+        summary=f"Reset password for {target.display_name}",
+    )
     return {"success": True, "message": f"Password reset for {target.display_name}."}
 
 
@@ -202,3 +225,37 @@ def get_audit_log(
         )
         for history, order_id_value in rows
     ]
+
+
+# ---------- General admin action log (users, products, coupons, store settings) ----------
+# Separate from the delivery status-change audit log above — this is
+# "who changed what, when" for every OTHER admin write action. Written
+# to by admin.py itself (user management), products.py (product CRUD +
+# store settings), and coupons.py (coupon CRUD) via
+# services/action_log.py.
+
+@router.get("/action-log", response_model=List[ActionLogOut])
+def get_action_log(
+    action: Optional[str] = Query(None, description="Filter by exact action, e.g. product.update"),
+    entity_type: Optional[str] = Query(None, description="Filter by entity type, e.g. product, user, coupon"),
+    actor_user_id: Optional[str] = Query(None, description="Filter to actions taken by one user"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_admin),
+):
+    query = db.query(ActionLogDB).filter(ActionLogDB.org_id == current_user.org_id)
+
+    if action:
+        query = query.filter(ActionLogDB.action == action)
+    if entity_type:
+        query = query.filter(ActionLogDB.entity_type == entity_type)
+    if actor_user_id:
+        query = query.filter(ActionLogDB.actor_user_id == actor_user_id)
+
+    return (
+        query.order_by(ActionLogDB.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )

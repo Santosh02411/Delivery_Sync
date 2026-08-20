@@ -20,6 +20,7 @@ from app.models.user import UserDB
 from app.models.organization import OrganizationDB, StoreVisibilityUpdate, StorePricingUpdate, StoreSlotSettingsUpdate, StoreProfileUpdate, OrganizationOut
 from app.routes.deliveries import require_dispatcher
 from app.routes.admin import require_admin
+from app.services.action_log import record_action
 
 router = APIRouter(prefix="/admin/products", tags=["products"])
 
@@ -134,6 +135,13 @@ def create_product(
     db.add(product)
     db.commit()
     db.refresh(product)
+    record_action(
+        db, org_id=current_user.org_id,
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="product.create", entity_type="product", entity_id=product.id,
+        entity_label=product.name,
+        summary=f"Created product {product.name}",
+    )
     return product
 
 
@@ -151,11 +159,22 @@ def update_product(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found.")
 
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    updates = payload.model_dump(exclude_unset=True)
+    before = {field: getattr(product, field) for field in updates}
+
+    for field, value in updates.items():
         setattr(product, field, value)
 
     db.commit()
     db.refresh(product)
+    record_action(
+        db, org_id=current_user.org_id,
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="product.update", entity_type="product", entity_id=product.id,
+        entity_label=product.name,
+        summary=f"Updated product {product.name}",
+        before=before, after=updates,
+    )
     return product
 
 
@@ -183,8 +202,16 @@ def delete_product(
         except OSError:
             pass
 
+    product_name = product.name
     db.delete(product)
     db.commit()
+    record_action(
+        db, org_id=current_user.org_id,
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="product.delete", entity_type="product", entity_id=product_id,
+        entity_label=product_name,
+        summary=f"Deleted product {product_name}",
+    )
     return {"deleted": True}
 
 
@@ -204,6 +231,13 @@ def set_store_visibility(
     org.is_public_store = payload.is_public_store
     db.commit()
     db.refresh(org)
+    record_action(
+        db, org_id=current_user.org_id,
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="store_settings.update", entity_type="store_settings", entity_id=org.id,
+        entity_label="Storefront visibility",
+        summary=f"Set storefront visibility to {'public' if payload.is_public_store else 'private'}",
+    )
     return org
 
 
@@ -223,6 +257,13 @@ def set_store_pricing(
     org.tax_rate_percent = payload.tax_rate_percent
     db.commit()
     db.refresh(org)
+    record_action(
+        db, org_id=current_user.org_id,
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="store_settings.update", entity_type="store_settings", entity_id=org.id,
+        entity_label="Pricing",
+        summary=f"Set delivery fee to {payload.delivery_fee} and tax rate to {payload.tax_rate_percent}%",
+    )
     return org
 
 
@@ -251,6 +292,13 @@ def set_store_slot_settings(
     org.max_orders_per_slot = payload.max_orders_per_slot
     db.commit()
     db.refresh(org)
+    record_action(
+        db, org_id=current_user.org_id,
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="store_settings.update", entity_type="store_settings", entity_id=org.id,
+        entity_label="Delivery slot settings",
+        summary="Updated delivery slot settings",
+    )
     return org
 
 
@@ -275,4 +323,11 @@ def set_store_profile(
         org.description = payload.description or None
     db.commit()
     db.refresh(org)
+    record_action(
+        db, org_id=current_user.org_id,
+        actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+        action="store_settings.update", entity_type="store_settings", entity_id=org.id,
+        entity_label="Store profile",
+        summary="Updated store marketplace profile",
+    )
     return org
