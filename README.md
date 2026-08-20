@@ -69,6 +69,22 @@ Runs at `http://localhost:3000`.
 > (organizations, customers, notifications, feedback, and more) and an
 > old database file predates those tables.
 
+## Running the Test Suite
+
+```bash
+cd backend
+pip install -r requirements.txt
+pytest -v
+```
+
+26 tests covering auth (staff + customer), the public tracking page,
+security headers, and rate limiting — each test runs against its own
+isolated temp SQLite database, never the real `database.db`. See
+`backend/tests/`. A GitHub Actions workflow
+(`.github/workflows/ci.yml`) runs this suite, a frontend build check,
+and a Docker image build check automatically on every push and pull
+request.
+
 ## Getting Started — A Full Walkthrough
 
 1. Open the app, choose **Staff Login**, sign up. The first person to

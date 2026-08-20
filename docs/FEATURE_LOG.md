@@ -1522,6 +1522,36 @@ category badge and description.
 
 ---
 
+## Automated Test Suite & CI Pipeline
+
+**What was missing:** every feature so far had been verified manually
+per-session with FastAPI's `TestClient` during development, then
+thrown away — there was no persisted, repeatable test suite, and
+nothing ran automatically on push/PR to catch a regression before it
+reached `main`.
+
+**Why it was needed:** a portfolio project that claims to be
+production-shaped needs the same safety net a real production codebase
+has — tests that keep passing (or don't) as the code changes, checked
+automatically instead of by hand.
+
+**What it does:** `backend/tests/` — a real pytest suite (26 tests)
+covering staff auth (signup/login, invite-code join flow, the
+admin-self-assignment security guard), customer auth (signup/login,
+the two identity systems staying separate), the public no-login
+tracking page, app-wide security headers, `/docs` being hidden in
+production, and the rate limits on login/signup/tracking actually
+tripping under repeated requests. Each test gets its own fresh,
+isolated SQLite database (a temp file per test) via a `db_engine` +
+`client` fixture pair in `conftest.py`, so tests never touch real data
+and can't affect each other. `.github/workflows/ci.yml` runs this
+suite (plus a frontend `npm run build` check, plus a Docker image
+build check on pushes) on every push and pull request via GitHub
+Actions — three parallel jobs: `backend-tests`, `frontend-build`,
+`docker-build`.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
