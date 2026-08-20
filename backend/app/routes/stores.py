@@ -5,7 +5,7 @@ is_public_store show up here (see organization.py) and only their
 active products are listed.
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -13,12 +13,15 @@ from app.db.session import get_db
 from app.models.organization import OrganizationDB, PublicOrganizationOut
 from app.models.product import ProductDB, ProductOut
 from app.routes.products import _attach_review_stats
+from app.services.rate_limiter import limiter
 
 router = APIRouter(prefix="/stores", tags=["storefront"])
 
 
 @router.get("/", response_model=List[PublicOrganizationOut])
+@limiter.limit("60/minute")
 def list_public_stores(
+    request: Request,
     search: Optional[str] = None,
     category: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -42,7 +45,8 @@ def list_public_stores(
 
 
 @router.get("/categories", response_model=List[str])
-def list_store_categories(db: Session = Depends(get_db)):
+@limiter.limit("60/minute")
+def list_store_categories(request: Request, db: Session = Depends(get_db)):
     """Distinct categories currently in use across public stores, for the marketplace's filter dropdown."""
     rows = db.query(OrganizationDB.category).filter(
         OrganizationDB.is_public_store == True,  # noqa: E712
@@ -53,7 +57,8 @@ def list_store_categories(db: Session = Depends(get_db)):
 
 
 @router.get("/{org_id}/products", response_model=List[ProductOut])
-def list_store_products(org_id: str, db: Session = Depends(get_db)):
+@limiter.limit("60/minute")
+def list_store_products(request: Request, org_id: str, db: Session = Depends(get_db)):
     store = db.query(OrganizationDB).filter(
         OrganizationDB.id == org_id,
         OrganizationDB.is_public_store == True,  # noqa: E712

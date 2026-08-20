@@ -14,7 +14,7 @@ Two audiences:
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -31,6 +31,7 @@ from app.models.order import OrderDB, OrderItemDB, OrderStatus
 from app.models.delivery import DeliveryRecordDB, DeliveryStatus
 from app.models.customer import CustomerDB
 from app.routes.customer_auth import get_current_customer
+from app.services.rate_limiter import limiter
 
 router = APIRouter(tags=["reviews"])
 
@@ -43,7 +44,8 @@ def _order_delivered(db: Session, order: OrderDB) -> bool:
 
 
 @router.get("/stores/products/{product_id}/reviews", response_model=ProductReviewListOut)
-def list_product_reviews(product_id: str, db: Session = Depends(get_db)):
+@limiter.limit("60/minute")
+def list_product_reviews(request: Request, product_id: str, db: Session = Depends(get_db)):
     """Public — anyone browsing the storefront can see a product's reviews before buying."""
     product = db.query(ProductDB).filter(ProductDB.id == product_id).first()
     if not product:

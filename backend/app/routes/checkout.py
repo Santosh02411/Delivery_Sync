@@ -21,7 +21,7 @@ decrementing happens there and not here.
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -44,6 +44,7 @@ from app.services.inventory import check_stock_available, decrement_stock_for_or
 from app.services.coupons import find_and_validate_coupon, compute_discount, CouponError
 from app.services.slots import validate_slot
 from app.services.websocket_manager import broadcast_sync, dispatcher_queue_room
+from app.services.rate_limiter import limiter
 
 router = APIRouter(prefix="/customer", tags=["checkout"])
 
@@ -71,7 +72,9 @@ def _load_cart(db: Session, customer_id: str):
 
 
 @router.post("/checkout/validate-coupon", response_model=CouponPreviewOut)
+@limiter.limit("20/minute")
 def validate_coupon(
+    request: Request,
     payload: CouponApply,
     db: Session = Depends(get_db),
     current_customer: CustomerDB = Depends(get_current_customer),
@@ -92,7 +95,9 @@ def validate_coupon(
 
 
 @router.post("/checkout", response_model=CheckoutResponse)
+@limiter.limit("10/minute")
 def checkout(
+    request: Request,
     payload: CheckoutRequest,
     db: Session = Depends(get_db),
     current_customer: CustomerDB = Depends(get_current_customer),
@@ -267,7 +272,9 @@ def checkout(
 
 
 @router.post("/checkout/verify", response_model=OrderOut)
+@limiter.limit("10/minute")
 def verify_payment(
+    request: Request,
     payload: VerifyPaymentRequest,
     db: Session = Depends(get_db),
     current_customer: CustomerDB = Depends(get_current_customer),

@@ -7,19 +7,22 @@ the storefront's product list itself (routes/stores.py).
 
 from datetime import datetime, date as date_cls
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from typing import List
 
 from app.db.session import get_db
 from app.models.organization import OrganizationDB, DeliverySlotOut
 from app.services.slots import get_slots_for_date, MAX_ADVANCE_DAYS
+from app.services.rate_limiter import limiter
 
 router = APIRouter(prefix="/stores", tags=["delivery-slots"])
 
 
 @router.get("/{org_id}/delivery-slots", response_model=List[DeliverySlotOut])
+@limiter.limit("60/minute")
 def list_delivery_slots(
+    request: Request,
     org_id: str,
     date: date_cls = Query(..., description="YYYY-MM-DD, must be today or within the next few days"),
     db: Session = Depends(get_db),

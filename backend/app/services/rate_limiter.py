@@ -14,6 +14,14 @@ rate limits consistent across a real multi-server deployment. This is
 the standard fix for that gap — not implemented as "on" by default only
 because it would otherwise require a Redis server to be running just to
 start this project locally, which isn't needed for local development.
+
+TESTING=1 turns limiting off entirely (slowapi's own `enabled` flag,
+not a homemade bypass): the test suite hits the same endpoints dozens
+of times in a loop, well past limits like "5/minute" on signup, and
+that's a test-runner artifact, not a real abuse pattern worth
+asserting against. The limits themselves ARE tested — see
+tests/test_rate_limiting.py, which flips this flag on for just that
+one file.
 """
 
 import os
@@ -21,8 +29,9 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 redis_url = os.environ.get("REDIS_URL")
+_enabled = os.environ.get("TESTING") != "1"
 
 if redis_url:
-    limiter = Limiter(key_func=get_remote_address, storage_uri=redis_url)
+    limiter = Limiter(key_func=get_remote_address, storage_uri=redis_url, enabled=_enabled)
 else:
-    limiter = Limiter(key_func=get_remote_address)  # defaults to in-memory storage
+    limiter = Limiter(key_func=get_remote_address, enabled=_enabled)  # defaults to in-memory storage
