@@ -306,27 +306,37 @@ export default function CustomerDashboard() {
       )}
 
       {showNotifications && (
-        <div className="card" style={{ marginBottom: "20px", maxWidth: "420px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "10px" }}>
-            <strong style={{ fontSize: "13.5px" }}>Notifications</strong>
-            <div style={{ display: "flex", gap: "6px" }}>
-              {unreadCount > 0 && (
-                <button className="btn" onClick={handleMarkAllRead} style={{ fontSize: "12px", padding: "4px 8px" }}>
-                  Mark all read
+        <>
+          <div className="notifications-overlay" onClick={() => setShowNotifications(false)} />
+          <div className="notifications-panel">
+            <div className="notifications-panel-header">
+              <span className="notifications-panel-title">Notifications</span>
+              <div className="notifications-panel-actions">
+                {unreadCount > 0 && (
+                  <button className="btn" onClick={handleMarkAllRead} style={{ fontSize: "12px", padding: "4px 8px" }}>
+                    Mark all read
+                  </button>
+                )}
+                {notifications.some((n) => n.is_read) && (
+                  <button className="btn" onClick={handleClearReadNotifications} style={{ fontSize: "12px", padding: "4px 8px" }}>
+                    Clear read
+                  </button>
+                )}
+                <button
+                  className="notifications-panel-close"
+                  onClick={() => setShowNotifications(false)}
+                  aria-label="Close notifications"
+                  title="Close"
+                >
+                  ✕
                 </button>
-              )}
-              {notifications.some((n) => n.is_read) && (
-                <button className="btn" onClick={handleClearReadNotifications} style={{ fontSize: "12px", padding: "4px 8px" }}>
-                  Clear read
-                </button>
-              )}
+              </div>
             </div>
-          </div>
-          {notifications.length === 0 && (
-            <p style={{ fontSize: "12.5px", color: "var(--text-muted)" }}>No notifications yet.</p>
-          )}
-          <div style={{ maxHeight: "260px", overflowY: "auto" }}>
-            {notifications.map((n) => (
+            <div className="notifications-panel-body">
+              {notifications.length === 0 && (
+                <p className="notifications-panel-empty">No notifications yet.</p>
+              )}
+              {notifications.map((n) => (
               <div
                 key={n.id}
                 style={{
@@ -354,18 +364,19 @@ export default function CustomerDashboard() {
                   🗑
                 </button>
               </div>
-            ))}
+              ))}
+              {notificationsHasMore && (
+                <button
+                  className="btn"
+                  style={{ fontSize: "12px", padding: "4px 8px", marginTop: "8px", width: "100%" }}
+                  onClick={handleLoadMoreNotifications}
+                >
+                  Load more
+                </button>
+              )}
+            </div>
           </div>
-          {notificationsHasMore && (
-            <button
-              className="btn"
-              style={{ fontSize: "12px", padding: "4px 8px", marginTop: "8px", width: "100%" }}
-              onClick={handleLoadMoreNotifications}
-            >
-              Load more
-            </button>
-          )}
-        </div>
+        </>
       )}
 
       {activeView === "orders" && (

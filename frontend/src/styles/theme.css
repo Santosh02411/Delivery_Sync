@@ -263,6 +263,99 @@ h1, h2, h3, h4 {
   margin-bottom: 0;
 }
 
+/* ---------- Customer notifications dropdown ----------
+   Positioned as a floating panel anchored near the sidebar's
+   "Notifications" trigger button, with a click-to-close backdrop —
+   NOT an inline block in the page's normal document flow. It used to
+   render as a plain <div className="card"> sitting wherever it fell
+   in main-content's JSX order, which meant it could appear stacked
+   awkwardly against whatever view (Orders/Shop/Addresses/etc.) was
+   currently active instead of popping up near the button that opened
+   it. Fixed positioning + a backdrop is the standard, professional
+   pattern for this (same idea the mobile .sidebar-overlay already
+   uses elsewhere in this file). */
+.notifications-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  background-color: transparent; /* invisible click-catcher, not a dimming backdrop — the panel itself should feel like a lightweight dropdown, not a modal */
+}
+
+.notifications-panel {
+  position: fixed;
+  bottom: 84px;
+  left: 236px;
+  z-index: 401;
+  width: 380px;
+  max-width: calc(100vw - 40px);
+  max-height: min(480px, 70vh);
+  display: flex;
+  flex-direction: column;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+
+.notifications-panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.notifications-panel-title {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.notifications-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.notifications-panel-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.notifications-panel-close:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-surface-elevated);
+}
+
+.notifications-panel-body {
+  overflow-y: auto;
+  padding: 6px 14px 10px 14px;
+}
+
+.notifications-panel-empty {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  padding: 14px 0;
+}
+
+@media (max-width: 768px) {
+  .notifications-panel {
+    left: 20px;
+    right: 20px;
+    bottom: 20px;
+    width: auto;
+    max-width: none;
+  }
+}
+
 /* Hidden on desktop — only shown at mobile widths below */
 .mobile-topbar {
   display: none;
