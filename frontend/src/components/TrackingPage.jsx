@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { fetchPublicTracking, submitDeliveryFeedback } from "../services/api";
 import { useTheme } from "../context/ThemeContext";
 import StatusBadge from "./StatusBadge";
+import LiveTrackingMap from "./LiveTrackingMap";
 
 const STATUS_LABELS = {
   confirmed: "Order Confirmed",
@@ -69,6 +70,12 @@ export default function TrackingPage({ deliveryId }) {
           <>
             <h2 className="mono" style={{ marginBottom: "8px" }}>{data.order_id}</h2>
             <StatusBadge status={data.status} />
+
+            {(data.status === "picked_up" || data.status === "out_for_delivery") && (
+              <div style={{ marginTop: "14px" }}>
+                <LiveTrackingMap deliveryId={deliveryId} />
+              </div>
+            )}
 
             <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "8px" }}>
               {data.zone && (

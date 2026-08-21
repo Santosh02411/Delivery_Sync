@@ -68,3 +68,29 @@ export async function resetPasswordRequest(token, newPassword) {
   }
   return data; // { message }
 }
+
+export async function customerForgotPasswordRequest(email) {
+  const response = await fetch(`${API_BASE_URL}/customer/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Request failed.");
+  }
+  return data; // { message }
+}
+
+export async function customerResetPasswordRequest(token, newPassword) {
+  const response = await fetch(`${API_BASE_URL}/customer/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Reset failed.");
+  }
+  return data; // { message }
+}

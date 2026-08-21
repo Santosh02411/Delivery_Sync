@@ -1,14 +1,15 @@
 import React, { useState } from "react";
-import { forgotPasswordRequest } from "../services/authApi";
+import { forgotPasswordRequest, customerForgotPasswordRequest } from "../services/authApi";
 import { useTheme } from "../context/ThemeContext";
 import "../styles/auth.css";
 
-export default function ForgotPasswordPage({ onBackToLogin }) {
+export default function ForgotPasswordPage({ onBackToLogin, accountType = "staff" }) {
   const { theme, toggleTheme } = useTheme();
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isCustomer = accountType === "customer";
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -16,7 +17,9 @@ export default function ForgotPasswordPage({ onBackToLogin }) {
     setMessage("");
     setIsSubmitting(true);
     try {
-      const result = await forgotPasswordRequest(email);
+      const result = isCustomer
+        ? await customerForgotPasswordRequest(email)
+        : await forgotPasswordRequest(email);
       setMessage(result.message);
     } catch (err) {
       setError(err.message);

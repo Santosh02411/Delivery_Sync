@@ -188,6 +188,12 @@ export async function fetchPublicTracking(deliveryId) {
   return data;
 }
 
+export async function fetchPublicTrackingAgentLocation(deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/track/${deliveryId}/agent-location`);
+  if (!response.ok) return null; // 404 just means no live position to show right now — not an error state
+  return response.json();
+}
+
 export async function submitDeliveryFeedback(deliveryId, rating, comment) {
   const response = await fetch(`${API_BASE_URL}/track/${deliveryId}/feedback`, {
     method: "POST",

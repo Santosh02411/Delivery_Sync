@@ -191,13 +191,11 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
           </button>
         </form>
 
-        {accountType === "staff" && (
-          <p className="auth-switch-text">
-            <button className="auth-switch-link" onClick={onForgotPassword}>
-              Forgot password?
-            </button>
-          </p>
-        )}
+        <p className="auth-switch-text">
+          <button className="auth-switch-link" onClick={() => onForgotPassword(accountType)}>
+            Forgot password?
+          </button>
+        </p>
 
         <p className="auth-switch-text">
           Don't have an account?{" "}

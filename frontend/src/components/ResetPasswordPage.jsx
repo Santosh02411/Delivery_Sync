@@ -1,21 +1,23 @@
 import React, { useState } from "react";
-import { resetPasswordRequest } from "../services/authApi";
+import { resetPasswordRequest, customerResetPasswordRequest } from "../services/authApi";
 import { useTheme } from "../context/ThemeContext";
 import "../styles/auth.css";
 
 /**
- * Shown when the app loads with a ?reset_token=... in the URL (i.e. the
- * person clicked the link from their "reset email" — which, without SMTP
+ * Shown when the app loads with a ?reset_token=... (staff) or
+ * ?customer_reset_token=... (customer) in the URL (i.e. the person
+ * clicked the link from their "reset email" — which, without SMTP
  * configured, means the link printed to the backend console during local
  * development/testing).
  */
-export default function ResetPasswordPage({ token, onDone }) {
+export default function ResetPasswordPage({ token, onDone, accountType = "staff" }) {
   const { theme, toggleTheme } = useTheme();
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isCustomer = accountType === "customer";
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -28,7 +30,9 @@ export default function ResetPasswordPage({ token, onDone }) {
 
     setIsSubmitting(true);
     try {
-      const result = await resetPasswordRequest(token, newPassword);
+      const result = isCustomer
+        ? await customerResetPasswordRequest(token, newPassword)
+        : await resetPasswordRequest(token, newPassword);
       setMessage(result.message);
     } catch (err) {
       setError(err.message);

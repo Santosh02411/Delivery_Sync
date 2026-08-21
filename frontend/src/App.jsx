@@ -57,6 +57,7 @@ function StaffDashboard({ user }) {
 function AuthFlow() {
   const [view, setView] = useState("login");
   const [signupAccountType, setSignupAccountType] = useState("staff");
+  const [forgotPasswordAccountType, setForgotPasswordAccountType] = useState("staff");
 
   if (view === "login") {
     return (
@@ -65,12 +66,15 @@ function AuthFlow() {
           setSignupAccountType(accountType);
           setView("signup");
         }}
-        onForgotPassword={() => setView("forgot-password")}
+        onForgotPassword={(accountType) => {
+          setForgotPasswordAccountType(accountType);
+          setView("forgot-password");
+        }}
       />
     );
   }
   if (view === "forgot-password") {
-    return <ForgotPasswordPage onBackToLogin={() => setView("login")} />;
+    return <ForgotPasswordPage onBackToLogin={() => setView("login")} accountType={forgotPasswordAccountType} />;
   }
   return (
     <SignupPage
@@ -98,14 +102,16 @@ function RootRouter() {
 
   const urlParams = new URLSearchParams(window.location.search);
   const resetToken = urlParams.get("reset_token");
+  const customerResetToken = urlParams.get("customer_reset_token");
   const trackId = urlParams.get("track");
 
   if (trackId) return <TrackingPage deliveryId={trackId} />;
 
-  if (resetToken) {
+  if (resetToken || customerResetToken) {
     return (
       <ResetPasswordPage
-        token={resetToken}
+        token={resetToken || customerResetToken}
+        accountType={customerResetToken ? "customer" : "staff"}
         onDone={() => {
           window.history.replaceState({}, "", window.location.pathname);
           window.location.reload();
