@@ -106,6 +106,28 @@ class UserOut(BaseModel):
         from_attributes = True
 
 
+class UserProfileUpdate(BaseModel):
+    """
+    Self-service profile edit for a logged-in staff user — mirrors
+    CustomerProfileUpdate's shape/behavior in models/customer.py.
+    Deliberately excludes `username`: it's this app's login identifier
+    (see auth.py's /login, which looks a user up by username), so
+    letting it change here would need the same "does this collide with
+    another account" + "which sessions/audit-log entries reference the
+    old value" handling account deletion/rename flows always need, and
+    nothing about self-service editing actually requires it — a staff
+    member's display_name is what changes when they want a different
+    name shown to teammates/customers, without touching how they log in.
+    """
+    display_name: Optional[str] = None
+    email: Optional[str] = None
+
+
+class UserPasswordChange(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

@@ -17,6 +17,8 @@ from app.models.user import (
     UserSignup,
     UserLogin,
     UserOut,
+    UserProfileUpdate,
+    UserPasswordChange,
     TokenResponse,
     LoginResult,
     TwoFactorSetupOut,
@@ -348,6 +350,63 @@ def get_current_user(
         raise HTTPException(status_code=403, detail="This account has been deactivated. Contact your admin.")
 
     return user
+
+
+# ---------- Self-service account settings (staff, logged in) ----------
+# Mirrors routes/customer_auth.py's GET/PATCH /me + POST /me/change-password
+# exactly, for the same self-service reasons — a staff member editing
+# their own display name or changing their own password shouldn't need
+# an admin to do it for them (admin.py's reset-password endpoint is for
+# an admin acting on SOMEONE ELSE's account; this is a user acting on
+# their own, and requires proving they know the current password rather
+# than an admin's authority to skip that check).
+
+@router.get("/me", response_model=UserOut)
+def get_my_profile(current_user: UserDB = Depends(get_current_user)):
+    return current_user
+
+
+@router.patch("/me", response_model=UserOut)
+def update_my_profile(
+    payload: UserProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    if payload.display_name is not None:
+        display_name = payload.display_name.strip()
+        if not display_name:
+            raise HTTPException(status_code=400, detail="Display name can't be empty.")
+        current_user.display_name = display_name
+
+    if payload.email is not None:
+        email = payload.email.strip()
+        if not email:
+            raise HTTPException(status_code=400, detail="Email can't be empty.")
+        if email != current_user.email:
+            existing = db.query(UserDB).filter(UserDB.email == email).first()
+            if existing:
+                raise HTTPException(status_code=400, detail="Another account already uses that email.")
+            current_user.email = email
+
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+
+@router.post("/me/change-password")
+def change_my_password(
+    payload: UserPasswordChange,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    if not verify_password(payload.current_password, current_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Current password is incorrect.")
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters.")
+
+    current_user.hashed_password = hash_password(payload.new_password)
+    db.commit()
+    return {"message": "Password changed."}
 
 
 # ---------- Two-factor auth: setup / enable / disable (staff, logged in) ----------
