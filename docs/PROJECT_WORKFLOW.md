@@ -550,6 +550,48 @@ shipped.
 
 ---
 
+## Reusing an Existing Component Instead of Building a Second One
+
+When adding a live agent-location map to the public tracking page, the
+tempting shortcut was to write a new, simpler map component scoped to
+"public tracking only." But `LiveTrackingMap.jsx` already existed — it
+was built earlier for the logged-in customer dashboard, complete with
+offline tile caching, a WebSocket live-update subscription, and a
+30-second polling safety net. Writing a second component would have
+meant maintaining two copies of all of that, one of which would
+inevitably drift out of sync with the other over time (a classic
+source of "why does the map behave differently on these two pages"
+bugs).
+
+Instead, the existing component was extended to accept an optional
+`token` prop: pass one and it calls the logged-in customer endpoint,
+omit it and it calls a new public endpoint instead — same rendering
+logic, same caching, same WebSocket handling either way, since the
+tracking WebSocket was already unauthenticated (scoped to an
+unguessable delivery UUID, the same security model as the public
+tracking page itself). The only genuinely new code was the new public
+backend endpoint and a two-line branch inside the existing `poll()`
+function.
+
+The backend side of that new endpoint got one deliberate restriction
+the logged-in version doesn't have: it only returns a position while
+the delivery is `picked_up` or `out_for_delivery`. The logged-in
+customer endpoint doesn't bother with that check, because ownership
+(the delivery has to belong to the requesting customer) already limits
+who can ask. The public endpoint has no login at all — anyone with the
+tracking link can call it — so it needed its own limit on *when* a
+position is exposed, not just relying on the fact that the agent's
+identity is never included in the response. Scoping it to exactly the
+two statuses the existing location-broadcast WebSocket code
+(`routes/users.py`) already uses for its live pushes was a deliberate
+choice too: it means the one-off REST fetch and the real-time updates
+can never disagree about whether a position counts as "currently
+live," which would otherwise be an easy way to introduce a subtle bug
+(map shows a stale pin because the REST call succeeded under a looser
+rule than the WebSocket was using).
+
+---
+
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something

@@ -3,8 +3,8 @@
 This file tracks every feature built into this project, in the order it
 was added: what was missing before it existed, why it was needed, and
 what it actually does now. This is different from `PROJECT_WORKFLOW.md`
-(which logs bugs and how they were fixed) — this file is about *decisions*
-and *reasoning*, so you can explain not just how something works, but why
+(which logs bugs and how they were fixed) — this file is about _decisions_
+and _reasoning_, so you can explain not just how something works, but why
 it exists at all.
 
 This file is maintained going forward — every new feature gets an entry
@@ -144,7 +144,7 @@ dropdown, and a click-through modal showing a delivery's full details.
 
 ## Status History / Audit Log
 
-**What was missing:** The detail modal showed a delivery's *current*
+**What was missing:** The detail modal showed a delivery's _current_
 state, but nothing about how it got there — no record of who changed
 what, or when.
 
@@ -359,7 +359,7 @@ organizations and confirmed each saw zero of the other's data.
 **A real vulnerability found and fixed while building this:** the offline
 `/sync` endpoint is intentionally unauthenticated (see Rate Limiting
 below for why), which meant a crafted payload could reference an
-existing delivery ID belonging to a *different* organization and
+existing delivery ID belonging to a _different_ organization and
 overwrite it, as long as it paired that ID with one of its own agent
 IDs. Fixed by verifying the existing record's organization matches the
 requesting agent's organization before allowing any update — confirmed
@@ -383,7 +383,7 @@ multi-user product, not an optional extra.
 organization becomes its admin automatically) can view every user in
 their organization, deactivate or reactivate an agent's account
 (deactivation takes effect immediately — even blocking that user's
-*already-issued* login token, not just future login attempts), and reset
+_already-issued_ login token, not just future login attempts), and reset
 a user's password directly. Honest, disclosed limitation: since there's
 no email service, "reset password" means the admin sets a new one and
 shares it with the person themselves — not an emailed reset link, which
@@ -417,7 +417,7 @@ organization's deliveries, optionally filtered to a date range using the
 same From/To fields already used for table filtering. Built with
 Python's built-in `csv` module (not hand-built comma-joined strings), so
 a notes field containing a comma still exports correctly — deliberately
-avoiding the exact category of bug the bulk-import CSV *parser* was
+avoiding the exact category of bug the bulk-import CSV _parser_ was
 built to prevent on the way in, this time on the way out.
 
 ---
@@ -434,6 +434,7 @@ and CORS was wide open to any origin.
 before this could honestly be called ready for any real deployment.
 
 **What it does:**
+
 - Signup and login are rate-limited per IP (5/min and 10/min
   respectively) using `slowapi`, confirmed by actually sending 7 rapid
   signup requests and watching the 6th and 7th get correctly rejected
@@ -882,7 +883,7 @@ those are security credentials, not personal data worth exposing in a
 downloadable file). `DELETE /customer/account` requires the password
 again (not just an active session) and deletes purely personal data
 outright (cart, addresses, notifications, push subscriptions) — but
-*anonymizes* rather than deletes orders/deliveries/reviews, since a
+_anonymizes_ rather than deletes orders/deliveries/reviews, since a
 store has a legitimate business reason to retain its own transaction
 and refund records even after a customer's account is gone, the same
 pattern real e-commerce platforms (Amazon, Shopify) use. New
@@ -981,11 +982,12 @@ rather than a clean error response — which the checkout code's
 real problem. The customer saw "You're offline" while genuinely online.
 
 **The fix, at both ends:**
+
 - `routes/checkout.py` now wraps the Razorpay call in a real
   try/except — an authentication failure returns a clean `502` with an
   actionable message (check `RAZORPAY_KEY_ID`/`SECRET` in `.env`, or
   unset them to use the built-in test-mode path) instead of crashing.
-- `main.py`'s security-headers middleware is now a backstop for *any*
+- `main.py`'s security-headers middleware is now a backstop for _any_
   unhandled exception anywhere in the app — logs it server-side and
   always returns a clean `500 {"detail": "..."}` JSON response, so a
   future bug in a completely different route can never again show up in
@@ -1022,13 +1024,13 @@ and the offline-queued-then-synced confirmation messages.
 ## Config Fix: `FRONTEND_URL` Port Mismatch (Password Reset Links)
 
 **What was wrong:** `frontend/vite.config.js` runs the dev server on
-port **3000**, but `backend/.env.example`'s `FRONTEND_URL` example value
+port **3500**, but `backend/.env.example`'s `FRONTEND_URL` example value
 said **5173** (Vite's own default, not what this project actually
 uses). Copying `.env.example` to `.env` without editing that line means
 every password-reset email links to a port nothing is listening on —
 "this site can't be reached."
 
-**The fix:** `.env.example` now matches the real port (3000) with a
+**The fix:** `.env.example` now matches the real port (3500) with a
 comment explaining why it has to match whatever `npm run dev` actually
 prints, rather than assuming Vite's default.
 
@@ -1130,12 +1132,13 @@ existed at all. Also no way to delete notifications; they only ever
 accumulated.
 
 **What it does:**
+
 - New `GET/PATCH /customer/me` (name/email, with email-uniqueness
   checking) and `POST /customer/me/change-password` (requires the
   current password, same re-auth-to-change-something-sensitive pattern
   used for staff 2FA disable). New "👤 Profile" tab with both forms.
 - New `DELETE /customer/notifications/{id}` (single) and `DELETE
-  /customer/notifications?only_read=true/false` (bulk — defaults to
+/customer/notifications?only_read=true/false` (bulk — defaults to
   only clearing already-read ones, the safer default for a "clean up"
   action, with a full-clear option available). Notification panel
   gained a 🗑 delete button per item and a "Clear read" button.
@@ -1310,17 +1313,19 @@ page already uses.
 
 **What was already there, worth naming:** the app already had a real,
 distinctive design system — "Fleet Ops Console": Space Grotesk (display)
-+ Inter (body) + JetBrains Mono (data/mono) as a deliberate three-font
-pairing, a near-black dispatch-console palette with a warm amber accent
-(`#f2a93b` — chosen specifically to avoid both the acid-green-on-black
-and warm-terracotta-on-cream looks that AI-generated designs default
-to), and a light-theme override sharing every variable name. That
-wasn't templated — it just wasn't being refined, and the customer
-dashboard wasn't using it consistently (fixed in an earlier session).
-This pass builds on that existing identity rather than replacing it.
+
+- Inter (body) + JetBrains Mono (data/mono) as a deliberate three-font
+  pairing, a near-black dispatch-console palette with a warm amber accent
+  (`#f2a93b` — chosen specifically to avoid both the acid-green-on-black
+  and warm-terracotta-on-cream looks that AI-generated designs default
+  to), and a light-theme override sharing every variable name. That
+  wasn't templated — it just wasn't being refined, and the customer
+  dashboard wasn't using it consistently (fixed in an earlier session).
+  This pass builds on that existing identity rather than replacing it.
 
 **What changed, all in `theme.css`/`auth.css` so it applies everywhere
 at once:**
+
 - Real depth: a proper shadow scale (`--shadow-sm/md/lg`, black-based
   for the dark theme since gray shadows look like mistakes on
   near-black, gray-based for light) applied to cards, the sidebar,
@@ -1368,6 +1373,7 @@ and no distinction in app behavior between "someone's laptop" and "a
 real deployment."
 
 **What it does:**
+
 - `app/db/session.py` now reads `DATABASE_URL` — unset (default) still
   means the zero-setup SQLite file; set to a real Postgres URL and the
   exact same models/migrations/queries work against it instead, since
@@ -1388,12 +1394,12 @@ real deployment."
 - `backend/Dockerfile`, `frontend/Dockerfile` (a real two-stage build —
   `npm run build`'s static output served by nginx, no Node in the final
   image), and a root `docker-compose.yml` wiring up Postgres + backend
-  + frontend together, all with `ENVIRONMENT=production` set. New
-  `docs/DOCKER.md` covers running it and what's actually different from
-  local dev. `frontend/src/services/api.js`'s `API_BASE_URL` is now a
-  build-time `VITE_API_BASE_URL`, since a Docker/production build can't
-  assume the backend lives at `127.0.0.1:8000` the way local dev always
-  did.
+  - frontend together, all with `ENVIRONMENT=production` set. New
+    `docs/DOCKER.md` covers running it and what's actually different from
+    local dev. `frontend/src/services/api.js`'s `API_BASE_URL` is now a
+    build-time `VITE_API_BASE_URL`, since a Docker/production build can't
+    assume the backend lives at `127.0.0.1:8000` the way local dev always
+    did.
 - Docker itself isn't available in the environment this was built in,
   so the Dockerfiles/compose file are validated as far as reasonably
   possible without a live daemon: YAML syntax-checked, and every actual
@@ -1479,7 +1485,7 @@ prices/stock (skipping any item that's since sold out or gone
 inactive, applying the org's current delivery fee/tax and re-validating
 any saved coupon fresh each cycle) and fires an in-app + push
 notification — "your recurring order is ready, confirm & pay." The
-customer pays it via the *existing*, unmodified checkout payment
+customer pays it via the _existing_, unmodified checkout payment
 machinery (`routes/subscriptions.py`'s `initiate-payment` endpoint
 mirrors `checkout()`'s Razorpay/COD/test-mode tail, then the frontend
 calls the same `POST /customer/checkout/verify` a normal order uses).
@@ -1577,7 +1583,7 @@ rather than after it becomes a problem.
 
 **What it does:**
 
-*Action log:* a new `ActionLogDB` table (`app/models/action_log.py`) —
+_Action log:_ a new `ActionLogDB` table (`app/models/action_log.py`) —
 separate from `DeliveryHistoryDB`, which already covered its own
 narrower case well — records actor, action (`product.update`,
 `user.deactivate`, `coupon.delete`, `store_settings.update`, etc.),
@@ -1593,7 +1599,7 @@ org-scoped) exposes it. `AuditLogViewer.jsx` now has two tabs —
 both logs live in one place without merging two differently-shaped
 tables into one query.
 
-*Pagination:* `GET /customer/orders` and `GET /customer/notifications`
+_Pagination:_ `GET /customer/orders` and `GET /customer/notifications`
 now default to `limit=20`/`offset`-based paging (bounded `limit<=100`).
 `GET /customer/deliveries` supports the same `limit`/`offset` but
 leaves them optional with no default — that response also seeds the
@@ -1624,6 +1630,78 @@ a correct diff, user-management actions are logged, the action log is
 both org-scoped and admin-only, and the three customer-facing list
 endpoints accept and honor `limit`/`offset`. Full suite: 30/30 passing.
 Frontend: `npm run build` clean.
+
+---
+
+## Customer Self-Service Password Reset & Live Agent Location on Public Tracking
+
+**What was missing:** two gaps spotted during a review of the whole
+feature set. First, staff accounts already had a complete "forgot
+password" email flow (`/auth/forgot-password` + `/auth/reset-password`),
+but customer accounts had no equivalent — a customer who forgot their
+password had no way to recover the account themselves, only a
+logged-in "change password" option that's useless if you can't log in.
+Second, the dispatcher side already collects and uses live agent GPS
+(for auto-assign suggestions, and for the logged-in customer dashboard's
+tracking map), but the _public_, no-login tracking page — the one
+shared via the tracking link, usable without an account — only showed
+status text, never the agent's live position on a map.
+
+**Why it was needed:** password recovery is a baseline expectation for
+any account system, and the public tracking page is the version of
+tracking most customers will actually use (no signup required), so
+that's exactly where a live map matters most.
+
+**What it does:**
+
+_Customer password reset:_ a new `CustomerPasswordResetTokenDB` table
+(`models/customer_password_reset.py`) — kept separate from the staff
+`PasswordResetTokenDB` for the same reason customer auth already lives
+in its own files: `CustomerDB` and `UserDB` are two different identity
+systems, and a shared token table would need a discriminator column to
+prevent a customer's token ever validating against a staff account or
+vice versa. `POST /customer/forgot-password` and
+`POST /customer/reset-password` mirror the staff flow's security
+choices exactly: an always-identical generic response (so the endpoint
+can't be used to check which emails are registered), a 3/minute rate
+limit on requests, single-use tokens that expire after 30 minutes.
+`ForgotPasswordPage.jsx` and `ResetPasswordPage.jsx` now take an
+`accountType` prop and call the right backend flow; the "Forgot
+password?" link on the login page — previously staff-only — now shows
+for customer login too; `App.jsx` distinguishes a staff reset link
+(`?reset_token=`) from a customer one (`?customer_reset_token=`) so
+both land on the right flow.
+
+_Live agent location on public tracking:_ a new
+`GET /track/{delivery_id}/agent-location`, deliberately narrower than
+the existing logged-in customer endpoint since this one has no login
+and no ownership check to fall back on. It only returns a position
+while the delivery is `picked_up` or `out_for_delivery` — the same two
+statuses the existing WebSocket location-broadcast in `routes/users.py`
+already scopes live pushes to, so the REST fallback and the real-time
+updates always agree on when a position counts as "live." It returns
+only `latitude`/`longitude`/`updated_at`, never the agent's identity,
+matching the rest of `routes/tracking.py`'s existing rule of never
+exposing agent info on the public response. `LiveTrackingMap.jsx` (an
+existing component, previously only used on the logged-in customer
+dashboard) now works in two modes — pass a `token` for the customer
+dashboard, omit it for the public page, and it calls the right
+endpoint either way; the WebSocket push needed no changes since it was
+already unauthenticated. `TrackingPage.jsx` renders the map only while
+the delivery is actually `picked_up`/`out_for_delivery`, matching the
+backend's own gating instead of attempting a call that's guaranteed to
+404 the rest of the time.
+
+**Tests:** `backend/tests/test_customer_reset_and_public_agent_location.py`
+(7 new tests) — the forgot-password generic-response behavior for an
+unregistered email, a full request→reset→login-with-new-password cycle
+(with a check that the old password stops working and the token can't
+be reused), expired/invalid token rejection, and the public
+agent-location endpoint's status gating (available during
+picked_up/out_for_delivery, 404 before pickup, 404 after delivery, 404
+for an unknown delivery) plus a check that the response never includes
+an agent identifier. Full suite: 37/37 passing. Frontend: `npm run
+build` clean.
 
 ---
 
