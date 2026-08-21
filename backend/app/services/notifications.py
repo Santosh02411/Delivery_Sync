@@ -47,7 +47,7 @@ from app.models.customer_notification import CustomerNotificationDB
 from app.models.push_subscription import PushSubscriptionDB
 from app.models.user import UserDB, UserRole
 
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3500")
 
 STATUS_LABELS = {
     "confirmed": "Order Confirmed",

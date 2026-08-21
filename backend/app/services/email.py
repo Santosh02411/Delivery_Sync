@@ -38,6 +38,16 @@ def send_password_reset_email(to_email: str, reset_link: str) -> None:
     _send_email(to_email, subject, body)
 
 
+def send_customer_password_reset_email(to_email: str, reset_link: str) -> None:
+    subject = "Reset your Delivery Sync account password"
+    body = (
+        f"Someone requested a password reset for your Delivery Sync customer account.\n\n"
+        f"Reset your password here (link expires in 30 minutes):\n{reset_link}\n\n"
+        f"If you didn't request this, you can safely ignore this email — your password won't be changed."
+    )
+    _send_email(to_email, subject, body)
+
+
 def send_status_notification_email(to_email: str, order_id: str, status_label: str, tracking_link: str) -> None:
     subject = f"Update on your delivery {order_id}"
     body = (

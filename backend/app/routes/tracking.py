@@ -19,9 +19,10 @@ from typing import List, Optional
 from datetime import datetime
 
 from app.db.session import get_db
-from app.models.delivery import DeliveryRecordDB
+from app.models.delivery import DeliveryRecordDB, DeliveryStatus
 from app.models.delivery_history import DeliveryHistoryDB
 from app.models.feedback import DeliveryFeedbackDB, FeedbackSubmit, FeedbackOut
+from app.models.agent_location import AgentLocationDB
 from app.services.rate_limiter import limiter
 
 router = APIRouter(prefix="/track", tags=["public-tracking"])
@@ -80,6 +81,53 @@ def track_delivery(request: Request, delivery_id: str, db: Session = Depends(get
             for h in history_rows
         ],
         feedback=existing_feedback,
+    )
+
+
+class PublicAgentLocationOut(BaseModel):
+    latitude: float
+    longitude: float
+    updated_at: datetime
+
+
+@router.get("/{delivery_id}/agent-location", response_model=PublicAgentLocationOut)
+@limiter.limit("30/minute")
+def track_agent_location(request: Request, delivery_id: str, db: Session = Depends(get_db)):
+    """
+    Live agent GPS position for the public tracking page — deliberately
+    narrower than the logged-in customer's equivalent endpoint
+    (GET /customer/deliveries/{id}/agent-location) in two ways, since
+    this one has no login and no ownership check to fall back on:
+
+    1. Only returns a position while the delivery is actively with the
+       agent — "picked_up" or "out_for_delivery" (the same two statuses
+       the location-update broadcast in routes/users.py already scopes
+       live pushes to, so the one-off REST fetch here and the
+       real-time WebSocket updates always agree on when a position is
+       "live"). Before pickup the agent could be anywhere doing
+       anything else; after delivery they're on to their next job —
+       neither is this customer's business to see, and this page is
+       reachable by anyone who has the tracking link, not just the
+       customer who placed the order.
+    2. Returns only lat/lng/updated_at — never the agent's id or name,
+       matching the rest of this file's existing "never expose agent
+       identity" rule for the public tracking response.
+    """
+    delivery = db.query(DeliveryRecordDB).filter(DeliveryRecordDB.id == delivery_id).first()
+    if not delivery:
+        raise HTTPException(status_code=404, detail="No delivery found for this tracking link.")
+
+    if delivery.status not in (DeliveryStatus.picked_up, DeliveryStatus.out_for_delivery) or not delivery.agent_id:
+        raise HTTPException(status_code=404, detail="Live location isn't available right now.")
+
+    location = db.query(AgentLocationDB).filter(AgentLocationDB.agent_id == delivery.agent_id).first()
+    if not location:
+        raise HTTPException(status_code=404, detail="Agent hasn't shared a live location yet.")
+
+    return PublicAgentLocationOut(
+        latitude=location.latitude,
+        longitude=location.longitude,
+        updated_at=location.updated_at,
     )
 
 
