@@ -592,6 +592,44 @@ rule than the WebSocket was using).
 
 ---
 
+## A Route-Ordering Bug Caught Before It Shipped
+
+Adding `PATCH /deliveries/bulk-status` and `PATCH /deliveries/bulk-assign-agent`
+looked like a pure addition — new endpoints, nothing existing should
+change. The first draft appended both route functions near the bottom
+of `deliveries.py`, after the existing single-record
+`PATCH /{delivery_id}`. That's the kind of ordering mistake that's easy
+to miss in review, because the code reads fine top to bottom and every
+individual endpoint is correct in isolation.
+
+FastAPI (like most routers) matches routes in declaration order, and
+`/{delivery_id}` is a wildcard that matches *any* path segment —
+including literally the string "bulk-status". With the bulk routes
+declared after it, a request to `PATCH /deliveries/bulk-status` would
+never reach the bulk handler at all: it'd match `/{delivery_id}` first,
+try to look up a delivery with the literal id `"bulk-status"`, and
+return a 404. The bulk endpoints would have been completely
+unreachable, and nothing in a quick manual check (hitting them
+directly, expecting a 404 on a fresh/empty selection anyway) would
+have made that obvious — the failure mode looks identical to "no
+matching deliveries," not "route doesn't exist."
+
+Caught it by remembering the file already had this exact class of
+ordering requirement — `/unassigned` and `/mine` are deliberately
+declared before their own `/{delivery_id}` catch-alls, which is
+mentioned nowhere in a comment, just baked into the file's existing
+route order. Grepping the file's full endpoint list before adding
+anything new — not just eyeballing where the new code visually fit —
+surfaced the mismatch immediately, and the fix was a pure reordering,
+no logic changes needed. Same lesson as the offline-cache pagination
+issue from the previous session: a change that looks additive can
+still interact with an existing, unstated invariant elsewhere in the
+file, and the way to catch that is to check the file's actual current
+behavior before assuming "I only added new code" means "nothing else
+could have changed."
+
+---
+
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something

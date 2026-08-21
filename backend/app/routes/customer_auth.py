@@ -67,7 +67,7 @@ def customer_login(request: Request, payload: CustomerLogin, db: Session = Depen
     return {"access_token": token, "customer": customer}
 
 
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3500")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
 
 @router.post("/forgot-password")

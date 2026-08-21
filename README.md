@@ -47,25 +47,21 @@ or logged into.
 Two servers, two terminals — both must run at the same time.
 
 **Backend:**
-
 ```bash
 cd backend
 pip install -r requirements.txt
 uvicorn main:app --reload
 ```
-
 Runs at `http://127.0.0.1:8000` — visit `/docs` for the interactive API
 reference.
 
 **Frontend** (separate terminal):
-
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-
-Runs at `http://localhost:3500`.
+Runs at `http://localhost:3000`.
 
 > **If you're pulling a fresh copy of this project after previously
 > running an older version:** delete `backend/database.db` before
@@ -100,7 +96,7 @@ request.
    delivery to that agent — optionally fill in a customer email so it
    links to a real customer account later.
 4. Open a separate tab/session, choose **Track My Orders (Customer)**,
-   sign up using the _same_ email you entered above — the order
+   sign up using the *same* email you entered above — the order
    auto-links to their account immediately (even retroactively, if they
    sign up after the order already existed).
 5. As the agent, update the delivery's status — watch the customer's
@@ -129,20 +125,19 @@ request.
 
 ## Tech Stack
 
-| Layer           | Technology                                        |
-| --------------- | ------------------------------------------------- |
-| Frontend        | React + Vite                                      |
-| Offline Storage | IndexedDB (per-user scoped)                       |
-| Backend         | FastAPI                                           |
-| Database        | SQLite                                            |
-| Auth            | JWT, separate token types for staff vs. customers |
-| Rate Limiting   | slowapi (in-memory, Redis-ready)                  |
+| Layer | Technology |
+|---|---|
+| Frontend | React + Vite |
+| Offline Storage | IndexedDB (per-user scoped) |
+| Backend | FastAPI |
+| Database | SQLite |
+| Auth | JWT, separate token types for staff vs. customers |
+| Rate Limiting | slowapi (in-memory, Redis-ready) |
 
 ## Full Documentation
 
 The `docs/` folder is more thorough than most student projects
 intentionally:
-
 - [`TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md) — architecture and data model
 - [`SECURITY_AND_ACCESS.md`](docs/SECURITY_AND_ACCESS.md) — auth model, known limitations
 - [`FEATURE_LOG.md`](docs/FEATURE_LOG.md) — every feature: what was missing, why it was built, what it does

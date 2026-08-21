@@ -11,6 +11,8 @@ import {
   assignAgentToDelivery,
   fetchSuggestedAgents,
   autoAssignDelivery,
+  bulkUpdateDeliveryStatus,
+  bulkAssignAgent,
   API_BASE_URL,
 } from "../services/api";
 import {
@@ -87,6 +89,11 @@ export default function DispatcherTable() {
   const [pendingActionCount, setPendingActionCount] = useState(0);
   const [pendingActionMsg, setPendingActionMsg] = useState(null);
 
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkStatusChoice, setBulkStatusChoice] = useState("picked_up");
+  const [bulkAgentChoice, setBulkAgentChoice] = useState("");
+  const [isBulkActing, setIsBulkActing] = useState(false);
+
   useEffect(() => {
     if (user?.id) {
       setActiveDispatcher(user.id);
@@ -158,6 +165,73 @@ export default function DispatcherTable() {
       showToast("CSV export downloaded.", "success");
     } catch (err) {
       showToast(`Export failed: ${err.message}`, "error");
+    }
+  }
+
+  function toggleSelected(id) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    setSelectedIds((prev) => {
+      const allVisibleSelected = visibleDeliveries.every((d) => prev.has(d.id));
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        visibleDeliveries.forEach((d) => next.delete(d.id));
+      } else {
+        visibleDeliveries.forEach((d) => next.add(d.id));
+      }
+      return next;
+    });
+  }
+
+  function clearSelection() {
+    setSelectedIds(new Set());
+  }
+
+  function summarizeBulkResult(result, actionLabel) {
+    if (result.failure_count === 0) {
+      showToast(`${actionLabel}: ${result.success_count} updated.`, "success");
+    } else {
+      showToast(
+        `${actionLabel}: ${result.success_count} updated, ${result.failure_count} failed.`,
+        result.success_count > 0 ? "success" : "error"
+      );
+    }
+  }
+
+  async function handleBulkStatusApply() {
+    if (selectedIds.size === 0) return;
+    setIsBulkActing(true);
+    try {
+      const result = await bulkUpdateDeliveryStatus(token, Array.from(selectedIds), bulkStatusChoice);
+      summarizeBulkResult(result, "Bulk status update");
+      clearSelection();
+      await loadDeliveries();
+    } catch (err) {
+      showToast(`Bulk status update failed: ${err.message}`, "error");
+    } finally {
+      setIsBulkActing(false);
+    }
+  }
+
+  async function handleBulkReassign() {
+    if (selectedIds.size === 0 || !bulkAgentChoice) return;
+    setIsBulkActing(true);
+    try {
+      const result = await bulkAssignAgent(token, Array.from(selectedIds), bulkAgentChoice);
+      summarizeBulkResult(result, "Bulk reassign");
+      clearSelection();
+      await loadDeliveries();
+    } catch (err) {
+      showToast(`Bulk reassign failed: ${err.message}`, "error");
+    } finally {
+      setIsBulkActing(false);
     }
   }
 
@@ -485,10 +559,68 @@ export default function DispatcherTable() {
 
       {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
 
+      {selectedIds.size > 0 && (
+        <div
+          className="card"
+          style={{
+            marginBottom: "12px",
+            display: "flex",
+            gap: "10px",
+            alignItems: "center",
+            flexWrap: "wrap",
+            padding: "10px 14px",
+          }}
+        >
+          <strong style={{ fontSize: "13px" }}>{selectedIds.size} selected</strong>
+
+          <select
+            className="input"
+            style={{ maxWidth: "180px" }}
+            value={bulkStatusChoice}
+            onChange={(e) => setBulkStatusChoice(e.target.value)}
+          >
+            {STATUS_FILTER_OPTIONS.filter((o) => o.value !== "all").map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          <button className="btn" onClick={handleBulkStatusApply} disabled={isBulkActing}>
+            {isBulkActing ? "Working..." : "Apply status"}
+          </button>
+
+          <select
+            className="input"
+            style={{ maxWidth: "180px" }}
+            value={bulkAgentChoice}
+            onChange={(e) => setBulkAgentChoice(e.target.value)}
+          >
+            <option value="">Reassign to...</option>
+            {agents.map((a) => (
+              <option key={a.id} value={a.id}>{a.display_name}</option>
+            ))}
+          </select>
+          <button className="btn" onClick={handleBulkReassign} disabled={isBulkActing || !bulkAgentChoice}>
+            {isBulkActing ? "Working..." : "Reassign"}
+          </button>
+
+          <button className="btn" onClick={clearSelection} style={{ marginLeft: "auto" }}>
+            Clear selection
+          </button>
+        </div>
+      )}
+
       <div className="card" style={{ padding: 0, overflowX: "auto" }}>
         <table className="data-table">
           <thead>
             <tr>
+              <th style={{ width: "36px" }}>
+                <input
+                  type="checkbox"
+                  checked={visibleDeliveries.length > 0 && visibleDeliveries.every((d) => selectedIds.has(d.id))}
+                  onChange={toggleSelectAllVisible}
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label="Select all deliveries on this page"
+                />
+              </th>
               <th>Order ID</th>
               <th>Customer</th>
               <th>Agent</th>
@@ -506,6 +638,14 @@ export default function DispatcherTable() {
                 new Date(d.expected_by) < new Date();
               return (
                 <tr key={d.id} onClick={() => setSelectedDelivery(d)}>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(d.id)}
+                      onChange={() => toggleSelected(d.id)}
+                      aria-label={`Select delivery ${d.order_id}`}
+                    />
+                  </td>
                   <td className="mono">{d.order_id}</td>
                   <td style={{ fontSize: "12.5px" }}>
                     {d.customer_email || d.customer_phone

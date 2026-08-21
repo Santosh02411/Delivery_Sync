@@ -479,6 +479,179 @@ def assign_agent_to_delivery(
     return _apply_agent_assignment(db, current_user, db_record, target_agent)
 
 
+class BulkStatusUpdateRequest(BaseModel):
+    delivery_ids: List[str]
+    status: DeliveryStatus
+
+
+class BulkAssignAgentRequest(BaseModel):
+    delivery_ids: List[str]
+    agent_id: str
+
+
+class BulkActionItemResult(BaseModel):
+    delivery_id: str
+    success: bool
+    error: Optional[str] = None
+
+
+class BulkActionResponse(BaseModel):
+    results: List[BulkActionItemResult]
+    success_count: int
+    failure_count: int
+
+
+@router.patch("/bulk-status", response_model=BulkActionResponse)
+def bulk_update_status(
+    payload: BulkStatusUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_dispatcher),
+):
+    """
+    Apply one status to many deliveries at once — the dispatcher table's
+    "select rows, bulk-update" action. Deliberately partial-success
+    rather than all-or-nothing (same choice bulk_import_deliveries makes
+    for the same reason): one delivery in a large selection belonging to
+    another org, already deleted, or otherwise invalid shouldn't block
+    the other 49 from updating. Each delivery still goes through the
+    exact same history-entry / customer-notify / refund-on-cancel /
+    return-pickup-on-delivered side effects a single-record status
+    update would, by reusing the same helpers update_delivery() uses —
+    so a bulk update is indistinguishable downstream from doing the same
+    updates one at a time.
+    """
+    results: List[BulkActionItemResult] = []
+
+    for delivery_id in payload.delivery_ids:
+        db_record = db.query(DeliveryRecordDB).filter(
+            DeliveryRecordDB.id == delivery_id,
+            DeliveryRecordDB.org_id == current_user.org_id,
+        ).first()
+        if not db_record:
+            results.append(BulkActionItemResult(delivery_id=delivery_id, success=False, error="Not found"))
+            continue
+
+        old_status = db_record.status
+        if old_status == payload.status:
+            results.append(BulkActionItemResult(delivery_id=delivery_id, success=True))
+            continue
+
+        now = datetime.utcnow()
+        db_record.status = payload.status
+        db_record.updated_at = now
+        db.commit()
+        db.refresh(db_record)
+
+        record_history_entry(
+            db,
+            delivery_id=db_record.id,
+            changed_by_user_id=current_user.id,
+            changed_by_display_name=current_user.display_name,
+            old_status=old_status,
+            new_status=payload.status,
+            changed_at=now,
+            note="Updated via bulk action",
+        )
+        notify_customer_of_status_change(
+            db,
+            delivery_id=db_record.id,
+            order_id=db_record.order_id,
+            new_status=db_record.status.value,
+            customer_email=db_record.customer_email,
+            customer_phone=db_record.customer_phone,
+            customer_id=db_record.customer_id,
+        )
+        broadcast_sync(tracking_room(db_record.id), {"event": "status_changed", "status": db_record.status.value})
+
+        if payload.status == DeliveryStatus.cancelled:
+            refund_order_for_delivery(db, db_record.id)
+        if payload.status == DeliveryStatus.delivered:
+            handle_return_pickup_completion(db, db_record)
+
+        results.append(BulkActionItemResult(delivery_id=delivery_id, success=True))
+
+    broadcast_sync(dispatcher_queue_room(current_user.org_id), {"event": "queue_changed", "reason": "bulk_status_update"})
+
+    success_count = sum(1 for r in results if r.success)
+    return BulkActionResponse(results=results, success_count=success_count, failure_count=len(results) - success_count)
+
+
+@router.patch("/bulk-assign-agent", response_model=BulkActionResponse)
+def bulk_assign_agent(
+    payload: BulkAssignAgentRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_dispatcher),
+):
+    """
+    Reassign many deliveries to one agent at once. Unlike
+    assign_agent_to_delivery() (which only accepts still-`pending`
+    customer orders, since that's a narrower "first assignment" flow),
+    this is a general reassignment: it works on a delivery in any
+    status, including one already assigned to a different agent
+    mid-route — a dispatcher pulling several deliveries off an agent
+    who called in sick is exactly the kind of situation bulk reassign
+    exists for. A delivery still sitting in `pending` also gets bumped
+    to `picked_up`, matching what assigning it normally does; a
+    delivery already further along (picked_up/out_for_delivery) just
+    gets its agent_id swapped, since its status genuinely hasn't
+    changed by being handed to someone else.
+    """
+    target_agent = db.query(UserDB).filter(
+        UserDB.id == payload.agent_id,
+        UserDB.org_id == current_user.org_id,
+    ).first()
+    if not target_agent or target_agent.role != UserRole.agent:
+        raise HTTPException(status_code=400, detail="The selected agent doesn't exist in your organization.")
+
+    results: List[BulkActionItemResult] = []
+
+    for delivery_id in payload.delivery_ids:
+        db_record = db.query(DeliveryRecordDB).filter(
+            DeliveryRecordDB.id == delivery_id,
+            DeliveryRecordDB.org_id == current_user.org_id,
+        ).first()
+        if not db_record:
+            results.append(BulkActionItemResult(delivery_id=delivery_id, success=False, error="Not found"))
+            continue
+        if db_record.status in (DeliveryStatus.delivered, DeliveryStatus.cancelled):
+            results.append(BulkActionItemResult(
+                delivery_id=delivery_id, success=False,
+                error=f"Already {db_record.status.value} — can't reassign.",
+            ))
+            continue
+
+        old_status = db_record.status
+        old_agent_id = db_record.agent_id
+        now = datetime.utcnow()
+
+        db_record.agent_id = target_agent.id
+        if old_status == DeliveryStatus.pending:
+            db_record.status = DeliveryStatus.picked_up
+        db_record.updated_at = now
+        db.commit()
+        db.refresh(db_record)
+
+        record_history_entry(
+            db,
+            delivery_id=db_record.id,
+            changed_by_user_id=current_user.id,
+            changed_by_display_name=current_user.display_name,
+            old_status=old_status,
+            new_status=db_record.status,
+            changed_at=now,
+            note=f"Reassigned to {target_agent.display_name} via bulk action" if old_agent_id else f"Assigned to {target_agent.display_name} via bulk action",
+        )
+        notify_agent_of_new_assignment(db, delivery_id=db_record.id, order_id=db_record.order_id, agent_id=target_agent.id)
+        broadcast_sync(tracking_room(db_record.id), {"event": "status_changed", "status": db_record.status.value})
+
+        results.append(BulkActionItemResult(delivery_id=delivery_id, success=True))
+
+    broadcast_sync(dispatcher_queue_room(current_user.org_id), {"event": "queue_changed", "reason": "bulk_reassign"})
+
+    success_count = sum(1 for r in results if r.success)
+    return BulkActionResponse(results=results, success_count=success_count, failure_count=len(results) - success_count)
+
+
 @router.patch("/{delivery_id}", response_model=DeliveryRecordOut)
 def update_delivery(
     delivery_id: str,

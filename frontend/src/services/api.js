@@ -661,6 +661,28 @@ export async function assignAgentToDelivery(token, deliveryId, agentId) {
   return data;
 }
 
+export async function bulkUpdateDeliveryStatus(token, deliveryIds, status) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/bulk-status`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify({ delivery_ids: deliveryIds, status }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Bulk status update failed");
+  return data; // { results, success_count, failure_count }
+}
+
+export async function bulkAssignAgent(token, deliveryIds, agentId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/bulk-assign-agent`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify({ delivery_ids: deliveryIds, agent_id: agentId }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Bulk reassign failed");
+  return data; // { results, success_count, failure_count }
+}
+
 export async function fetchSuggestedAgents(token, deliveryId) {
   const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/suggested-agents`, {
     headers: authHeaders(token),
