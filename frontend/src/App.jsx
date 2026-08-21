@@ -15,6 +15,7 @@ import AuditLogViewer from "./components/AuditLogViewer";
 import ZoneManager from "./components/ZoneManager";
 import ReturnRequestsPanel from "./components/ReturnRequestsPanel";
 import TwoFactorSettings from "./components/TwoFactorSettings";
+import AccountSettings from "./components/AccountSettings";
 import LoginPage from "./components/LoginPage";
 import SignupPage from "./components/SignupPage";
 import ForgotPasswordPage from "./components/ForgotPasswordPage";
@@ -47,6 +48,7 @@ function StaffDashboard({ user }) {
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "products" && (
             <ProductManager />
           )}
+          {currentView === "account" && <AccountSettings />}
           {currentView === "security" && <TwoFactorSettings />}
         </div>
       </div>

@@ -778,6 +778,39 @@ export async function changeMyCustomerPassword(token, currentPassword, newPasswo
   return data;
 }
 
+// ---------- Staff self-service account settings (mirrors the customer equivalents above) ----------
+
+export async function fetchMyStaffProfile(token) {
+  const response = await fetch(`${API_BASE_URL}/auth/me`, {
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load your profile");
+  return data;
+}
+
+export async function updateMyStaffProfile(token, updates) {
+  const response = await fetch(`${API_BASE_URL}/auth/me`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify(updates),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update your profile");
+  return data;
+}
+
+export async function changeMyStaffPassword(token, currentPassword, newPassword) {
+  const response = await fetch(`${API_BASE_URL}/auth/me/change-password`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to change your password");
+  return data;
+}
+
 export async function deactivateUser(token, userId) {
   const response = await fetch(`${API_BASE_URL}/admin/users/${userId}/deactivate`, {
     method: "PATCH",

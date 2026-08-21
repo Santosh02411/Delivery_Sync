@@ -1770,6 +1770,66 @@ from 37). Frontend: `npm run build` clean.
 
 ---
 
+## Staff Self-Service Account Settings & Notification Dropdown Fix
+
+**What was missing:** a fresh full audit (every route file, cross-checked
+against the frontend) turned up one genuine asymmetry: customers could
+change their own password and edit their own profile while logged in
+(`/customer/me`, `/customer/me/change-password`); staff (admin/
+dispatcher/agent) had neither — only an admin resetting *someone else's*
+password, or the forgot-password email flow, which only helps when
+you're already logged out. There was no "my account" page for staff at
+all, just a 2FA settings screen. Separately, a UI bug was reported: the
+customer dashboard's notification panel rendered as a plain block in
+the page's normal content flow instead of as a proper dropdown, so it
+could appear stacked oddly against whatever view was currently active.
+
+**Why it was needed:** an app with no known limitations shouldn't have
+one half of its user base able to self-manage their account and the
+other half locked out of it entirely — this is the same class of gap
+customer forgot-password was, just on the other side of the app. The
+notification overlap was a straightforward visual bug worth fixing on
+its own merits.
+
+**What it does:**
+
+*Staff account settings:* `GET/PATCH /auth/me` and
+`POST /auth/me/change-password`, added right next to `get_current_user`
+in `routes/auth.py` and mirroring `routes/customer_auth.py`'s
+`/customer/me` endpoints field-for-field — same current-password
+verification, same 6-character minimum, same "email already used by
+another account" check. Deliberately excludes `username` from what's
+editable: it's the app's login identifier, and letting a logged-in user
+change it would need the same collision/audit-trail handling account
+renames always require, without anything about self-service editing
+actually needing it — a display name change covers the actual use case
+("show a different name to my team"). New `AccountSettings.jsx` (mirrors
+`CustomerDashboard.jsx`'s `ProfilePanel` exactly), reachable via a new
+"My Account" sidebar link for all three staff roles, right above the
+existing "Security" (2FA) link — a separate page from 2FA on purpose,
+since "who am I / what's my password" and "how do I log in" are
+different concerns someone might visit independently.
+
+*Notification dropdown fix:* the notification panel is now `position:
+fixed`, anchored near the sidebar's Notifications trigger button, with
+a transparent click-outside-to-close backdrop and a close (×) button —
+completely decoupled from the page's document flow, so it always
+appears in the same place regardless of scroll position or which
+dashboard tab is active. Same idea the existing mobile
+`.sidebar-overlay` pattern already used elsewhere in the file. Collapses
+to a full-width bottom sheet under 768px.
+
+**Tests:** `backend/tests/test_staff_account_settings.py` (9 new tests)
+— profile fetch, display-name/email update (including a partial update
+that leaves the untouched field alone), empty-name and email-collision
+rejection, a full change-password cycle verified by actually logging in
+with the old password (fails) and the new one (succeeds), wrong-current-
+password and too-short-new-password rejection, and an auth-required
+check across all three endpoints. Full suite: **77/77 passing** (up
+from 68). Frontend: `npm run build` clean.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

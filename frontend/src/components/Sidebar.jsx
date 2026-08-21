@@ -66,6 +66,7 @@ export default function Sidebar({ activeView, onNavigate }) {
   const agentLinks = [
     { key: "deliveries", label: "My Deliveries", icon: "\u25A4" },
     { key: "performance", label: "Performance", icon: "\u25CE" },
+    { key: "account", label: "My Account", icon: "\u25CB" },
     { key: "security", label: "Security", icon: "\u26BF" },
   ];
 
@@ -73,6 +74,7 @@ export default function Sidebar({ activeView, onNavigate }) {
     { key: "dashboard", label: "Dashboard", icon: "\u25A4" },
     { key: "products", label: "Products", icon: "\u25A3" },
     { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
+    { key: "account", label: "My Account", icon: "\u25CB" },
     { key: "security", label: "Security", icon: "\u26BF" },
   ];
 
@@ -84,6 +86,7 @@ export default function Sidebar({ activeView, onNavigate }) {
     { key: "zones", label: "Zones", icon: "\u2b21" },
     { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
     { key: "audit-log", label: "Audit Log", icon: "\u2637" },
+    { key: "account", label: "My Account", icon: "\u25CB" },
     { key: "security", label: "Security", icon: "\u26BF" },
   ];
 
