@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { forgotPasswordRequest, customerForgotPasswordRequest } from "../services/authApi";
 import { useTheme } from "../context/ThemeContext";
+import Captcha from "./Captcha";
 import "../styles/auth.css";
 
 export default function ForgotPasswordPage({ onBackToLogin, accountType = "staff" }) {
@@ -9,6 +10,7 @@ export default function ForgotPasswordPage({ onBackToLogin, accountType = "staff
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [captchaToken, setCaptchaToken] = useState(null);
   const isCustomer = accountType === "customer";
 
   async function handleSubmit(e) {
@@ -18,8 +20,8 @@ export default function ForgotPasswordPage({ onBackToLogin, accountType = "staff
     setIsSubmitting(true);
     try {
       const result = isCustomer
-        ? await customerForgotPasswordRequest(email)
-        : await forgotPasswordRequest(email);
+        ? await customerForgotPasswordRequest(email, captchaToken)
+        : await forgotPasswordRequest(email, captchaToken);
       setMessage(result.message);
     } catch (err) {
       setError(err.message);
@@ -53,6 +55,8 @@ export default function ForgotPasswordPage({ onBackToLogin, accountType = "staff
                 autoFocus
               />
             </div>
+
+            <Captcha onVerify={setCaptchaToken} />
 
             {error && <p className="auth-error">{error}</p>}
 

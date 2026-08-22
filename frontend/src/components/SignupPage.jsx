@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useTheme } from "../context/ThemeContext";
+import Captcha from "./Captcha";
 import "../styles/auth.css";
 
 // Single unified "I am a..." choice — replaces the old two-step
@@ -41,6 +42,8 @@ export default function SignupPage({ onSwitchToLogin, initialAccountType }) {
   const [customerEmail, setCustomerEmail] = useState("");
   const [customerPassword, setCustomerPassword] = useState("");
 
+  const [captchaToken, setCaptchaToken] = useState(null);
+
   const isCustomer = iAmA === "customer";
   const isAdmin = iAmA === "admin";
   // agent/dispatcher always join an existing org via invite code;
@@ -60,6 +63,7 @@ export default function SignupPage({ onSwitchToLogin, initialAccountType }) {
         display_name: displayName,
         org_name: isAdmin ? orgName : undefined,
         invite_code: isJoiningOrg ? inviteCode : undefined,
+        captcha_token: captchaToken,
       });
     } catch (err) {
       setError(err.message);
@@ -73,7 +77,7 @@ export default function SignupPage({ onSwitchToLogin, initialAccountType }) {
     setError("");
     setIsSubmitting(true);
     try {
-      await customerSignup(customerEmail, customerPassword, customerName);
+      await customerSignup(customerEmail, customerPassword, customerName, captchaToken);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -120,6 +124,8 @@ export default function SignupPage({ onSwitchToLogin, initialAccountType }) {
                 <input type="password" value={customerPassword} onChange={(e) => setCustomerPassword(e.target.value)} required />
               </div>
 
+              <Captcha onVerify={setCaptchaToken} />
+
               {error && <p className="auth-error">{error}</p>}
 
               <button type="submit" className="auth-submit-btn" disabled={isSubmitting}>
@@ -161,6 +167,8 @@ export default function SignupPage({ onSwitchToLogin, initialAccountType }) {
                 <input type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} required />
               </div>
             )}
+
+            <Captcha onVerify={setCaptchaToken} />
 
             {error && <p className="auth-error">{error}</p>}
 

@@ -1830,6 +1830,93 @@ from 68). Frontend: `npm run build` clean.
 
 ---
 
+## Security Hardening: Email Verification, CAPTCHA, and Refresh-Token Rotation
+
+**What was missing:** a self-audit turned up three real security gaps
+relative to what a production-minded app would have: no email
+verification at all (anyone could sign up with an email they don't
+own), no bot protection beyond rate limiting on the public signup/
+forgot-password endpoints, and access tokens that lasted 24 hours with
+no way to revoke one early if it leaked — a JWT, once issued, stays
+valid until it expires no matter what happens server-side afterward.
+
+**Why it was needed:** these are the differences between "works for a
+demo" and "the kind of auth system a real product would ship" — each
+is a standard line item in a security review, and having all three
+missing was the single biggest gap left in the project relative to its
+otherwise thorough feature set.
+
+**What it does:**
+
+*Email verification (staff + customer):* a new `email_verified` column
+on both `UserDB` and `CustomerDB`, with a verification email sent
+automatically at signup and `POST /auth/verify-email` +
+`POST /auth/resend-verification` (and customer equivalents) to
+complete it. Deliberately does NOT block login — the same trade-off
+Slack, GitHub, and most real products make: an admin creating an org
+needs to use their own dashboard immediately, not wait on an email
+round-trip, and SMTP itself is optional in this project (falls back to
+console-logging the email), so a hard gate would make the app
+partially unusable without it configured. What it does give: a real,
+checkable flag, and a dismissible banner with a one-click resend in
+both the staff shell and the customer dashboard.
+
+*CAPTCHA:* `services/captcha.py`, a genuine Google reCAPTCHA v2
+integration modeled deliberately on `services/payment.py`'s existing
+"optional integration, no-ops if unconfigured" pattern — set
+`RECAPTCHA_SECRET_KEY` and it calls Google's siteverify API for real;
+leave it unset (the default) and every check passes automatically,
+logged once at startup so the current mode is never a silent gap.
+Wired into staff + customer signup and forgot-password. The frontend's
+`Captcha.jsx` widget only renders if `VITE_RECAPTCHA_SITE_KEY` is set,
+degrading the same way independently on that side.
+
+*Refresh-token rotation:* access tokens shortened from 24 hours to 30
+minutes (`services/auth.py`). New `RefreshTokenDB`/
+`CustomerRefreshTokenDB` tables hold long-lived (30-day), SHA-256-hashed
+refresh tokens — hashed with a fast algorithm rather than bcrypt on
+purpose, since the token is already high-entropy random data, not a
+human password; see that file's docstring. Every use rotates the token
+(old one marked spent, pointing at its replacement); presenting an
+already-rotated token is treated as a theft signal and revokes the
+entire remaining chain for that user, not just the one token. New
+`POST /auth/refresh` and `POST /auth/logout` (and customer
+equivalents) — logout now genuinely revokes server-side instead of
+just clearing local storage, which is the actual "revoke early"
+capability a JWT-only scheme never had. `AuthContext.jsx`/
+`CustomerAuthContext.jsx` persist the refresh token and silently renew
+the session every 20 minutes in the background, so the shorter access-
+token life is invisible in normal use.
+
+**A pre-existing test-infrastructure bug found along the way:**
+`test_rate_limiting.py` deliberately reloads Python's module cache to
+test with rate limiting turned on (see that file's own docstring for
+why). Doing so left `conftest.py`'s shared `client` fixture wired to a
+stale `get_db` function reference for every test that ran after it in
+the same session — silently making its database-isolation override a
+no-op and leaking those tests' writes into the real
+`backend/database.db` instead of each test's isolated file. This
+predates this session's changes and had gone unnoticed because nothing
+in the existing suite happened to check for state that leaked writes
+would corrupt; two of this session's new tests (checking for a
+duplicate email) were the first to actually trip over it. Fixed by
+re-fetching `get_db` fresh inside the `client` fixture on every call
+instead of relying on a reference captured once at collection time —
+see `PROJECT_WORKFLOW.md` for the full diagnosis.
+
+**Tests:** three new files — `test_email_verification.py` (9 tests:
+unverified-by-default, non-blocking login, full verify cycle,
+invalid/expired/reused tokens, resend and its already-verified
+short-circuit, auth-required), `test_captcha.py` (6 tests: no-op mode
+end to end through real signup/forgot-password calls, plus the
+configured-mode logic unit-tested directly with a mocked HTTP call),
+and `test_refresh_tokens.py` (8 tests: token issuance, rotation, reuse-
+triggered chain revocation, expiry, and logout revocation, for both
+staff and customer). Full suite: **100/100 passing** (up from 77).
+Frontend: `npm run build` clean.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

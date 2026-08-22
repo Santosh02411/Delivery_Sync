@@ -3,7 +3,9 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import { CustomerAuthProvider, useCustomerAuth } from "./context/CustomerAuthContext";
 import { ToastProvider, useToast } from "./context/ToastContext";
 import { ThemeProvider } from "./context/ThemeContext";
+import { resendVerificationRequest, customerResendVerificationRequest } from "./services/authApi";
 import ConnectivityBanner from "./components/ConnectivityBanner";
+import VerificationBanner from "./components/VerificationBanner";
 import Sidebar from "./components/Sidebar";
 import AgentDeliveryList from "./components/AgentDeliveryList";
 import AgentPerformance from "./components/AgentPerformance";
@@ -20,10 +22,12 @@ import LoginPage from "./components/LoginPage";
 import SignupPage from "./components/SignupPage";
 import ForgotPasswordPage from "./components/ForgotPasswordPage";
 import ResetPasswordPage from "./components/ResetPasswordPage";
+import VerifyEmailPage from "./components/VerifyEmailPage";
 import TrackingPage from "./components/TrackingPage";
 import CustomerDashboard from "./components/CustomerDashboard";
 
 function StaffDashboard({ user }) {
+  const { token } = useAuth();
   const [activeView, setActiveView] = useState(null);
   const currentView = activeView || (user.role === "agent" ? "deliveries" : "dashboard");
 
@@ -33,6 +37,9 @@ function StaffDashboard({ user }) {
       <div className="main-content">
         <ConnectivityBanner />
         <div style={{ marginTop: "20px" }}>
+          {!user.email_verified && (
+            <VerificationBanner onResend={() => resendVerificationRequest(token)} />
+          )}
           {user.role === "agent" && currentView === "deliveries" && <AgentDeliveryList />}
           {user.role === "agent" && currentView === "performance" && <AgentPerformance />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "dashboard" && (
@@ -105,6 +112,8 @@ function RootRouter() {
   const urlParams = new URLSearchParams(window.location.search);
   const resetToken = urlParams.get("reset_token");
   const customerResetToken = urlParams.get("customer_reset_token");
+  const verifyEmailToken = urlParams.get("verify_email_token");
+  const verifyCustomerEmailToken = urlParams.get("verify_customer_email_token");
   const trackId = urlParams.get("track");
 
   if (trackId) return <TrackingPage deliveryId={trackId} />;
@@ -114,6 +123,19 @@ function RootRouter() {
       <ResetPasswordPage
         token={resetToken || customerResetToken}
         accountType={customerResetToken ? "customer" : "staff"}
+        onDone={() => {
+          window.history.replaceState({}, "", window.location.pathname);
+          window.location.reload();
+        }}
+      />
+    );
+  }
+
+  if (verifyEmailToken || verifyCustomerEmailToken) {
+    return (
+      <VerifyEmailPage
+        token={verifyEmailToken || verifyCustomerEmailToken}
+        accountType={verifyCustomerEmailToken ? "customer" : "staff"}
         onDone={() => {
           window.history.replaceState({}, "", window.location.pathname);
           window.location.reload();

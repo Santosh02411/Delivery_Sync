@@ -630,6 +630,64 @@ could have changed."
 
 ---
 
+## A Test-Isolation Bug That Was Already There, Waiting
+
+Three new backend test files landed alongside the security-hardening
+work. All three passed individually. Run as part of the FULL suite,
+four tests failed — two of them in a file (`test_staff_account_settings.py`)
+that hadn't been touched this session at all, with an error that made
+no sense on its face: "Another account already uses that email," for
+an email literal that appeared nowhere else in the entire test suite.
+
+Bisecting which combination of test files triggered it narrowed the
+cause to one specific file always being present: `test_rate_limiting.py`.
+That file has a legitimate, documented reason to do something unusual —
+slowapi's rate limiter reads a `TESTING` environment variable at
+*import time* to decide whether it's active at all, and every other
+test file wants it OFF (hammering an endpoint in a tight test loop
+isn't a real abuse pattern worth tripping over). So this one file
+flips `TESTING` on, and to make that take effect, it deletes `main`
+and every `app.*` module from Python's `sys.modules` cache and
+reimports them fresh — then does the same deletion again on its own
+teardown, so the next test in the session gets a normal, un-rate-limited
+reimport.
+
+The bug was in what that reimport does to `conftest.py`'s shared
+`client` fixture. That fixture overrides FastAPI's `get_db` dependency
+so every test talks to its own isolated, temporary SQLite file instead
+of the real database — but it was keyed to a `get_db` function
+reference imported once, at module collection time, before any test
+runs. Once `test_rate_limiting.py` forced a fresh reimport of
+`app.db.session`, every route in the newly-reimported `main` was wired
+to a *new* `get_db` function object — a different one, in memory,
+than the stale reference `conftest.py` was still overriding. FastAPI's
+dependency-override dict is keyed by exact object identity, not by
+name, so the override silently stopped matching anything. Every test
+that ran afterward kept working — no error, no crash — while quietly
+writing into the real `backend/database.db` file instead of its own
+disposable one.
+
+That's what made it invisible for as long as it was: a leak with no
+symptom, right up until a test happened to check for state that a leak
+would actually corrupt. Two of this session's new tests did exactly
+that — checking that a second signup can't reuse an email already
+taken — and got tripped up by a row that had genuinely, accidentally
+persisted from an earlier, unrelated test run days before, sitting in
+a real file on disk the whole time.
+
+The fix was small once found: re-fetch `get_db` from `app.db.session`
+*inside* the `client` fixture, every time it runs, instead of trusting
+a reference captured once before any module-reloading trickery could
+have made it stale. The real lesson is closer to last session's
+route-ordering bug than it might look: something that reads as pure
+infrastructure — a shared pytest fixture nobody was actively
+editing — can still be quietly wrong in a way that only a new test,
+checking something nobody had checked before, will ever surface. "This
+file didn't change" is not the same claim as "this file's behavior
+didn't change" when anything upstream of it did.
+
+---
+
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something

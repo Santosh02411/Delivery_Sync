@@ -4,17 +4,17 @@
 
 const API_BASE_URL = "http://127.0.0.1:8000";
 
-export async function signupRequest({ username, email, password, role, display_name, org_name, invite_code }) {
+export async function signupRequest({ username, email, password, role, display_name, org_name, invite_code, captcha_token }) {
   const response = await fetch(`${API_BASE_URL}/auth/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, email, password, role, display_name, org_name, invite_code }),
+    body: JSON.stringify({ username, email, password, role, display_name, org_name, invite_code, captcha_token }),
   });
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.detail || "Signup failed.");
   }
-  return data; // { access_token, token_type, user, org_invite_code }
+  return data; // { access_token, refresh_token, token_type, user, org_invite_code }
 }
 
 export async function loginRequest({ username, password }) {
@@ -27,7 +27,7 @@ export async function loginRequest({ username, password }) {
   if (!response.ok) {
     throw new Error(data.detail || "Login failed.");
   }
-  return data; // { access_token, user } OR { requires_2fa: true, challenge_token }
+  return data; // { access_token, refresh_token, user } OR { requires_2fa: true, challenge_token }
 }
 
 export async function verifyTwoFactorLoginRequest(challengeToken, code) {
@@ -40,14 +40,62 @@ export async function verifyTwoFactorLoginRequest(challengeToken, code) {
   if (!response.ok) {
     throw new Error(data.detail || "Verification failed.");
   }
-  return data; // { access_token, token_type, user }
+  return data; // { access_token, refresh_token, token_type, user }
 }
 
-export async function forgotPasswordRequest(email) {
+export async function refreshTokenRequest(refreshToken) {
+  const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Session refresh failed.");
+  }
+  return data; // { access_token, refresh_token }
+}
+
+export async function logoutRequest(refreshToken) {
+  // Best-effort — a failed logout call server-side should never block
+  // the frontend from clearing its own local session.
+  try {
+    await fetch(`${API_BASE_URL}/auth/logout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+  } catch {
+    // ignore — see comment above
+  }
+}
+
+export async function verifyEmailRequest(token) {
+  const response = await fetch(`${API_BASE_URL}/auth/verify-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Verification failed.");
+  return data; // { message }
+}
+
+export async function resendVerificationRequest(token) {
+  const response = await fetch(`${API_BASE_URL}/auth/resend-verification`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to resend verification email.");
+  return data; // { message }
+}
+
+export async function forgotPasswordRequest(email, captchaToken) {
   const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, captcha_token: captchaToken }),
   });
   const data = await response.json();
   if (!response.ok) {
@@ -69,11 +117,55 @@ export async function resetPasswordRequest(token, newPassword) {
   return data; // { message }
 }
 
-export async function customerForgotPasswordRequest(email) {
+export async function customerRefreshTokenRequest(refreshToken) {
+  const response = await fetch(`${API_BASE_URL}/customer/refresh-token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Session refresh failed.");
+  return data; // { access_token, refresh_token }
+}
+
+export async function customerLogoutRequest(refreshToken) {
+  try {
+    await fetch(`${API_BASE_URL}/customer/logout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+  } catch {
+    // best-effort, see logoutRequest's comment above
+  }
+}
+
+export async function customerVerifyEmailRequest(token) {
+  const response = await fetch(`${API_BASE_URL}/customer/verify-email`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Verification failed.");
+  return data; // { message }
+}
+
+export async function customerResendVerificationRequest(token) {
+  const response = await fetch(`${API_BASE_URL}/customer/resend-verification`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to resend verification email.");
+  return data; // { message }
+}
+
+export async function customerForgotPasswordRequest(email, captchaToken) {
   const response = await fetch(`${API_BASE_URL}/customer/forgot-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, captcha_token: captchaToken }),
   });
   const data = await response.json();
   if (!response.ok) {
