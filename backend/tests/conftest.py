@@ -77,8 +77,23 @@ def client(db_engine):
     # Import the app only now (after TESTING=1 is set above) so every
     # module-level config read happens with test settings in place.
     from main import app
+    # Re-fetch get_db from app.db.session RIGHT HERE, rather than using
+    # the module-level import captured once at collection time above.
+    # test_rate_limiting.py's rate_limited_client fixture deliberately
+    # deletes `main` and every `app.*` module from sys.modules to force
+    # a reimport with rate limiting enabled — and afterward deletes them
+    # again so the NEXT test reimports fresh, undoing that. If a test
+    # after it in the same session reused the get_db reference captured
+    # at collection time, the override below would be keyed to a
+    # now-stale function object that the freshly-reimported routes are
+    # no longer wired to — silently making the override a no-op and
+    # leaking that test's writes into the real default database instead
+    # of this fixture's isolated one. Re-importing get_db here, every
+    # time, keeps the override correctly matched to whatever `main` is
+    # currently loaded, regardless of what ran before it in the session.
+    from app.db.session import get_db as current_get_db
 
-    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[current_get_db] = override_get_db
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
