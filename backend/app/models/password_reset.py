@@ -8,6 +8,7 @@ actually used should ever work.
 
 import uuid
 from datetime import datetime, timedelta
+from typing import Optional
 
 from sqlalchemy import Column, String, DateTime, Boolean
 from pydantic import BaseModel
@@ -33,6 +34,7 @@ class PasswordResetTokenDB(Base):
 
 class ForgotPasswordRequest(BaseModel):
     email: str
+    captcha_token: Optional[str] = None
 
 
 class ResetPasswordRequest(BaseModel):

@@ -48,6 +48,26 @@ def send_customer_password_reset_email(to_email: str, reset_link: str) -> None:
     _send_email(to_email, subject, body)
 
 
+def send_verification_email(to_email: str, verify_link: str) -> None:
+    subject = "Verify your Delivery Sync email address"
+    body = (
+        f"Please confirm this is your email address by clicking the link below "
+        f"(expires in 48 hours):\n{verify_link}\n\n"
+        f"If you didn't create a Delivery Sync account, you can safely ignore this email."
+    )
+    _send_email(to_email, subject, body)
+
+
+def send_customer_verification_email(to_email: str, verify_link: str) -> None:
+    subject = "Verify your Delivery Sync account email"
+    body = (
+        f"Please confirm this is your email address by clicking the link below "
+        f"(expires in 48 hours):\n{verify_link}\n\n"
+        f"If you didn't create a Delivery Sync account, you can safely ignore this email."
+    )
+    _send_email(to_email, subject, body)
+
+
 def send_status_notification_email(to_email: str, order_id: str, status_label: str, tracking_link: str) -> None:
     subject = f"Update on your delivery {order_id}"
     body = (

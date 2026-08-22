@@ -42,6 +42,14 @@ class UserDB(Base):
     org_id = Column(String, index=True, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
 
+    # Set True once this account's email address has been confirmed via
+    # the link sent at signup (see routes/auth.py's /verify-email). Does
+    # NOT block login — see that route's docstring for why — this is
+    # purely informational so the frontend can show a "please verify"
+    # banner and the account's own history shows whether its contact
+    # email was ever actually confirmed reachable.
+    email_verified = Column(Boolean, nullable=False, default=False)
+
     # Two-factor auth (TOTP). totp_secret is written as soon as the user
     # starts setup (see routes/auth.py's /2fa/setup) but totp_enabled
     # stays False until they prove they scanned it correctly by
@@ -83,6 +91,12 @@ class UserSignup(BaseModel):
     # invite_code to JOIN an existing one with the role chosen above.
     org_name: Optional[str] = None
     invite_code: Optional[str] = None
+    # Optional CAPTCHA response token (see services/captcha.py) — only
+    # actually checked when RECAPTCHA_SECRET_KEY is configured server-side;
+    # omit entirely in local dev, same "bring your own credentials, or it
+    # no-ops" pattern as this project's other optional integrations
+    # (Razorpay, VAPID push, Google geocoding).
+    captcha_token: Optional[str] = None
 
 
 class UserLogin(BaseModel):
@@ -98,6 +112,7 @@ class UserOut(BaseModel):
     display_name: str
     org_id: str
     is_active: bool
+    email_verified: bool = False
     totp_enabled: bool = False
     two_factor_method: str = "totp"
     area_name: Optional[str] = None
@@ -130,6 +145,7 @@ class UserPasswordChange(BaseModel):
 
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     user: UserOut
     org_invite_code: Optional[str] = None  # only present when a NEW org was just created
@@ -145,6 +161,7 @@ class LoginResult(BaseModel):
     identity for an account with 2FA turned on).
     """
     access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     user: Optional[UserOut] = None
     org_invite_code: Optional[str] = None

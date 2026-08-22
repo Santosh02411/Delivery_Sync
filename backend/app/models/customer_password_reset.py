@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import Column, String, DateTime, Boolean
 from pydantic import BaseModel
+from typing import Optional
 
 from app.db.session import Base
 
@@ -39,6 +40,7 @@ class CustomerPasswordResetTokenDB(Base):
 
 class CustomerForgotPasswordRequest(BaseModel):
     email: str
+    captcha_token: Optional[str] = None
 
 
 class CustomerResetPasswordRequest(BaseModel):

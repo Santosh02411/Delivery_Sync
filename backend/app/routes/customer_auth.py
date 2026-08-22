@@ -16,17 +16,48 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.customer import CustomerDB, CustomerSignup, CustomerLogin, CustomerTokenResponse, CustomerOut, CustomerProfileUpdate, CustomerPasswordChange
 from app.models.customer_password_reset import CustomerPasswordResetTokenDB, CustomerForgotPasswordRequest, CustomerResetPasswordRequest
+from app.models.customer_email_verification import CustomerEmailVerificationTokenDB, CustomerVerifyEmailRequest
+from app.models.customer_refresh_token import CustomerRefreshTokenDB, CustomerRefreshTokenRequest, CustomerRefreshTokenResponse
 from app.models.delivery import DeliveryRecordDB
-from app.services.auth import hash_password, verify_password, create_access_token, decode_access_token
-from app.services.email import send_customer_password_reset_email
+from app.services.auth import (
+    hash_password,
+    verify_password,
+    create_access_token,
+    decode_access_token,
+    generate_refresh_token,
+    hash_refresh_token,
+)
+from app.services.email import send_customer_password_reset_email, send_customer_verification_email
+from app.services.captcha import verify_captcha, IS_CONFIGURED as CAPTCHA_CONFIGURED
 from app.services.rate_limiter import limiter
 
 router = APIRouter(prefix="/customer", tags=["customer-auth"])
+
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+
+
+def _issue_customer_refresh_token(db: Session, customer_id: str) -> str:
+    raw_token = generate_refresh_token()
+    db.add(CustomerRefreshTokenDB(customer_id=customer_id, token_hash=hash_refresh_token(raw_token)))
+    db.commit()
+    return raw_token
+
+
+def _issue_and_send_customer_verification_email(db: Session, customer: CustomerDB) -> None:
+    verification = CustomerEmailVerificationTokenDB(customer_id=customer.id)
+    db.add(verification)
+    db.commit()
+    db.refresh(verification)
+    verify_link = f"{FRONTEND_URL}/?verify_customer_email_token={verification.token}"
+    send_customer_verification_email(customer.email, verify_link)
 
 
 @router.post("/signup", response_model=CustomerTokenResponse)
 @limiter.limit("5/minute")
 def customer_signup(request: Request, payload: CustomerSignup, db: Session = Depends(get_db)):
+    if CAPTCHA_CONFIGURED and not verify_captcha(payload.captcha_token):
+        raise HTTPException(status_code=400, detail="CAPTCHA verification failed. Please try again.")
+
     existing = db.query(CustomerDB).filter(CustomerDB.email == payload.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="An account with that email already exists. Try logging in.")
@@ -52,8 +83,11 @@ def customer_signup(request: Request, payload: CustomerSignup, db: Session = Dep
     ).update({"customer_id": customer.id})
     db.commit()
 
+    _issue_and_send_customer_verification_email(db, customer)
+
     token = create_access_token({"customer_id": customer.id})
-    return {"access_token": token, "customer": customer}
+    refresh_token = _issue_customer_refresh_token(db, customer.id)
+    return {"access_token": token, "refresh_token": refresh_token, "customer": customer}
 
 
 @router.post("/login", response_model=CustomerTokenResponse)
@@ -64,10 +98,8 @@ def customer_login(request: Request, payload: CustomerLogin, db: Session = Depen
         raise HTTPException(status_code=401, detail="Incorrect email or password.")
 
     token = create_access_token({"customer_id": customer.id})
-    return {"access_token": token, "customer": customer}
-
-
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+    refresh_token = _issue_customer_refresh_token(db, customer.id)
+    return {"access_token": token, "refresh_token": refresh_token, "customer": customer}
 
 
 @router.post("/forgot-password")
@@ -85,6 +117,9 @@ def customer_forgot_password(request: Request, payload: CustomerForgotPasswordRe
     GENERIC_RESPONSE = {
         "message": "If that email is registered, a password reset link has been sent."
     }
+
+    if CAPTCHA_CONFIGURED and not verify_captcha(payload.captcha_token):
+        raise HTTPException(status_code=400, detail="CAPTCHA verification failed. Please try again.")
 
     customer = db.query(CustomerDB).filter(CustomerDB.email == payload.email).first()
     if not customer:
@@ -147,6 +182,89 @@ def get_current_customer(
         raise HTTPException(status_code=401, detail="Your session expired. Log in again.")
 
     return customer
+
+
+@router.post("/verify-email")
+def verify_customer_email(payload: CustomerVerifyEmailRequest, db: Session = Depends(get_db)):
+    """Mirrors routes/auth.py's /auth/verify-email — same non-blocking design, see that docstring."""
+    verification = db.query(CustomerEmailVerificationTokenDB).filter(
+        CustomerEmailVerificationTokenDB.token == payload.token
+    ).first()
+
+    if not verification:
+        raise HTTPException(status_code=400, detail="This verification link is invalid.")
+    if verification.used:
+        raise HTTPException(status_code=400, detail="This verification link has already been used.")
+    if verification.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="This verification link has expired. Request a new one.")
+
+    customer = db.query(CustomerDB).filter(CustomerDB.id == verification.customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=400, detail="This verification link is invalid.")
+
+    customer.email_verified = True
+    verification.used = True
+    db.commit()
+
+    return {"message": "Email verified."}
+
+
+@router.post("/resend-verification")
+@limiter.limit("3/minute")
+def resend_customer_verification(request: Request, current_customer: CustomerDB = Depends(get_current_customer), db: Session = Depends(get_db)):
+    if current_customer.email_verified:
+        return {"message": "This account's email is already verified."}
+    _issue_and_send_customer_verification_email(db, current_customer)
+    return {"message": "Verification email sent."}
+
+
+@router.post("/refresh-token", response_model=CustomerRefreshTokenResponse)
+@limiter.limit("30/minute")
+def refresh_customer_access_token(request: Request, payload: CustomerRefreshTokenRequest, db: Session = Depends(get_db)):
+    """Mirrors routes/auth.py's /auth/refresh — same rotation + theft-detection design, see models/refresh_token.py."""
+    token_hash = hash_refresh_token(payload.refresh_token)
+    stored = db.query(CustomerRefreshTokenDB).filter(CustomerRefreshTokenDB.token_hash == token_hash).first()
+
+    if not stored:
+        raise HTTPException(status_code=401, detail="Invalid refresh token. Log in again.")
+
+    if stored.used or stored.revoked_at is not None:
+        db.query(CustomerRefreshTokenDB).filter(
+            CustomerRefreshTokenDB.customer_id == stored.customer_id,
+            CustomerRefreshTokenDB.revoked_at.is_(None),
+        ).update({"revoked_at": datetime.utcnow()})
+        db.commit()
+        raise HTTPException(status_code=401, detail="This session was revoked. Log in again.")
+
+    if stored.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=401, detail="Your session has expired. Log in again.")
+
+    customer = db.query(CustomerDB).filter(CustomerDB.id == stored.customer_id).first()
+    if not customer:
+        raise HTTPException(status_code=401, detail="Invalid refresh token. Log in again.")
+
+    new_raw_token = generate_refresh_token()
+    new_row = CustomerRefreshTokenDB(customer_id=customer.id, token_hash=hash_refresh_token(new_raw_token))
+    db.add(new_row)
+    db.flush()
+
+    stored.used = True
+    stored.replaced_by_id = new_row.id
+    db.commit()
+
+    new_access_token = create_access_token({"customer_id": customer.id})
+    return {"access_token": new_access_token, "refresh_token": new_raw_token}
+
+
+@router.post("/logout")
+def customer_logout(payload: CustomerRefreshTokenRequest, db: Session = Depends(get_db)):
+    """Mirrors routes/auth.py's /auth/logout — see that docstring for why this isn't access-token-gated."""
+    token_hash = hash_refresh_token(payload.refresh_token)
+    stored = db.query(CustomerRefreshTokenDB).filter(CustomerRefreshTokenDB.token_hash == token_hash).first()
+    if stored and stored.revoked_at is None:
+        stored.revoked_at = datetime.utcnow()
+        db.commit()
+    return {"message": "Logged out."}
 
 
 @router.get("/me", response_model=CustomerOut)

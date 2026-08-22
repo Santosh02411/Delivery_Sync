@@ -9,7 +9,7 @@ model at all. This is its own simple email+password account.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime
+from sqlalchemy import Column, String, DateTime, Boolean
 from pydantic import BaseModel
 from typing import Optional
 
@@ -24,12 +24,18 @@ class CustomerDB(Base):
     hashed_password = Column(String, nullable=False)
     name = Column(String, nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    # See UserDB.email_verified's comment (models/user.py) — same idea,
+    # same "informational, not a login gate" behavior, kept as a
+    # separate column here rather than shared logic since CustomerDB and
+    # UserDB are entirely separate identity systems.
+    email_verified = Column(Boolean, nullable=False, default=False)
 
 
 class CustomerSignup(BaseModel):
     email: str
     password: str
     name: str
+    captcha_token: Optional[str] = None
 
 
 class CustomerLogin(BaseModel):
@@ -41,6 +47,7 @@ class CustomerOut(BaseModel):
     id: str
     email: str
     name: str
+    email_verified: bool = False
 
     class Config:
         from_attributes = True
@@ -67,5 +74,6 @@ class CustomerPasswordChangeRequest(BaseModel):
 
 class CustomerTokenResponse(BaseModel):
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     customer: CustomerOut

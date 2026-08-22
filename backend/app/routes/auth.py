@@ -31,22 +31,50 @@ from app.models.user import (
 from app.models.organization import OrganizationDB
 from app.models.password_reset import PasswordResetTokenDB, ForgotPasswordRequest, ResetPasswordRequest
 from app.models.email_otp import EmailOtpDB, EMAIL_OTP_EXPIRY_MINUTES, generate_numeric_code, mask_email
+from app.models.email_verification import EmailVerificationTokenDB, VerifyEmailRequest, VERIFICATION_TOKEN_EXPIRY_HOURS
+from app.models.refresh_token import RefreshTokenDB, RefreshTokenRequest, RefreshTokenResponse
 from app.services.auth import (
     hash_password,
     verify_password,
     create_access_token,
     decode_access_token,
     create_two_factor_challenge_token,
+    generate_refresh_token,
+    hash_refresh_token,
 )
 from app.services.totp import generate_secret, get_provisioning_uri, verify_code
 from app.services.rate_limiter import limiter
-from app.services.email import send_password_reset_email, send_two_factor_code_email
+from app.services.email import send_password_reset_email, send_two_factor_code_email, send_verification_email
+from app.services.captcha import verify_captcha, IS_CONFIGURED as CAPTCHA_CONFIGURED
 from datetime import datetime, timedelta
 import os
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+
+
+def _issue_refresh_token(db: Session, user_id: str) -> str:
+    """
+    Creates a new refresh token row (hash stored, not the raw value) and
+    returns the RAW token — the only place the raw value ever exists is
+    this return value and whatever the caller does with it immediately
+    (put it in a response body). It is never logged or stored anywhere
+    in plaintext.
+    """
+    raw_token = generate_refresh_token()
+    db.add(RefreshTokenDB(user_id=user_id, token_hash=hash_refresh_token(raw_token)))
+    db.commit()
+    return raw_token
+
+
+def _issue_and_send_verification_email(db: Session, user: UserDB) -> None:
+    verification = EmailVerificationTokenDB(user_id=user.id)
+    db.add(verification)
+    db.commit()
+    db.refresh(verification)
+    verify_link = f"{FRONTEND_URL}/?verify_email_token={verification.token}"
+    send_verification_email(user.email, verify_link)
 
 
 def generate_invite_code() -> str:
@@ -101,6 +129,9 @@ def _verify_and_consume_email_otp(db: Session, user_id: str, purpose: str, code:
 @router.post("/signup", response_model=TokenResponse)
 @limiter.limit("5/minute")
 def signup(request: Request, payload: UserSignup, db: Session = Depends(get_db)):
+    if CAPTCHA_CONFIGURED and not verify_captcha(payload.captcha_token):
+        raise HTTPException(status_code=400, detail="CAPTCHA verification failed. Please try again.")
+
     existing = db.query(UserDB).filter(UserDB.username == payload.username).first()
     if existing:
         raise HTTPException(status_code=400, detail="That username's already taken. Try another.")
@@ -173,8 +204,11 @@ def signup(request: Request, payload: UserSignup, db: Session = Depends(get_db))
     db.commit()
     db.refresh(user)
 
+    _issue_and_send_verification_email(db, user)
+
     token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
-    return {"access_token": token, "user": user, "org_invite_code": new_org_invite_code}
+    refresh_token = _issue_refresh_token(db, user.id)
+    return {"access_token": token, "refresh_token": refresh_token, "user": user, "org_invite_code": new_org_invite_code}
 
 
 @router.post("/login", response_model=LoginResult)
@@ -206,7 +240,8 @@ def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
         }
 
     token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
-    return {"access_token": token, "user": user, "org_invite_code": None}
+    refresh_token = _issue_refresh_token(db, user.id)
+    return {"access_token": token, "refresh_token": refresh_token, "user": user, "org_invite_code": None}
 
 
 @router.post("/2fa/resend-code")
@@ -262,7 +297,8 @@ def verify_two_factor_login(request: Request, payload: TwoFactorLoginVerify, db:
             raise HTTPException(status_code=401, detail="Incorrect code. Check your authenticator app and try again.")
 
     token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
-    return {"access_token": token, "user": user, "org_invite_code": None}
+    refresh_token = _issue_refresh_token(db, user.id)
+    return {"access_token": token, "refresh_token": refresh_token, "user": user, "org_invite_code": None}
 
 
 @router.post("/forgot-password")
@@ -280,6 +316,9 @@ def forgot_password(request: Request, payload: ForgotPasswordRequest, db: Sessio
     GENERIC_RESPONSE = {
         "message": "If that email is registered, a password reset link has been sent."
     }
+
+    if CAPTCHA_CONFIGURED and not verify_captcha(payload.captcha_token):
+        raise HTTPException(status_code=400, detail="CAPTCHA verification failed. Please try again.")
 
     user = db.query(UserDB).filter(UserDB.email == payload.email).first()
     if not user or not user.is_active:
@@ -325,6 +364,45 @@ def reset_password(request: Request, payload: ResetPasswordRequest, db: Session 
     return {"message": "Password reset successfully. You can now log in with your new password."}
 
 
+# ---------- Email verification ----------
+# Confirms the email address on a staff account is real/reachable.
+# Deliberately does NOT block login or any other action — this project
+# treats it as informational rather than a hard gate, for two reasons:
+# (1) an admin creating an org and inviting teammates needs to be able
+# to use the account immediately, not wait on an email round-trip
+# before they can even see their own dashboard; (2) SMTP is optional in
+# this project (see backend/.env.example) — locking accounts out until
+# a verification email arrives would make the app partially unusable
+# for anyone running it without SMTP configured. What this DOES give:
+# a real, checkable `email_verified` flag or the frontend to show a
+# "please verify" nudge, and a genuine confirmation step for anyone who
+# wants one — the same trade-off many real products make (Slack,
+# GitHub, etc. all let you use the product before verifying).
+
+@router.post("/verify-email")
+def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
+    verification = db.query(EmailVerificationTokenDB).filter(
+        EmailVerificationTokenDB.token == payload.token
+    ).first()
+
+    if not verification:
+        raise HTTPException(status_code=400, detail="This verification link is invalid.")
+    if verification.used:
+        raise HTTPException(status_code=400, detail="This verification link has already been used.")
+    if verification.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="This verification link has expired. Request a new one.")
+
+    user = db.query(UserDB).filter(UserDB.id == verification.user_id).first()
+    if not user:
+        raise HTTPException(status_code=400, detail="This verification link is invalid.")
+
+    user.email_verified = True
+    verification.used = True
+    db.commit()
+
+    return {"message": "Email verified."}
+
+
 def get_current_user(
     authorization: str = Header(None), db: Session = Depends(get_db)
 ) -> UserDB:
@@ -350,6 +428,87 @@ def get_current_user(
         raise HTTPException(status_code=403, detail="This account has been deactivated. Contact your admin.")
 
     return user
+
+
+@router.post("/resend-verification")
+@limiter.limit("3/minute")
+def resend_verification(request: Request, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
+    if current_user.email_verified:
+        return {"message": "This account's email is already verified."}
+    _issue_and_send_verification_email(db, current_user)
+    return {"message": "Verification email sent."}
+
+
+# ---------- Refresh tokens ----------
+# See models/refresh_token.py's module docstring for the full design
+# rationale (hashing, rotation, theft detection). This is what a client
+# calls with the refresh_token it got at login/signup, shortly before
+# its short-lived access token (30 minutes — services/auth.py) expires,
+# to get a new pair of both without making the person log in again.
+
+@router.post("/refresh", response_model=RefreshTokenResponse)
+@limiter.limit("30/minute")
+def refresh_access_token(request: Request, payload: RefreshTokenRequest, db: Session = Depends(get_db)):
+    token_hash = hash_refresh_token(payload.refresh_token)
+    stored = db.query(RefreshTokenDB).filter(RefreshTokenDB.token_hash == token_hash).first()
+
+    if not stored:
+        raise HTTPException(status_code=401, detail="Invalid refresh token. Log in again.")
+
+    if stored.used or stored.revoked_at is not None:
+        # Reuse of an already-rotated (or already-revoked) refresh
+        # token — see models/refresh_token.py's docstring: this is a
+        # theft signal, not an ordinary expiry. Revoke every other
+        # still-live token for this user too, since at this point
+        # neither the legitimate holder's copy nor whoever just
+        # presented this one can be trusted to be the only party who
+        # has it.
+        db.query(RefreshTokenDB).filter(
+            RefreshTokenDB.user_id == stored.user_id,
+            RefreshTokenDB.revoked_at.is_(None),
+        ).update({"revoked_at": datetime.utcnow()})
+        db.commit()
+        raise HTTPException(status_code=401, detail="This session was revoked. Log in again.")
+
+    if stored.expires_at < datetime.utcnow():
+        raise HTTPException(status_code=401, detail="Your session has expired. Log in again.")
+
+    user = db.query(UserDB).filter(UserDB.id == stored.user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="Invalid refresh token. Log in again.")
+
+    new_raw_token = generate_refresh_token()
+    new_row = RefreshTokenDB(user_id=user.id, token_hash=hash_refresh_token(new_raw_token))
+    db.add(new_row)
+    db.flush()  # assigns new_row.id without a second round trip
+
+    stored.used = True
+    stored.replaced_by_id = new_row.id
+    db.commit()
+
+    new_access_token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
+    return {"access_token": new_access_token, "refresh_token": new_raw_token}
+
+
+@router.post("/logout")
+def logout(payload: RefreshTokenRequest, db: Session = Depends(get_db)):
+    """
+    Server-side session revocation — this is the actual "log out"
+    beyond just the frontend clearing its local storage. Without this,
+    a refresh token issued at login would stay silently valid for its
+    full expiry (30 days) even after the person clicked "log out,"
+    since a JWT-only scheme has no way to invalidate anything before
+    its own expiry. Deliberately not authenticated with an access
+    token: logging out should work even if the access token already
+    expired, and the refresh token itself is enough proof of the
+    session being ended.
+    """
+    token_hash = hash_refresh_token(payload.refresh_token)
+    stored = db.query(RefreshTokenDB).filter(RefreshTokenDB.token_hash == token_hash).first()
+    if stored and stored.revoked_at is None:
+        stored.revoked_at = datetime.utcnow()
+        db.commit()
+    return {"message": "Logged out."}
 
 
 # ---------- Self-service account settings (staff, logged in) ----------

@@ -17,6 +17,8 @@ deployment refusing to start with the insecure default key is not.
 """
 
 import os
+import secrets
+import hashlib
 import warnings
 from datetime import datetime, timedelta, timezone
 from passlib.context import CryptContext
@@ -45,7 +47,13 @@ if SECRET_KEY == _DEV_FALLBACK_SECRET:
     )
 
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours, reasonable for a demo/portfolio project
+# Deliberately short now that refresh tokens (models/refresh_token.py)
+# exist to keep a session alive past this — see that file's docstring
+# for the full "why rotate instead of one long-lived token" reasoning.
+# A stolen access token is only ever useful for this short a window;
+# real, ongoing sessions are carried by the refresh token instead,
+# which — unlike a JWT — CAN be revoked before it expires.
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -90,3 +98,30 @@ def decode_access_token(token: str) -> dict | None:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
     except JWTError:
         return None
+
+
+# ---------- Refresh tokens ----------
+# Shared by both staff (models/refresh_token.py) and customer
+# (models/customer_refresh_token.py) sessions — the generation/hashing
+# logic is identical either way; only which DB table a route stores the
+# hash in differs.
+
+def generate_refresh_token() -> str:
+    """
+    A long, random, high-entropy opaque string — NOT a JWT. Deliberately
+    not a signed token: a refresh token's job is to be looked up against
+    a database row that can be revoked, not to be self-contained and
+    independently verifiable the way an access token is. token_urlsafe(48)
+    gives 384 bits of randomness, comfortably unguessable.
+    """
+    return secrets.token_urlsafe(48)
+
+
+def hash_refresh_token(raw_token: str) -> str:
+    """
+    SHA-256, not bcrypt — see models/refresh_token.py's docstring for
+    why a fast hash is the correct (not weaker) choice for a token that
+    is already high-entropy random data rather than a human-chosen
+    password.
+    """
+    return hashlib.sha256(raw_token.encode()).hexdigest()
