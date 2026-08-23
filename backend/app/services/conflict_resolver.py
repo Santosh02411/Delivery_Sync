@@ -10,11 +10,42 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from app.models.delivery import DeliveryRecordDB, DeliveryStatus
 from app.models.delivery_history import DeliveryHistoryDB
+from app.models.failed_delivery_reason import FailedDeliveryReasonDB
 from app.models.user import UserDB
 from app.services.history import record_history_entry
+from app.services.delivery_attempts import record_delivery_attempt, ATTEMPT_OUTCOMES
 from app.services.notifications import notify_customer_of_status_change
 from app.services.returns_workflow import handle_return_pickup_completion
 from app.services.websocket_manager import broadcast_sync, tracking_room
+
+
+def _log_synced_attempt(db: Session, db_record: DeliveryRecordDB, agent_id: str, status, is_partial: bool, reason_code_id: str | None, notes: str | None, attempted_at: datetime) -> None:
+    """
+    Shared by both branches of resolve_and_apply() below (new record,
+    and an incoming-wins update) — logs a delivery_attempts row for a
+    real attempt outcome synced from offline, mirroring what
+    update_delivery() does for the online path. See
+    routes/sync.py's SyncRecordIn docstring for why reason_code_id
+    isn't hard-enforced here the way it is online.
+    """
+    status_value = status.value if hasattr(status, "value") else status
+    outcome = "partial_delivery" if (status_value == "delivered" and is_partial) else status_value
+    if outcome not in ATTEMPT_OUTCOMES:
+        return
+
+    reason = None
+    if reason_code_id:
+        reason = db.query(FailedDeliveryReasonDB).filter(
+            FailedDeliveryReasonDB.id == reason_code_id,
+            FailedDeliveryReasonDB.org_id == db_record.org_id,
+        ).first()
+
+    record_delivery_attempt(
+        db, db_record, agent_id=agent_id, outcome=outcome,
+        reason_code_id=reason.id if reason else None,
+        reason_label=reason.label if reason else None,
+        notes=notes, attempted_at=attempted_at,
+    )
 
 
 def _normalize_to_naive_utc(dt: datetime) -> datetime:
@@ -94,6 +125,11 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
             "This delivery ID belongs to a different organization and cannot be modified."
         )
 
+    # reason_code_id isn't a column on DeliveryRecordDB (it lives on the
+    # delivery_attempts log instead) — pull it out before constructing/
+    # updating the record with the rest of record_data.
+    reason_code_id = record_data.pop("reason_code_id", None)
+
     if not existing:
         # No conflict — this is a new record, just insert it
         new_record = DeliveryRecordDB(**record_data)
@@ -111,6 +147,12 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
             changed_at=new_record.created_at,
             note="Created via offline sync",
         )
+        _log_synced_attempt(
+            db, new_record, agent_id=record_data["agent_id"], status=new_record.status,
+            is_partial=record_data.get("is_partial", False), reason_code_id=reason_code_id,
+            notes=record_data.get("notes") or record_data.get("partial_notes"),
+            attempted_at=new_record.created_at,
+        )
         return new_record, None
 
     # Conflict case: record already exists on the server.
@@ -126,6 +168,9 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
         existing.updated_at = incoming_updated_at
         if record_data.get("proof_of_delivery") is not None:
             existing.proof_of_delivery = record_data.get("proof_of_delivery")
+        if existing.status == DeliveryStatus.delivered:
+            existing.is_partial = record_data.get("is_partial", False)
+            existing.partial_notes = record_data.get("partial_notes") if existing.is_partial else None
         db.commit()
         db.refresh(existing)
 
@@ -159,6 +204,12 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
                 # return pickup while offline still needs to trigger the
                 # refund/exchange once it syncs back.
                 handle_return_pickup_completion(db, existing)
+            _log_synced_attempt(
+                db, existing, agent_id=record_data["agent_id"], status=existing.status,
+                is_partial=record_data.get("is_partial", False), reason_code_id=reason_code_id,
+                notes=record_data.get("notes") or record_data.get("partial_notes"),
+                attempted_at=incoming_updated_at,
+            )
         return existing, None
     else:
         # Server's existing version is newer or equal — keep it, discard
