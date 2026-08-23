@@ -1238,3 +1238,82 @@ export async function initiateSubscriptionOrderPayment(token, orderId) {
   if (!response.ok) throw new Error(data.detail || "Failed to start payment");
   return data;
 }
+
+// ---------- Failed-delivery reason codes ----------
+
+export async function fetchFailedDeliveryReasons(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/failed-delivery-reasons/`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load reason codes");
+  return data;
+}
+
+export async function fetchActiveFailedDeliveryReasons(token) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/reason-codes/active`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load reason codes");
+  return data;
+}
+
+export async function createFailedDeliveryReason(token, reason) {
+  const response = await fetch(`${API_BASE_URL}/admin/failed-delivery-reasons/`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify(reason),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create reason code");
+  return data;
+}
+
+export async function updateFailedDeliveryReason(token, reasonId, updates) {
+  const response = await fetch(`${API_BASE_URL}/admin/failed-delivery-reasons/${reasonId}`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify(updates),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update reason code");
+  return data;
+}
+
+export async function deleteFailedDeliveryReason(token, reasonId) {
+  const response = await fetch(`${API_BASE_URL}/admin/failed-delivery-reasons/${reasonId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to delete reason code");
+  return data;
+}
+
+// ---------- Delivery attempts / reschedule / priority ----------
+
+export async function fetchDeliveryAttempts(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/attempts`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load delivery attempts");
+  return data;
+}
+
+export async function rescheduleDelivery(token, deliveryId, rescheduledTo, reason) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/reschedule`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ rescheduled_to: rescheduledTo, reason }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to reschedule delivery");
+  return data;
+}
+
+export async function updateDeliveryPriority(token, deliveryId, priority) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/priority`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+    body: JSON.stringify({ priority }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update priority");
+  return data;
+}
