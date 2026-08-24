@@ -2003,6 +2003,68 @@ log). Full suite: **121/121 passing** (up from 100). Frontend:
 
 ---
 
+## Group 3 — Workforce Management (Shifts, Attendance, Leave, Earnings)
+
+**What was missing:** no way to schedule staff, track when they
+actually worked, handle time-off requests, or compute what they're
+owed. This was a whole domain gap, not an extension of anything
+existing.
+
+**Why it was needed:** a delivery-ops platform managing agents needs
+more than delivery assignment — a dispatcher needs a roster, an admin
+needs payroll data, and an agent needs a way to request time off
+without a side channel (a text message, a shrug).
+
+**What it does:**
+- **Shifts** (`models/shift.py`) — the roster PLAN: dispatcher/admin
+  schedules a staff member for a date + time window
+  (`POST /workforce/shifts`), staff see their own
+  (`GET /workforce/shifts/mine`), status auto-advances to
+  `completed` when a clock-out closes the matching attendance session.
+- **Attendance** (`models/attendance.py`) — the ACTUAL record:
+  `POST /workforce/attendance/clock-in` (optionally against a specific
+  shift; unscheduled sessions are allowed and flagged) /
+  `clock-out`. Only one open session per user at a time is enforced at
+  the route level.
+- **Leave requests** (`models/leave_request.py`) — sick/vacation/
+  personal/unpaid, submitted by the staff member
+  (`POST /workforce/leave-requests`), approved/rejected by a
+  dispatcher/admin, or cancelled by the requester while still pending.
+  Deliberately doesn't block shift creation for overlapping dates —
+  see the model's docstring for why that's left to human review rather
+  than automated conflict detection.
+- **Earnings** (`models/earnings.py`, `services/earnings.py`) —
+  computed pay statements combining two independent, optional
+  components: hours worked (summed from clocked-out attendance
+  sessions) × `hourly_rate`, and completed/partial deliveries (counted
+  from the existing `DeliveryAttemptDB` log — see Group 2) ×
+  `per_delivery_rate`. Both rates live on `UserDB`
+  (`PATCH /workforce/pay-rate/{user_id}`, admin-only).
+  `POST /workforce/earnings/generate` computes for one staff member or
+  the whole org over a date range; regenerating for the same period
+  overwrites the existing draft — UNLESS it's already `paid`, which is
+  left untouched (a paid statement is a closed book). Draft →
+  finalized → paid is a one-way lifecycle.
+- **Frontend:** `MyWorkforce.jsx` (agent self-service: clock in/out,
+  my shifts, submit/cancel leave requests, view earnings) and
+  `WorkforceManager.jsx` (dispatcher/admin: shift roster, org
+  attendance log, leave approvals, pay-rate editing, earnings
+  generation/finalize/mark-paid), both wired into `Sidebar.jsx`/
+  `App.jsx` as a new "Workforce" / "My Workforce" nav item per role.
+
+**Tests:** new file `test_workforce.py` (21 tests: shift CRUD +
+permission + validation, clock-in/out including the double-clock-in
+and clock-out-without-clock-in rejections and the shift-linkage/
+auto-complete behavior, leave request submit/approve/reject/cancel/
+permission checks, pay-rate set/clear, earnings generation combining
+hours and deliveries with a failed_attempt correctly excluded,
+org-wide generation, the finalize→paid lifecycle and its ordering
+requirement, and the paid-statement-is-immutable-on-regenerate
+guarantee). Full suite: **142/142 passing** (up from 121). Frontend:
+`npm run build` clean.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
