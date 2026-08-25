@@ -8,6 +8,7 @@ import {
   queueLocationPing,
 } from "../services/indexedDb";
 import { startAutoSync, runSync, describeConflict } from "../services/syncEngine";
+import { startPodSync, queuePod, countQueuedPod } from "../services/podOfflineQueue";
 import { startLocationPingAutoSync } from "../services/locationSyncEngine";
 import { writeSyncContext } from "../services/backgroundSyncContext";
 import { API_BASE_URL } from "../services/api";
@@ -40,6 +41,7 @@ export default function AgentDeliveryList() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDelivery, setSelectedDelivery] = useState(null);
   const [pendingDelivered, setPendingDelivered] = useState(null);
+  const [pendingPodCount, setPendingPodCount] = useState(0);
   const [showScanner, setShowScanner] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [isSharingLocation, setIsSharingLocation] = useState(false);
@@ -77,6 +79,11 @@ export default function AgentDeliveryList() {
     });
 
     const stopLocationSync = startLocationPingAutoSync(token);
+    const stopPodSync = startPodSync(() => token);
+    countQueuedPod().then(setPendingPodCount).catch(() => {});
+    const podCountIntervalId = setInterval(() => {
+      countQueuedPod().then(setPendingPodCount).catch(() => {});
+    }, PULL_INTERVAL_MS);
 
     const pullIntervalId = setInterval(() => {
       if (navigator.onLine) pullAssignedDeliveries();
@@ -85,7 +92,9 @@ export default function AgentDeliveryList() {
     return () => {
       stopAutoSync();
       stopLocationSync();
+      stopPodSync();
       clearInterval(pullIntervalId);
+      clearInterval(podCountIntervalId);
     };
   }, []);
 
@@ -149,10 +158,20 @@ export default function AgentDeliveryList() {
     await loadFromLocalStorage();
   }
 
-  async function handleProofConfirm(proofDataUrl) {
+  async function handleProofConfirm(podPayload) {
     const { deliveryId, notes, extras } = pendingDelivered;
     setPendingDelivered(null);
-    await applyStatusUpdate(deliveryId, "delivered", notes, proofDataUrl, extras);
+    // podPayload is the full Phase 1 capture (recipient/OTP/signature/
+    // photo/GPS/notes) — the legacy `proof_of_delivery` blob field on
+    // the delivery record itself still gets the signature/photo (so
+    // older UI that only reads that field keeps working unchanged);
+    // the richer structured record is queued separately to
+    // POST /deliveries/{id}/pod, which is what actually satisfies an
+    // org's configured POD requirements (see services/pod.py).
+    const legacyProofBlob = podPayload.signature_data_url || podPayload.photo_data_url || null;
+    await applyStatusUpdate(deliveryId, "delivered", notes, legacyProofBlob, extras);
+    await queuePod(deliveryId, podPayload);
+    setPendingPodCount(await countQueuedPod());
     showToast(
       extras && extras.is_partial ? "Partial delivery confirmed with proof." : "Delivery confirmed with proof.",
       "success"
@@ -669,9 +688,16 @@ export default function AgentDeliveryList() {
 
       {pendingDelivered && (
         <ProofOfDeliveryModal
+          deliveryId={pendingDelivered.deliveryId}
+          token={token}
           onConfirm={handleProofConfirm}
           onCancel={() => setPendingDelivered(null)}
         />
+      )}
+      {pendingPodCount > 0 && (
+        <div style={{ position: "fixed", bottom: 16, right: 16, background: "#334155", color: "#fff", padding: "8px 14px", borderRadius: 8, fontSize: 13 }}>
+          {pendingPodCount} proof-of-delivery {pendingPodCount === 1 ? "record" : "records"} waiting to sync
+        </div>
       )}
     </div>
   );

@@ -28,6 +28,8 @@ import ResetPasswordPage from "./components/ResetPasswordPage";
 import VerifyEmailPage from "./components/VerifyEmailPage";
 import TrackingPage from "./components/TrackingPage";
 import CustomerDashboard from "./components/CustomerDashboard";
+import SlaManager from "./components/SlaManager";
+import PodSettingsPanel from "./components/PodSettingsPanel";
 
 function StaffDashboard({ user }) {
   const { token } = useAuth();
@@ -61,6 +63,8 @@ function StaffDashboard({ user }) {
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "products" && (
             <ProductManager />
           )}
+          {(user.role === "dispatcher" || user.role === "admin") && currentView === "sla" && <SlaManager />}
+          {user.role === "admin" && currentView === "pod-settings" && <PodSettingsPanel />}
           {currentView === "account" && <AccountSettings />}
           {currentView === "security" && <TwoFactorSettings />}
         </div>
