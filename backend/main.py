@@ -34,7 +34,7 @@ import os
 from app.db.session import Base, engine
 from app.db.migrate import run_lightweight_migrations
 from app.services.rate_limiter import limiter
-from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce, pod, sla
+from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce, pod, sla, warehouse, rbac
 from app.db.session import SessionLocal
 from app.services.subscription_scheduler import start_subscription_scheduler
 from app.services.sla_monitor import start_sla_monitor
@@ -182,6 +182,8 @@ app.include_router(failed_delivery_reasons.router)
 app.include_router(workforce.router)
 app.include_router(pod.router)
 app.include_router(sla.router)
+app.include_router(warehouse.router)
+app.include_router(rbac.router)
 
 
 # Background task reference kept on app.state so it isn't garbage
