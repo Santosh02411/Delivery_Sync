@@ -2140,6 +2140,83 @@ Full backend suite: **168/168 passing**. Frontend: `npm run build` clean.
 
 ---
 
+## Missing-Features Rollout — Phase 3: Warehouse Management
+
+**What was missing:** No concept of WHERE stock physically lives —
+`ProductDB.stock_quantity` was a single number with no warehouses, no
+stock-in/out/transfer trail, no batch/expiry tracking, and no supplier/
+purchase-order workflow.
+
+**Why it was needed:** Real fulfillment operations run out of one or
+more physical locations, need an auditable movement log for every
+stock change, and need a receiving workflow tied to actual purchase
+orders — not a number a dispatcher edits by hand.
+
+**What it does:** Five new tables — `WarehouseDB`, `WarehouseInventoryDB`
+(per warehouse/product: available/reserved/damaged, SKU, barcode, batch,
+expiry, low-stock threshold), `StockMovementDB` (an immutable log —
+every single stock change of any kind writes one row here), `SupplierDB`,
+and `PurchaseOrderDB`/`PurchaseOrderItemDB`. Built ADDITIVELY: the
+existing `ProductDB.stock_quantity` and the whole cart/checkout/refund
+flow that depends on it are completely untouched — nothing here changes
+checkout math. A new `sync_product_stock_from_warehouses()` bridge lets
+an admin/dispatcher explicitly opt a product into having its
+`stock_quantity` driven by real warehouse totals, but nothing does this
+automatically. Full stock-in/out/adjustment/transfer/damage operations,
+each logged; a low-stock endpoint; supplier CRUD; and a goods-received
+workflow (supports partial receipt, tracks the PO status lifecycle:
+draft → ordered → partially_received → received) that credits inventory
+through the exact same stock-in path a manual receipt uses. Frontend: a
+new `WarehouseManager` view (warehouses, inventory + movement forms,
+suppliers, purchase orders, low-stock) reachable from the sidebar for
+dispatchers and admins. **14 new backend tests, all passing.**
+
+---
+
+## Missing-Features Rollout — Phase 4: Granular RBAC
+
+**What was missing:** Only three fixed roles (agent/dispatcher/admin) —
+no way to grant or restrict a specific capability to a specific person
+without changing their whole role.
+
+**Why it was needed:** Real orgs need finer control — e.g. an agent who
+should ALSO be able to manage inventory, or a dispatcher who should NOT
+be able to issue refunds — without a new base role for every
+combination.
+
+**What it does:** Added ADDITIVELY on top of the existing `UserDB.role`
+system — every existing `require_admin()`/`require_dispatcher()` check
+across the app (30+ files) is completely unmodified and still works
+exactly as before. New tables: `CustomRoleDB` (an org's own named roles)
+and `RolePermissionDB` (explicit permission grants per role), plus one
+new nullable `UserDB.custom_role_id` column (null = "use my base role's
+default permissions", which is true for essentially every user unless
+an admin deliberately assigns one). A fixed `PERMISSION_CATALOG`
+(`deliveries.*`, `users.*`, `inventory.*`, `payments.*`, `analytics.*`,
+`workforce.*`, `settings.*`) and a `require_permission(perm)` FastAPI
+dependency provide REAL backend enforcement — never a frontend-only
+check — with admins always passing every check unconditionally. This is
+demonstrated end-to-end on real functionality: every Phase 3 warehouse/
+supplier/purchase-order endpoint is gated on `inventory.view` /
+`inventory.manage` rather than the coarser dispatcher/admin check, and a
+custom role's grants are authoritative even when they're NARROWER than
+a user's base role would normally allow (tested explicitly). Custom
+role CRUD, role assignment, a permission catalog endpoint, and a
+`GET /admin/rbac/my-permissions` endpoint for permission-aware frontend
+UI to call (rather than re-implementing the resolution logic client-side)
+are all admin-only. Frontend: a new `RbacManager` view for defining
+roles, plus a role-assignment dropdown added directly to the existing
+Manage Users table in `AdminPanel`. Retrofitting every OTHER pre-existing
+endpoint onto `require_permission()` is explicitly OUT of scope for this
+phase — see "Intentionally skipped" in the completion report; that's a
+large, separate migration best done incrementally with its own
+regression testing. **10 new backend tests, all passing.**
+
+Full backend suite after Phases 3+4: **192/192 passing**. Frontend:
+`npm run build` clean.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

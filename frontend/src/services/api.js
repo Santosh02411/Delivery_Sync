@@ -1634,3 +1634,214 @@ export async function fetchSlaAnalytics(token) {
   if (!response.ok) throw new Error(data.detail || "Failed to load SLA analytics");
   return data;
 }
+
+// ---------- Warehouse Management (Phase 3) ----------
+
+export async function fetchWarehouses(token) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load warehouses");
+  return data;
+}
+
+export async function createWarehouse(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create warehouse");
+  return data;
+}
+
+export async function updateWarehouse(token, warehouseId, updates) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/${warehouseId}`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify(updates),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update warehouse");
+  return data;
+}
+
+export async function deleteWarehouse(token, warehouseId) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/${warehouseId}`, {
+    method: "DELETE", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to delete warehouse");
+  return data;
+}
+
+export async function fetchWarehouseInventory(token, warehouseId) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/${warehouseId}/inventory`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load warehouse inventory");
+  return data;
+}
+
+export async function fetchLowStock(token) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/low-stock`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load low-stock items");
+  return data;
+}
+
+export async function stockIn(token, warehouseId, payload) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/${warehouseId}/stock-in`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to record stock-in");
+  return data;
+}
+
+export async function stockOut(token, warehouseId, payload) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/${warehouseId}/stock-out`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to record stock-out");
+  return data;
+}
+
+export async function adjustWarehouseStock(token, warehouseId, payload) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/${warehouseId}/adjust`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to adjust stock");
+  return data;
+}
+
+export async function transferWarehouseStock(token, warehouseId, payload) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/${warehouseId}/transfer`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to transfer stock");
+  return data;
+}
+
+export async function reportWarehouseDamage(token, warehouseId, payload) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/${warehouseId}/damage`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to report damage");
+  return data;
+}
+
+export async function fetchStockMovements(token, warehouseId) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/${warehouseId}/movements`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load stock movements");
+  return data;
+}
+
+export async function syncProductStockFromWarehouses(token, productId) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/products/${productId}/sync-stock`, {
+    method: "POST", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to sync product stock");
+  return data;
+}
+
+export async function fetchSuppliers(token) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/suppliers/`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load suppliers");
+  return data;
+}
+
+export async function createSupplier(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/suppliers/`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create supplier");
+  return data;
+}
+
+export async function fetchPurchaseOrders(token) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/purchase-orders/`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load purchase orders");
+  return data;
+}
+
+export async function createPurchaseOrder(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/purchase-orders/`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create purchase order");
+  return data;
+}
+
+export async function receivePurchaseOrderItem(token, poId, itemId, receivedQuantity) {
+  const response = await fetch(`${API_BASE_URL}/warehouses/purchase-orders/${poId}/items/${itemId}/receive`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ received_quantity: receivedQuantity }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to receive goods");
+  return data;
+}
+
+// ---------- Granular RBAC (Phase 4) ----------
+
+export async function fetchPermissionsCatalog(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/rbac/permissions-catalog`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load permissions catalog");
+  return data.permissions;
+}
+
+export async function fetchMyPermissions(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/rbac/my-permissions`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load your permissions");
+  return data.permissions;
+}
+
+export async function fetchCustomRoles(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/rbac/roles`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load custom roles");
+  return data;
+}
+
+export async function createCustomRole(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/admin/rbac/roles`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create custom role");
+  return data;
+}
+
+export async function updateCustomRole(token, roleId, updates) {
+  const response = await fetch(`${API_BASE_URL}/admin/rbac/roles/${roleId}`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify(updates),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update custom role");
+  return data;
+}
+
+export async function deleteCustomRole(token, roleId) {
+  const response = await fetch(`${API_BASE_URL}/admin/rbac/roles/${roleId}`, {
+    method: "DELETE", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to delete custom role");
+  return data;
+}
+
+export async function assignCustomRole(token, userId, customRoleId) {
+  const response = await fetch(`${API_BASE_URL}/admin/rbac/users/${userId}/role`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ custom_role_id: customRoleId }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update role assignment");
+  return data;
+}
