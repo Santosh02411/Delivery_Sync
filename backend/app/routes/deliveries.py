@@ -43,6 +43,10 @@ from app.models.agent_location import AgentLocationDB
 from app.models.zone import ZoneDB, AgentZoneAssignmentDB
 from app.services.geo import haversine_km, find_zone_for_point
 from app.services.routing import get_route_distance, optimize_stop_order
+from app.models.organization import OrganizationDB
+from app.models.proof_of_delivery import ProofOfDeliveryDB
+from app.services.pod import org_requires_any_pod, pod_exists_for_delivery
+from app.services.sla import assign_sla, classify_on_completion
 
 REAL_ROUTING_TOP_K = 3  # how many top-tier candidates get a real routing call, per suggested-agents/auto-assign request
 from app.routes.auth import get_current_user
@@ -123,6 +127,11 @@ def create_delivery(
         matching_customer = db.query(CustomerDB).filter(CustomerDB.email == db_record.customer_email).first()
         if matching_customer:
             db_record.customer_id = matching_customer.id
+
+    # SLA (Phase 2): pick the best-matching active policy for this
+    # org/zone/type/priority combination and compute a deadline, now
+    # that zone/delivery_type/priority/created_at are all final.
+    assign_sla(db, db_record)
 
     db.add(db_record)
     db.commit()
@@ -759,6 +768,24 @@ def update_delivery(
         if not reason:
             raise HTTPException(status_code=400, detail="That reason code doesn't exist or is no longer active.")
 
+    # ENFORCEMENT (Phase 1 — Proof of Delivery): if this org has opted
+    # into ANY pod_require_* setting (see models/organization.py,
+    # routes/pod.py), a delivery can't be marked `delivered` until a
+    # POD row exists for it (submitted via POST /deliveries/{id}/pod,
+    # which itself already validated the payload against these same
+    # requirements at capture time — this is a defense-in-depth check,
+    # not a duplicate UI). Off by default, so an org that's never
+    # touched POD settings sees no change in behavior at all.
+    if update.status == DeliveryStatus.delivered:
+        org = db.query(OrganizationDB).filter(OrganizationDB.id == current_user.org_id).first()
+        if org and org_requires_any_pod(org):
+            if not pod_exists_for_delivery(db, db_record.id, current_user.org_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Proof of delivery is required before this delivery can be marked as delivered. "
+                           "Capture it first, then try again.",
+                )
+
     db_record.status = update.status
     db_record.notes = update.notes
     db_record.location_note = update.location_note
@@ -768,6 +795,7 @@ def update_delivery(
     if update.status == DeliveryStatus.delivered:
         db_record.is_partial = update.is_partial
         db_record.partial_notes = update.partial_notes if update.is_partial else None
+        classify_on_completion(db_record, update.updated_at)
 
     db.commit()
     db.refresh(db_record)
@@ -948,6 +976,7 @@ def update_delivery_priority(
         raise HTTPException(status_code=404, detail="Delivery record not found")
 
     db_record.priority = payload.priority.value
+    assign_sla(db, db_record)  # priority is a matching dimension for SLA policies — re-pick on change
     db.commit()
     db.refresh(db_record)
 
