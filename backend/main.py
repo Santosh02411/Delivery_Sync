@@ -34,7 +34,7 @@ import os
 from app.db.session import Base, engine
 from app.db.migrate import run_lightweight_migrations
 from app.services.rate_limiter import limiter
-from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce, pod, sla, warehouse, rbac
+from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce, pod, sla, warehouse, rbac, reconciliation, customer_messages
 from app.db.session import SessionLocal
 from app.services.subscription_scheduler import start_subscription_scheduler
 from app.services.sla_monitor import start_sla_monitor
@@ -164,6 +164,7 @@ app.include_router(returns.customer_router)
 app.include_router(returns.admin_router)
 app.include_router(websockets.router)
 app.include_router(messages.router)
+app.include_router(messages.templates_router)
 app.include_router(tracking.router)
 app.include_router(customer_auth.router)
 app.include_router(customer_dashboard.router)
@@ -184,6 +185,8 @@ app.include_router(pod.router)
 app.include_router(sla.router)
 app.include_router(warehouse.router)
 app.include_router(rbac.router)
+app.include_router(reconciliation.router)
+app.include_router(customer_messages.router)
 
 
 # Background task reference kept on app.state so it isn't garbage
