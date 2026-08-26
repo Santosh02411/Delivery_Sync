@@ -1845,3 +1845,113 @@ export async function assignCustomRole(token, userId, customRoleId) {
   if (!response.ok) throw new Error(data.detail || "Failed to update role assignment");
   return data;
 }
+
+// ---------- COD & Payment Reconciliation (Phase 5) ----------
+
+export async function collectCod(token, deliveryId, collectedAmount, notes) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/cod/collect`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ collected_amount: collectedAmount, notes }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to record COD collection");
+  return data;
+}
+
+export async function fetchCodCollection(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/cod`, { headers: authHeaders(token) });
+  if (response.status === 404 || response.status === 400) return null;
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load COD collection");
+  return data;
+}
+
+export async function fetchCodCollections(token, status, agentId) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (agentId) params.set("agent_id", agentId);
+  const response = await fetch(`${API_BASE_URL}/admin/reconciliation/cod?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load COD collections");
+  return data;
+}
+
+export async function createSettlement(token, agentId, notes) {
+  const response = await fetch(`${API_BASE_URL}/admin/reconciliation/settlements`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ agent_id: agentId, notes }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create settlement");
+  return data;
+}
+
+export async function fetchSettlements(token, agentId) {
+  const params = new URLSearchParams();
+  if (agentId) params.set("agent_id", agentId);
+  const response = await fetch(`${API_BASE_URL}/admin/reconciliation/settlements?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load settlements");
+  return data;
+}
+
+export async function settleSettlement(token, settlementId) {
+  const response = await fetch(`${API_BASE_URL}/admin/reconciliation/settlements/${settlementId}/settle`, {
+    method: "PATCH", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to settle");
+  return data;
+}
+
+export async function fetchLedger(token, filters = {}) {
+  const params = new URLSearchParams(filters);
+  const response = await fetch(`${API_BASE_URL}/admin/reconciliation/ledger?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load ledger");
+  return data;
+}
+
+export async function fetchFinancialDashboard(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/reconciliation/dashboard`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load financial dashboard");
+  return data;
+}
+
+// ---------- Customer <-> Agent Communication (Phase 6) ----------
+
+export async function fetchMessageTemplates(token) {
+  const response = await fetch(`${API_BASE_URL}/message-templates`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load message templates");
+  return data.templates;
+}
+
+export async function fetchDeliveryMessagesUnreadCount(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/messages/unread-count`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load unread count");
+  return data.unread_count;
+}
+
+export async function fetchMyCustomerMessagesUnreadCount(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/customer/deliveries/${deliveryId}/messages/unread-count`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load unread count");
+  return data.unread_count;
+}
+
+export async function sendCustomerMessage(token, deliveryId, message) {
+  const response = await fetch(`${API_BASE_URL}/customer/deliveries/${deliveryId}/messages`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ message }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to send message");
+  return data;
+}
+
+export async function fetchCustomerMessages(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/customer/deliveries/${deliveryId}/messages`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load messages");
+  return data;
+}

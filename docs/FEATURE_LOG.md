@@ -2217,6 +2217,84 @@ Full backend suite after Phases 3+4: **192/192 passing**. Frontend:
 
 ---
 
+---
+
+## Missing-Features Rollout — Phase 5: COD & Payment Reconciliation
+
+**What was missing:** No auditable financial trail — a payment or
+refund happened, but nothing recorded it as a discrete, queryable
+event; COD orders had no tracking of expected vs. actually-collected
+cash.
+
+**Why it was needed:** "Every financial operation must be auditable" —
+real money handling needs a permanent record of every charge, refund,
+and cash collection, plus a way for an agent's collected cash to be
+formally handed off (settled) to the business.
+
+**What it does:** A new `PaymentLedgerDB` — an APPEND-ONLY log (nothing
+in it is ever edited or deleted; corrections are new rows) — plus
+`CodCollectionDB` (expected vs. collected amount per COD delivery, with
+automatic discrepancy detection) and `AgentSettlementDB` (batches an
+agent's unsettled collections, immutable once marked settled — same
+pattern `services/earnings.py` already uses for pay statements). Built
+additively: `services/checkout.py`'s real online-payment success path
+and `services/refund.py`'s real refund path each got exactly one new
+line — a call to log the ledger entry — with zero changes to their
+existing logic; verified with tests that place a REAL order through
+checkout and a REAL refund through cancellation and confirm the ledger
+entry actually appears, not just that the logging function works in
+isolation. An agent records what they collected via a new endpoint;
+a mismatch is flagged as `discrepancy` automatically. New endpoints:
+COD collection (agent-facing), settlement creation/settling, the raw
+ledger (filterable by order/date/type), per-order payment status
+history, and an admin financial dashboard — all gated on Phase 4's
+`payments.view`/`payments.manage` permissions, a second real
+demonstration of that system. Frontend: a new `ReconciliationDashboard`
+view (overview stats, COD collections, settlements, ledger) and a
+`CodCollectionWidget` embedded in the delivery detail view. **13 new
+backend tests, all passing.**
+
+---
+
+## Missing-Features Rollout — Phase 6: Customer <-> Agent Communication
+
+**What was missing:** The existing delivery chat thread
+(`DeliveryMessageDB`, WebSocket-backed) only had staff (agent/
+dispatcher/admin) as participants — a customer had no way to message
+the delivery team, and there was no read/unread tracking or predefined
+quick replies.
+
+**Why it was needed:** Customers need a direct channel to ask "where's
+my order" or share a gate code without a phone call, and staff need to
+see message state (read vs. unread) rather than guessing whether a
+reply's been seen.
+
+**What it does:** Extended the EXISTING `DeliveryMessageDB` table
+(added `read_by_staff_at` / `read_by_customer_at` columns and allowed
+`sender_role="customer"`) rather than building a parallel thread — a
+customer and staff member now read/write the exact same rows and see
+literally the same conversation. A new customer-scoped route
+(`routes/customer_messages.py`) mirrors the existing staff route
+(`routes/messages.py`) with the same ownership-check pattern every
+other customer endpoint uses. Both sides mark the other's messages read
+the moment they view the thread, with a dedicated unread-count endpoint
+each. Four predefined quick-reply strings ("I'm arriving...", "Unable
+to reach you...", etc.) sent through the exact same send-message
+endpoint — no separate "template" concept in the data model to keep in
+sync. The existing WebSocket chat endpoint (`routes/websockets.py`)
+was extended to also authenticate a customer's JWT, not just staff —
+this was a genuine gap caught and fixed, not initially planned: without
+it the customer side would have been polling-only while staff got live
+push. Frontend: `CustomerDeliveryMessages` (new, mirrors the existing
+`DeliveryMessages` component) embedded in the customer dashboard for
+any non-terminal delivery, and quick-reply buttons added to the
+existing staff-side chat widget. **9 new backend tests, all passing.**
+
+Full backend suite after Phases 5+6: **214/214 passing**. Frontend:
+`npm run build` clean.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

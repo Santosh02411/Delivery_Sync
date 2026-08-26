@@ -32,6 +32,7 @@ import SlaManager from "./components/SlaManager";
 import PodSettingsPanel from "./components/PodSettingsPanel";
 import WarehouseManager from "./components/WarehouseManager";
 import RbacManager from "./components/RbacManager";
+import ReconciliationDashboard from "./components/ReconciliationDashboard";
 
 function StaffDashboard({ user }) {
   const { token } = useAuth();
@@ -67,6 +68,7 @@ function StaffDashboard({ user }) {
           )}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "sla" && <SlaManager />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "warehouses" && <WarehouseManager />}
+          {(user.role === "dispatcher" || user.role === "admin") && currentView === "reconciliation" && <ReconciliationDashboard />}
           {user.role === "admin" && currentView === "pod-settings" && <PodSettingsPanel />}
           {user.role === "admin" && currentView === "rbac" && <RbacManager />}
           {currentView === "account" && <AccountSettings />}

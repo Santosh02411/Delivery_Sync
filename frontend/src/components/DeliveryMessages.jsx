@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { fetchDeliveryMessages, sendDeliveryMessage } from "../services/api";
+import { fetchDeliveryMessages, sendDeliveryMessage, fetchMessageTemplates } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import {
   setActiveChatUser,
@@ -35,7 +35,12 @@ export default function DeliveryMessages({ deliveryId, isSyncedToServer }) {
   const [newMessage, setNewMessage] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState(null);
+  const [templates, setTemplates] = useState([]);
   const threadEndRef = useRef(null);
+
+  useEffect(() => {
+    fetchMessageTemplates(token).then(setTemplates).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!isSyncedToServer) return; // no server-side id to attach messages to yet
@@ -186,6 +191,22 @@ export default function DeliveryMessages({ deliveryId, isSyncedToServer }) {
       </div>
 
       {error && <p style={{ color: "var(--danger)", fontSize: "12.5px" }}>{error}</p>}
+
+      {templates.length > 0 && (
+        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "8px" }}>
+          {templates.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className="btn-info-outline"
+              style={{ fontSize: "11.5px" }}
+              onClick={() => setNewMessage(t)}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
 
       <form onSubmit={handleSend} style={{ display: "flex", gap: "8px" }}>
         <input
