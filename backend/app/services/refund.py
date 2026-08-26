@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.models.order import OrderDB, OrderStatus
 from app.services.payment import IS_CONFIGURED, create_razorpay_refund
 from app.services.inventory import restock_order_if_needed
+from app.services.reconciliation import log_ledger_entry
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,7 @@ def refund_order_for_delivery(db: Session, delivery_id: str) -> Optional[OrderDB
         db.commit()
         db.refresh(order)
         restock_order_if_needed(db, order)
+        log_ledger_entry(db, order.org_id, "refund", refund_amount, order_id=order.id, delivery_id=delivery_id, note="Test-mode refund")
         return order
 
     if not IS_CONFIGURED or not order.razorpay_payment_id:
@@ -104,4 +106,5 @@ def refund_order_for_delivery(db: Session, delivery_id: str) -> Optional[OrderDB
     db.refresh(order)
     if order.refund_status == "refunded":
         restock_order_if_needed(db, order)
+        log_ledger_entry(db, order.org_id, "refund", refund_amount, order_id=order.id, delivery_id=delivery_id, reference=order.razorpay_refund_id)
     return order
