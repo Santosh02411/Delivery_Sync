@@ -56,6 +56,8 @@ STATUS_LABELS = {
     "delivered": "Delivered",
     "failed_attempt": "Delivery Attempt Failed",
     "cancelled": "Order Cancelled",
+    "partial_delivery": "Partially Delivered",
+    "rescheduled": "Delivery Rescheduled",
 }
 
 

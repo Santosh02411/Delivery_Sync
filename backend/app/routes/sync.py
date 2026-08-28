@@ -42,6 +42,19 @@ class SyncRecordIn(BaseModel):
     customer_email: str | None = None
     customer_phone: str | None = None
 
+    # Failed-delivery reason (see models/failed_delivery_reason.py).
+    # NOT hard-enforced here the way update_delivery() enforces it —
+    # /sync is unauthenticated, best-effort, and processes a whole
+    # offline batch; rejecting a record over a missing reason code
+    # would strand it retrying forever with no way for the agent to
+    # fix it until they're back online anyway. If present, it's
+    # recorded on the attempt log; if absent, the attempt is still
+    # logged, just without a reason (visible as a gap for a dispatcher
+    # to follow up on, rather than lost data).
+    reason_code_id: str | None = None
+    is_partial: bool = False
+    partial_notes: str | None = None
+
 
 class SyncRequest(BaseModel):
     records: List[SyncRecordIn]
