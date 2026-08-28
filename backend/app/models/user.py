@@ -77,6 +77,16 @@ class UserDB(Base):
     area_latitude = Column(Float, nullable=True)
     area_longitude = Column(Float, nullable=True)
 
+    # Pay rates for workforce earnings statements (see
+    # models/earnings.py / services/earnings.py). Both optional and
+    # independent — an org might pay purely hourly, purely per-delivery,
+    # both, or (until an admin sets either) neither, in which case
+    # earnings generation still runs but produces a zero-pay statement
+    # rather than erroring, so the hours/delivery-count data is still
+    # useful on its own.
+    hourly_rate = Column(Float, nullable=True)
+    per_delivery_rate = Column(Float, nullable=True)
+
 
 # ---------- Pydantic Schemas ----------
 
@@ -116,6 +126,8 @@ class UserOut(BaseModel):
     totp_enabled: bool = False
     two_factor_method: str = "totp"
     area_name: Optional[str] = None
+    hourly_rate: Optional[float] = None
+    per_delivery_rate: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -211,3 +223,9 @@ class AreaOut(BaseModel):
     area_name: Optional[str] = None
     area_latitude: Optional[float] = None
     area_longitude: Optional[float] = None
+
+
+class PayRateUpdate(BaseModel):
+    """Admin-only: set (or clear, by passing null) a staff member's pay rates. See UserDB.hourly_rate / per_delivery_rate."""
+    hourly_rate: Optional[float] = None
+    per_delivery_rate: Optional[float] = None
