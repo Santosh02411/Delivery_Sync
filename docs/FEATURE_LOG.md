@@ -1917,6 +1917,92 @@ Frontend: `npm run build` clean.
 
 ---
 
+## Failed-Delivery Reason Codes, Delivery-Attempts Log, Reschedule Workflow, Partial-Delivery Marking, Priority Sorting
+
+**What was missing:** the rest of the delivery lifecycle beyond a
+plain status update — no standardized way to record *why* a delivery
+failed, no log of how many times a delivery had actually been
+attempted (vs. just its current status), no way to reschedule a
+failed delivery to a new date, no way to record that a delivery was
+only partially completed, and no way for a dispatcher to prioritize
+which deliveries in the queue matter most.
+
+**Why it was needed:** free-text `notes` on a failed delivery doesn't
+give a dispatcher or an analytics dashboard anything to group or act
+on — "customer wasn't home" and "not home" and "no one answered" are
+the same event described three ways. Attempt history distinct from
+status history matters because a delivery's *current* status doesn't
+tell you it took three tries to get there. And a flat, unordered
+dispatcher queue means urgent same-day orders get lost in a list
+sorted only by recency.
+
+**What it does:**
+- **Reason codes** (`models/failed_delivery_reason.py`,
+  `routes/failed_delivery_reasons.py`) — admin-managed, org-scoped
+  CRUD at `/admin/failed-delivery-reasons`, with soft-delete via an
+  `active` flag so retiring a code doesn't break attempts that already
+  reference it. `GET /deliveries/reason-codes/active` is the
+  agent-facing picker (active-only, any authenticated org member).
+- **Enforcement** — `PATCH /deliveries/{id}` now rejects a
+  `failed_attempt` status update that doesn't carry a valid, active
+  `reason_code_id` (400). Bulk status update
+  (`PATCH /deliveries/bulk-status`) deliberately refuses to bulk-move
+  deliveries to `failed_attempt` at all, since one shared reason across
+  an arbitrary batch would defeat the point of having real reason
+  codes — that stays a single-record action.
+- **Delivery-attempts log** (`models/delivery_attempt.py`,
+  `services/delivery_attempts.py`) — every real attempt outcome
+  (delivered / failed_attempt / partial_delivery) gets its own logged
+  row with a running `attempt_number`, distinct from the existing
+  status-history log which also covers non-attempt events like
+  assignment. `GET /deliveries/{id}/attempts` returns the full log.
+  Threaded through all three paths that can produce a real outcome:
+  the online PATCH, bulk-status (delivered only), and the offline
+  `/sync` path (`services/conflict_resolver.py`) — the last one
+  doesn't hard-enforce the reason code the way the online path does,
+  since `/sync` is unauthenticated/best-effort and rejecting a whole
+  offline batch over a missing reason would strand an agent's work.
+- **Reschedule workflow** — `POST /deliveries/{id}/reschedule`, usable
+  by the assigned agent or any dispatcher/admin, sets a new
+  `rescheduled_to` date + `reschedule_reason`, bumps
+  `reschedule_count`, moves status to `failed_attempt` (a reschedule
+  genuinely is a failed attempt at the original time), and logs both a
+  history entry and an attempt row. Refuses on an already-terminal
+  delivery.
+- **Partial-delivery marking** — `is_partial` + `partial_notes` on
+  `PATCH /deliveries/{id}` when marking `delivered`; status stays
+  `delivered` (a partial delivery is still a completed attempt), but
+  the flag/notes record what wasn't handed over, and the attempt log
+  records the outcome as `partial_delivery`.
+- **Priority-based dispatcher queue** — new `priority` field
+  (low/normal/high/urgent, plain string column — see
+  `DeliveryPriority`'s docstring for why not a SqlEnum) settable at
+  creation and via `PATCH /deliveries/{id}/priority` (dispatcher/admin
+  only). `GET /deliveries/` and `GET /deliveries/unassigned` now sort
+  urgent → high → normal → low, oldest-first within a tier.
+- **Frontend:** `DeliveryStatusUpdater.jsx` gates "Failed Attempt"
+  behind a reason-code dropdown and "Delivered" behind an optional
+  "partially delivered" toggle; `AgentDeliveryList.jsx` adds an inline
+  reschedule form; `DispatcherTable.jsx` gets an editable priority
+  column, a priority sort option, and a priority field on delivery
+  creation; `DeliveryDetailModal.jsx` gets a new "Delivery Attempts"
+  section plus priority/partial/reschedule detail rows; new admin page
+  `FailedDeliveryReasonManager.jsx` for reason-code CRUD, wired into
+  the sidebar and `App.jsx`.
+
+**Tests:** new file `test_delivery_lifecycle_extras.py` (21 tests:
+reason-code CRUD + org isolation, non-admin rejection, enforcement on
+missing/invalid/inactive reason codes, attempt logging + numbering,
+bulk-status rejecting failed_attempt, partial-delivery flag set/clear,
+reschedule success/validation/permission/terminal-status rejection,
+priority update, dispatcher-queue and unassigned-queue priority
+sorting, new-delivery default priority, and the offline-sync path
+threading reason codes and partial-delivery through to the attempt
+log). Full suite: **121/121 passing** (up from 100). Frontend:
+`npm run build` clean.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

@@ -84,6 +84,7 @@ export default function Sidebar({ activeView, onNavigate }) {
     { key: "products", label: "Products", icon: "\u25A3" },
     { key: "admin", label: "Manage Users", icon: "\u2699" },
     { key: "zones", label: "Zones", icon: "\u2b21" },
+    { key: "reason-codes", label: "Reason Codes", icon: "\u2691" },
     { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
     { key: "audit-log", label: "Audit Log", icon: "\u2637" },
     { key: "account", label: "My Account", icon: "\u25CB" },

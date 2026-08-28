@@ -15,6 +15,7 @@ import AnalyticsDashboard from "./components/AnalyticsDashboard";
 import AdminPanel from "./components/AdminPanel";
 import AuditLogViewer from "./components/AuditLogViewer";
 import ZoneManager from "./components/ZoneManager";
+import FailedDeliveryReasonManager from "./components/FailedDeliveryReasonManager";
 import ReturnRequestsPanel from "./components/ReturnRequestsPanel";
 import TwoFactorSettings from "./components/TwoFactorSettings";
 import AccountSettings from "./components/AccountSettings";
@@ -47,6 +48,7 @@ function StaffDashboard({ user }) {
           )}
           {user.role === "admin" && currentView === "admin" && <AdminPanel />}
           {user.role === "admin" && currentView === "zones" && <ZoneManager />}
+          {user.role === "admin" && currentView === "reason-codes" && <FailedDeliveryReasonManager />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "returns" && (
             <ReturnRequestsPanel />
           )}
