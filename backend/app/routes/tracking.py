@@ -44,11 +44,6 @@ class PublicTrackingOut(BaseModel):
     proof_of_delivery: Optional[str] = None
     history: List[PublicHistoryEntry] = []
     feedback: Optional[FeedbackOut] = None
-    # SLA (Phase 2): "at_risk"/"breached" while in progress, "met"/
-    # "missed" once delivered, or "not_applicable" — lets the public
-    # tracking page show a plain-language "running a bit late" note
-    # without exposing the org's actual policy configuration.
-    sla_status: str = "not_applicable"
 
 
 @router.get("/{delivery_id}", response_model=PublicTrackingOut)
@@ -86,7 +81,6 @@ def track_delivery(request: Request, delivery_id: str, db: Session = Depends(get
             for h in history_rows
         ],
         feedback=existing_feedback,
-        sla_status=delivery.sla_status or "not_applicable",
     )
 
 

@@ -70,16 +70,6 @@ class OrganizationDB(Base):
     category = Column(String, nullable=True)
     description = Column(String, nullable=True)
 
-    # Proof-of-delivery requirements (Phase 1) — see
-    # models/proof_of_delivery.py and services/pod.py. All default
-    # False so an org's existing "mark delivered" flow is completely
-    # unaffected until an admin deliberately opts into one or more of
-    # these from the POD Settings panel.
-    pod_require_recipient_name = Column(Boolean, nullable=False, default=False)
-    pod_require_signature_or_photo = Column(Boolean, nullable=False, default=False)
-    pod_require_otp = Column(Boolean, nullable=False, default=False)
-    pod_require_gps = Column(Boolean, nullable=False, default=False)
-
 
 class OrganizationOut(BaseModel):
     id: str
@@ -94,10 +84,6 @@ class OrganizationOut(BaseModel):
     max_orders_per_slot: int = 10
     category: Optional[str] = None
     description: Optional[str] = None
-    pod_require_recipient_name: bool = False
-    pod_require_signature_or_photo: bool = False
-    pod_require_otp: bool = False
-    pod_require_gps: bool = False
 
     class Config:
         from_attributes = True

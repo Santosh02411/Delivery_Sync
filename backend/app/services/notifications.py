@@ -56,8 +56,6 @@ STATUS_LABELS = {
     "delivered": "Delivered",
     "failed_attempt": "Delivery Attempt Failed",
     "cancelled": "Order Cancelled",
-    "partial_delivery": "Partially Delivered",
-    "rescheduled": "Delivery Rescheduled",
 }
 
 
@@ -210,83 +208,6 @@ def notify_agent_of_new_assignment(db: Session, delivery_id: str, order_id: str,
         title="New delivery assigned",
         body=f"Order {order_id} has been assigned to you.",
         url=tracking_link,
-    )
-
-
-def notify_dispatchers_of_sla_event(db: Session, org_id: str, order_id: str, event: str) -> None:
-    """
-    Web Push to every dispatcher/admin in an org when a delivery
-    crosses an SLA threshold — `event` is "at_risk" (near-breach
-    warning) or "breached". Mirrors notify_dispatchers_of_new_order
-    exactly; kept as its own function since the copy differs and a
-    future caller may want to filter/rate-limit SLA pushes separately
-    from new-order pushes.
-    """
-    staff_ids = [
-        row[0] for row in db.query(UserDB.id).filter(
-            UserDB.org_id == org_id,
-            UserDB.role.in_([UserRole.dispatcher, UserRole.admin]),
-        ).all()
-    ]
-    tracking_link = f"{FRONTEND_URL}/?dashboard"
-    if event == "breached":
-        title, body = "SLA breached", f"Order {order_id} has missed its delivery SLA deadline."
-    else:
-        title, body = "SLA at risk", f"Order {order_id} is approaching its delivery SLA deadline."
-    _push_to_user_ids(db, staff_ids, title=title, body=body, url=tracking_link)
-
-
-def notify_customer_of_new_message(db: Session, delivery_id: str, order_id: str, customer_id: str, sender_display_name: str) -> None:
-    """
-    In-app + Web Push when a STAFF member sends a message on a
-    delivery's chat thread — reuses the exact same two channels
-    notify_customer_of_status_change already uses for the customer,
-    since those are this project's real, working customer-notification
-    channels (email/SMS/WhatsApp notification for every chat message
-    would be noisy for a back-and-forth conversation the way it isn't
-    for a one-off status change, so this deliberately uses fewer
-    channels than that function does).
-    """
-    try:
-        notification = CustomerNotificationDB(
-            customer_id=customer_id, delivery_id=delivery_id, order_id=order_id,
-            message=f"New message from {sender_display_name} about order {order_id}",
-        )
-        db.add(notification)
-        db.commit()
-    except Exception as error:  # noqa: BLE001
-        print(f"In-app message notification failed for {order_id}: {error}")
-
-    try:
-        subscriptions = db.query(PushSubscriptionDB).filter(PushSubscriptionDB.customer_id == customer_id).all()
-        for sub in subscriptions:
-            send_web_push(
-                subscription_info={"endpoint": sub.endpoint, "keys": {"p256dh": sub.p256dh, "auth": sub.auth}},
-                title=f"Order {order_id}", body=f"{sender_display_name}: new message",
-                url=f"{FRONTEND_URL}/?track={delivery_id}",
-            )
-    except Exception as error:  # noqa: BLE001
-        print(f"Push message notification failed for {order_id}: {error}")
-
-
-def notify_staff_of_new_message(db: Session, org_id: str, delivery_id: str, order_id: str, agent_id: str | None, sender_display_name: str) -> None:
-    """
-    Web Push to the delivery's assigned agent plus every dispatcher/
-    admin in the org — mirrors notify_dispatchers_of_sla_event's
-    staff-lookup pattern, just widened to also include the one agent
-    (who isn't a dispatcher/admin, so wouldn't otherwise be in that query).
-    """
-    staff_ids = [
-        row[0] for row in db.query(UserDB.id).filter(
-            UserDB.org_id == org_id,
-            UserDB.role.in_([UserRole.dispatcher, UserRole.admin]),
-        ).all()
-    ]
-    if agent_id and agent_id not in staff_ids:
-        staff_ids.append(agent_id)
-    _push_to_user_ids(
-        db, staff_ids, title=f"Order {order_id}", body=f"{sender_display_name}: new message",
-        url=f"{FRONTEND_URL}/?dashboard",
     )
 
 

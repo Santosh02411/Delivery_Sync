@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session
 
 from app.db.session import SessionLocal
 from app.models.user import UserDB, UserRole
-from app.models.customer import CustomerDB
 from app.models.delivery import DeliveryRecordDB
 from app.services.auth import decode_access_token
 from app.services.websocket_manager import manager, chat_room, dispatcher_queue_room, tracking_room
@@ -40,45 +39,22 @@ def _get_user_from_token(token: str, db: Session) -> UserDB | None:
     return user
 
 
-def _get_customer_from_token(token: str, db: Session) -> CustomerDB | None:
-    """Same decode, different table — a customer's JWT `sub` is a CustomerDB id, never a UserDB one, so trying this after _get_user_from_token comes back empty is always unambiguous."""
-    payload = decode_access_token(token)
-    if not payload:
-        return None
-    return db.query(CustomerDB).filter(CustomerDB.id == payload.get("sub")).first()
-
-
 @router.websocket("/ws/deliveries/{delivery_id}/messages")
 async def chat_websocket(websocket: WebSocket, delivery_id: str, token: str = Query(...)):
-    """
-    Phase 6: this socket now authenticates EITHER a staff member (as
-    before) OR the delivery's own customer — whichever the token
-    decodes to. Both land in the exact same chat_room(delivery_id), so
-    a staff reply and a customer message both arrive live on both
-    sides of the SAME thread (see routes/messages.py and
-    routes/customer_messages.py, which both broadcast into this same
-    room after a successful POST).
-    """
     db = SessionLocal()
     try:
-        delivery = db.query(DeliveryRecordDB).filter(DeliveryRecordDB.id == delivery_id).first()
-        if not delivery:
-            await websocket.close(code=4404)
+        user = _get_user_from_token(token, db)
+        if not user:
+            await websocket.close(code=4401)
             return
 
-        user = _get_user_from_token(token, db)
-        if user:
-            if delivery.org_id != user.org_id:
-                await websocket.close(code=4404)
-                return
-            if user.role == UserRole.agent and delivery.agent_id != user.id:
-                await websocket.close(code=4403)
-                return
-        else:
-            customer = _get_customer_from_token(token, db)
-            if not customer or delivery.customer_id != customer.id:
-                await websocket.close(code=4401)
-                return
+        delivery = db.query(DeliveryRecordDB).filter(DeliveryRecordDB.id == delivery_id).first()
+        if not delivery or delivery.org_id != user.org_id:
+            await websocket.close(code=4404)
+            return
+        if user.role == UserRole.agent and delivery.agent_id != user.id:
+            await websocket.close(code=4403)
+            return
     finally:
         db.close()
 

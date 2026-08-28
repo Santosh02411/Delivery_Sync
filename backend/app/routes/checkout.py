@@ -45,7 +45,6 @@ from app.services.coupons import find_and_validate_coupon, compute_discount, Cou
 from app.services.slots import validate_slot
 from app.services.websocket_manager import broadcast_sync, dispatcher_queue_room
 from app.services.rate_limiter import limiter
-from app.services.reconciliation import log_ledger_entry
 
 router = APIRouter(prefix="/customer", tags=["checkout"])
 
@@ -404,18 +403,6 @@ def verify_payment(
     )
     notify_dispatchers_of_new_order(db, org_id=order.org_id, order_id=delivery.order_id)
     broadcast_sync(dispatcher_queue_room(order.org_id), {"event": "queue_changed", "reason": "new_order"})
-
-    # Financial ledger (Phase 5): log the charge, but only for an actual
-    # online payment — a COD order hasn't been charged anything yet (the
-    # agent collects cash on arrival, tracked separately via
-    # routes/reconciliation.py's COD collection flow), so it gets no
-    # "charge" ledger entry here.
-    if order.payment_method != "cod":
-        log_ledger_entry(
-            db, order.org_id, "charge", order.total,
-            order_id=order.id, delivery_id=delivery.id,
-            reference=order.razorpay_payment_id, user_id=current_customer.id,
-        )
 
     # Re-query items fresh rather than reusing the pre-commit list above -
     # SQLAlchemy expires all session objects on commit by default, and

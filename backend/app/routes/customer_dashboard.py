@@ -27,7 +27,6 @@ from app.services.history import record_history_entry
 from app.services.push import VAPID_PUBLIC_KEY
 from app.services.refund import refund_order_for_delivery
 from app.routes.customer_auth import get_current_customer
-from app.models.proof_of_delivery import ProofOfDeliveryDB, ProofOfDeliveryOut
 
 router = APIRouter(prefix="/customer", tags=["customer-dashboard"])
 
@@ -117,28 +116,6 @@ def list_my_deliveries(
     if limit is not None:
         query = query.offset(offset).limit(limit)
     return query.all()
-
-
-@router.get("/deliveries/{delivery_id}/pod", response_model=ProofOfDeliveryOut)
-def get_my_delivery_pod(
-    delivery_id: str,
-    db: Session = Depends(get_db),
-    current_customer: CustomerDB = Depends(get_current_customer),
-):
-    """Proof of delivery for one of the customer's OWN deliveries only — 404s for any other delivery, same as get_my_delivery_history above."""
-    delivery = db.query(DeliveryRecordDB).filter(
-        DeliveryRecordDB.id == delivery_id,
-        DeliveryRecordDB.customer_id == current_customer.id,
-    ).first()
-    if not delivery:
-        raise HTTPException(status_code=404, detail="Delivery not found.")
-
-    pod = db.query(ProofOfDeliveryDB).filter(
-        ProofOfDeliveryDB.delivery_id == delivery_id,
-    ).order_by(ProofOfDeliveryDB.captured_at.desc()).first()
-    if not pod:
-        raise HTTPException(status_code=404, detail="No proof of delivery has been captured for this delivery yet.")
-    return pod
 
 
 @router.get("/deliveries/{delivery_id}/history", response_model=List[DeliveryHistoryOut])

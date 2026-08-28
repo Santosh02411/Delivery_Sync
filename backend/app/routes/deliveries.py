@@ -25,16 +25,11 @@ from app.models.delivery import (
     DeliveryRecordUpdate,
     DeliveryRecordOut,
     DeliveryStatus,
-    DeliveryPriority,
-    PRIORITY_RANK,
 )
 from app.models.user import UserDB, UserRole
 from app.models.customer import CustomerDB
 from app.models.delivery_history import DeliveryHistoryDB, DeliveryHistoryOut
-from app.models.failed_delivery_reason import FailedDeliveryReasonDB, FailedDeliveryReasonOut
-from app.models.delivery_attempt import DeliveryAttemptDB, DeliveryAttemptOut
 from app.services.history import record_history_entry
-from app.services.delivery_attempts import record_delivery_attempt
 from app.services.notifications import notify_customer_of_status_change, notify_agent_of_new_assignment
 from app.services.refund import refund_order_for_delivery
 from app.services.returns_workflow import handle_return_pickup_completion
@@ -43,10 +38,6 @@ from app.models.agent_location import AgentLocationDB
 from app.models.zone import ZoneDB, AgentZoneAssignmentDB
 from app.services.geo import haversine_km, find_zone_for_point
 from app.services.routing import get_route_distance, optimize_stop_order
-from app.models.organization import OrganizationDB
-from app.models.proof_of_delivery import ProofOfDeliveryDB
-from app.services.pod import org_requires_any_pod, pod_exists_for_delivery
-from app.services.sla import assign_sla, classify_on_completion
 
 REAL_ROUTING_TOP_K = 3  # how many top-tier candidates get a real routing call, per suggested-agents/auto-assign request
 from app.routes.auth import get_current_user
@@ -64,24 +55,6 @@ def require_dispatcher(current_user: UserDB = Depends(get_current_user)) -> User
     if current_user.role not in (UserRole.dispatcher, UserRole.admin):
         raise HTTPException(status_code=403, detail="Only dispatchers or admins can do this.")
     return current_user
-
-
-def _sort_by_priority(deliveries: list) -> list:
-    """
-    Orders a list of deliveries urgent -> high -> normal -> low, and
-    within the same priority tier, oldest-created first (so two
-    "urgent" deliveries still queue fairly by whoever's been waiting
-    longer, rather than in arbitrary DB row order). Done in Python
-    rather than an ORDER BY clause because `priority` is a free-text-ish
-    string column (see DeliveryPriority's docstring), and mapping it to
-    a rank for SQL ordering would need a CASE expression per dialect —
-    not worth it at this project's data scale, where the dispatcher
-    queue is at most a few hundred rows.
-    """
-    return sorted(
-        deliveries,
-        key=lambda d: (-PRIORITY_RANK.get(d.priority, PRIORITY_RANK[DeliveryPriority.normal.value]), d.created_at),
-    )
 
 
 @router.post("/", response_model=DeliveryRecordOut)
@@ -114,11 +87,6 @@ def create_delivery(
         raise HTTPException(status_code=400, detail="The selected agent doesn't exist in your organization.")
 
     db_record = DeliveryRecordDB(**record.model_dump(), org_id=current_user.org_id)
-    # Coerce explicitly to the plain string value the column stores —
-    # record.priority may come through model_dump() as a DeliveryPriority
-    # enum member rather than its raw string, and the `priority` column
-    # is a plain String (see DeliveryPriority's docstring for why).
-    db_record.priority = (record.priority or DeliveryPriority.normal).value
 
     # Link to a real customer account if one exists matching this email —
     # that's what makes this delivery show up in that customer's logged-in
@@ -127,11 +95,6 @@ def create_delivery(
         matching_customer = db.query(CustomerDB).filter(CustomerDB.email == db_record.customer_email).first()
         if matching_customer:
             db_record.customer_id = matching_customer.id
-
-    # SLA (Phase 2): pick the best-matching active policy for this
-    # org/zone/type/priority combination and compute a deadline, now
-    # that zone/delivery_type/priority/created_at are all final.
-    assign_sla(db, db_record)
 
     db.add(db_record)
     db.commit()
@@ -172,31 +135,10 @@ def list_unassigned_deliveries(
     dispatcher-created deliveries never land here since they always pick
     an agent at creation time.
     """
-    unassigned = db.query(DeliveryRecordDB).filter(
+    return db.query(DeliveryRecordDB).filter(
         DeliveryRecordDB.org_id == current_user.org_id,
         DeliveryRecordDB.status == DeliveryStatus.pending,
     ).all()
-    return _sort_by_priority(unassigned)
-
-
-@router.get("/reason-codes/active", response_model=List[FailedDeliveryReasonOut])
-def list_active_reason_codes(
-    db: Session = Depends(get_db),
-    current_user: UserDB = Depends(get_current_user),
-):
-    """
-    The picker an agent sees when marking a delivery attempt failed —
-    active reason codes only (a deactivated one shouldn't be pickable
-    for a NEW attempt, even though old attempts that already used it
-    keep displaying fine via their own denormalized reason_label).
-    Any authenticated org member can read this (agent, dispatcher, or
-    admin); only an admin can manage the underlying list (see
-    routes/failed_delivery_reasons.py).
-    """
-    return db.query(FailedDeliveryReasonDB).filter(
-        FailedDeliveryReasonDB.org_id == current_user.org_id,
-        FailedDeliveryReasonDB.active == True,  # noqa: E712
-    ).order_by(FailedDeliveryReasonDB.label.asc()).all()
 
 
 class AssignAgentRequest(BaseModel):
@@ -577,20 +519,7 @@ def bulk_update_status(
     update would, by reusing the same helpers update_delivery() uses —
     so a bulk update is indistinguishable downstream from doing the same
     updates one at a time.
-
-    Deliberately does NOT support bulk-moving deliveries to
-    failed_attempt: that status requires a real, specific reason code
-    per delivery (see update_delivery()'s enforcement), and one shared
-    reason across an arbitrary batch would defeat the point of having
-    standardized, meaningful reason codes at all. Use the single-record
-    PATCH /deliveries/{id} for that.
     """
-    if payload.status == DeliveryStatus.failed_attempt:
-        raise HTTPException(
-            status_code=400,
-            detail="Marking a delivery failed requires a specific reason code — update deliveries individually for this status.",
-        )
-
     results: List[BulkActionItemResult] = []
 
     for delivery_id in payload.delivery_ids:
@@ -638,10 +567,6 @@ def bulk_update_status(
             refund_order_for_delivery(db, db_record.id)
         if payload.status == DeliveryStatus.delivered:
             handle_return_pickup_completion(db, db_record)
-            record_delivery_attempt(
-                db, db_record, agent_id=db_record.agent_id, outcome="delivered",
-                notes="Marked delivered via bulk action", attempted_at=now,
-            )
 
         results.append(BulkActionItemResult(delivery_id=delivery_id, success=True))
 
@@ -750,52 +675,12 @@ def update_delivery(
 
     old_status = db_record.status
 
-    # ENFORCEMENT: a failed_attempt update must carry a real, active
-    # reason code — this is what makes the delivery-attempts log
-    # (models/delivery_attempt.py) trustworthy instead of relying on
-    # whatever free-text `notes` an agent happened to type. Checked
-    # before any mutation so a rejected update leaves the record
-    # untouched.
-    reason = None
-    if update.status == DeliveryStatus.failed_attempt:
-        if not update.reason_code_id:
-            raise HTTPException(status_code=400, detail="A reason code is required to mark a delivery failed.")
-        reason = db.query(FailedDeliveryReasonDB).filter(
-            FailedDeliveryReasonDB.id == update.reason_code_id,
-            FailedDeliveryReasonDB.org_id == current_user.org_id,
-            FailedDeliveryReasonDB.active == True,  # noqa: E712
-        ).first()
-        if not reason:
-            raise HTTPException(status_code=400, detail="That reason code doesn't exist or is no longer active.")
-
-    # ENFORCEMENT (Phase 1 — Proof of Delivery): if this org has opted
-    # into ANY pod_require_* setting (see models/organization.py,
-    # routes/pod.py), a delivery can't be marked `delivered` until a
-    # POD row exists for it (submitted via POST /deliveries/{id}/pod,
-    # which itself already validated the payload against these same
-    # requirements at capture time — this is a defense-in-depth check,
-    # not a duplicate UI). Off by default, so an org that's never
-    # touched POD settings sees no change in behavior at all.
-    if update.status == DeliveryStatus.delivered:
-        org = db.query(OrganizationDB).filter(OrganizationDB.id == current_user.org_id).first()
-        if org and org_requires_any_pod(org):
-            if not pod_exists_for_delivery(db, db_record.id, current_user.org_id):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Proof of delivery is required before this delivery can be marked as delivered. "
-                           "Capture it first, then try again.",
-                )
-
     db_record.status = update.status
     db_record.notes = update.notes
     db_record.location_note = update.location_note
     db_record.updated_at = update.updated_at
     if update.proof_of_delivery is not None:
         db_record.proof_of_delivery = update.proof_of_delivery
-    if update.status == DeliveryStatus.delivered:
-        db_record.is_partial = update.is_partial
-        db_record.partial_notes = update.partial_notes if update.is_partial else None
-        classify_on_completion(db_record, update.updated_at)
 
     db.commit()
     db.refresh(db_record)
@@ -809,18 +694,12 @@ def update_delivery(
             old_status=old_status,
             new_status=update.status,
             changed_at=update.updated_at,
-            note=(f"Failed: {reason.label}" if reason else (
-                "Partially delivered" if (update.status == DeliveryStatus.delivered and update.is_partial) else None
-            )),
         )
         notify_customer_of_status_change(
             db,
             delivery_id=db_record.id,
             order_id=db_record.order_id,
-            new_status=(
-                "partial_delivery" if (update.status == DeliveryStatus.delivered and update.is_partial)
-                else update.status.value
-            ),
+            new_status=update.status.value,
             customer_email=db_record.customer_email,
             customer_phone=db_record.customer_phone,
             customer_id=db_record.customer_id,
@@ -839,176 +718,7 @@ def update_delivery(
             # services/returns_workflow.py).
             handle_return_pickup_completion(db, db_record)
 
-        # Log the attempt itself (see services/delivery_attempts.py) —
-        # only for outcomes that represent a real attempt at the door.
-        outcome = None
-        if update.status == DeliveryStatus.failed_attempt:
-            outcome = "failed_attempt"
-        elif update.status == DeliveryStatus.delivered:
-            outcome = "partial_delivery" if update.is_partial else "delivered"
-        if outcome:
-            record_delivery_attempt(
-                db,
-                db_record,
-                agent_id=db_record.agent_id or current_user.id,
-                outcome=outcome,
-                reason_code_id=reason.id if reason else None,
-                reason_label=reason.label if reason else None,
-                notes=update.notes or update.partial_notes,
-                attempted_at=update.updated_at,
-            )
-
     return db_record
-
-
-class RescheduleRequest(BaseModel):
-    rescheduled_to: datetime
-    reason: str
-
-
-class PriorityUpdateRequest(BaseModel):
-    priority: DeliveryPriority
-
-
-@router.post("/{delivery_id}/reschedule", response_model=DeliveryRecordOut)
-def reschedule_delivery(
-    delivery_id: str,
-    payload: RescheduleRequest,
-    db: Session = Depends(get_db),
-    current_user: UserDB = Depends(get_current_user),
-):
-    """
-    Reschedule a delivery to a new date/window — typically used after a
-    failed_attempt (customer wasn't available, asked for another day),
-    but not restricted to that: a dispatcher can also proactively
-    reschedule a still-pending or picked_up delivery.
-
-    Available to the assigned agent themselves (they're the one
-    standing at the door finding out a redelivery is needed) as well
-    as any dispatcher/admin in the org — not just dispatchers, unlike
-    most delivery-mutating endpoints in this file, since an agent
-    reschedules in the moment far more often than a dispatcher does.
-
-    Sets status to failed_attempt (this delivery still needs a real
-    attempt — it hasn't been delivered) and logs BOTH a history entry
-    and a failed_attempt delivery-attempt (see
-    services/delivery_attempts.py), since a reschedule genuinely is a
-    failed attempt at the original time, just one with a concrete
-    next-attempt date attached rather than an open-ended failure.
-    Refuses on an already-terminal delivery (delivered/cancelled) —
-    rescheduling a delivery that's already done or cancelled doesn't
-    make sense.
-    """
-    db_record = db.query(DeliveryRecordDB).filter(
-        DeliveryRecordDB.id == delivery_id,
-        DeliveryRecordDB.org_id == current_user.org_id,
-    ).first()
-    if not db_record:
-        raise HTTPException(status_code=404, detail="Delivery record not found")
-
-    if current_user.role == UserRole.agent and db_record.agent_id != current_user.id:
-        raise HTTPException(status_code=403, detail="You can only reschedule your own assigned deliveries.")
-
-    if db_record.status in (DeliveryStatus.delivered, DeliveryStatus.cancelled):
-        raise HTTPException(status_code=400, detail=f"Can't reschedule a delivery that's already {db_record.status.value}.")
-
-    if not payload.reason.strip():
-        raise HTTPException(status_code=400, detail="A reason is required to reschedule.")
-
-    old_status = db_record.status
-    now = datetime.utcnow()
-
-    db_record.status = DeliveryStatus.failed_attempt
-    db_record.rescheduled_to = payload.rescheduled_to
-    db_record.reschedule_reason = payload.reason.strip()
-    db_record.reschedule_count = (db_record.reschedule_count or 0) + 1
-    db_record.updated_at = now
-    db.commit()
-    db.refresh(db_record)
-
-    record_history_entry(
-        db,
-        delivery_id=db_record.id,
-        changed_by_user_id=current_user.id,
-        changed_by_display_name=current_user.display_name,
-        old_status=old_status,
-        new_status=db_record.status,
-        changed_at=now,
-        note=f"Rescheduled to {payload.rescheduled_to.strftime('%Y-%m-%d %H:%M')}: {payload.reason.strip()}",
-    )
-    record_delivery_attempt(
-        db, db_record, agent_id=db_record.agent_id, outcome="failed_attempt",
-        notes=f"Rescheduled: {payload.reason.strip()}", attempted_at=now,
-    )
-    notify_customer_of_status_change(
-        db,
-        delivery_id=db_record.id,
-        order_id=db_record.order_id,
-        new_status="rescheduled",
-        customer_email=db_record.customer_email,
-        customer_phone=db_record.customer_phone,
-        customer_id=db_record.customer_id,
-    )
-    broadcast_sync(tracking_room(db_record.id), {"event": "status_changed", "status": db_record.status.value})
-    broadcast_sync(dispatcher_queue_room(current_user.org_id), {"event": "queue_changed", "reason": "rescheduled"})
-
-    return db_record
-
-
-@router.patch("/{delivery_id}/priority", response_model=DeliveryRecordOut)
-def update_delivery_priority(
-    delivery_id: str,
-    payload: PriorityUpdateRequest,
-    db: Session = Depends(get_db),
-    current_user: UserDB = Depends(require_dispatcher),
-):
-    """
-    Dispatcher/admin-only: bump or lower a delivery's queue priority.
-    Doesn't touch status/history the way a real delivery event does —
-    just re-sorts where this delivery lands in list_deliveries()
-    (see _sort_by_priority) and list_unassigned_deliveries().
-    """
-    db_record = db.query(DeliveryRecordDB).filter(
-        DeliveryRecordDB.id == delivery_id,
-        DeliveryRecordDB.org_id == current_user.org_id,
-    ).first()
-    if not db_record:
-        raise HTTPException(status_code=404, detail="Delivery record not found")
-
-    db_record.priority = payload.priority.value
-    assign_sla(db, db_record)  # priority is a matching dimension for SLA policies — re-pick on change
-    db.commit()
-    db.refresh(db_record)
-
-    broadcast_sync(dispatcher_queue_room(current_user.org_id), {"event": "queue_changed", "reason": "priority_changed"})
-    return db_record
-
-
-@router.get("/{delivery_id}/attempts", response_model=List[DeliveryAttemptOut])
-def get_delivery_attempts(
-    delivery_id: str,
-    db: Session = Depends(get_db),
-    current_user: UserDB = Depends(get_current_user),
-):
-    """
-    Every logged delivery ATTEMPT (delivered/failed_attempt/partial_delivery
-    outcome) for this delivery, oldest first — distinct from
-    /{delivery_id}/history, which logs every status change including
-    non-attempt ones like assignment. See models/delivery_attempt.py.
-    """
-    db_record = db.query(DeliveryRecordDB).filter(
-        DeliveryRecordDB.id == delivery_id,
-        DeliveryRecordDB.org_id == current_user.org_id,
-    ).first()
-    if not db_record:
-        raise HTTPException(status_code=404, detail="Delivery record not found")
-
-    return (
-        db.query(DeliveryAttemptDB)
-        .filter(DeliveryAttemptDB.delivery_id == delivery_id)
-        .order_by(DeliveryAttemptDB.attempted_at.asc())
-        .all()
-    )
 
 
 class RouteOptimizeRequest(BaseModel):
@@ -1090,13 +800,8 @@ def list_deliveries(
     paginates on screen (PAGE_SIZE in DispatcherTable.jsx) — that's a
     display concern over data that's already local, which is the right
     place to page a dataset this shape.
-
-    Sorted urgent -> high -> normal -> low (see _sort_by_priority) so
-    the dispatcher table's default order surfaces the deliveries that
-    need attention first, without requiring a manual sort click.
     """
-    deliveries = db.query(DeliveryRecordDB).filter(DeliveryRecordDB.org_id == current_user.org_id).all()
-    return _sort_by_priority(deliveries)
+    return db.query(DeliveryRecordDB).filter(DeliveryRecordDB.org_id == current_user.org_id).all()
 
 
 @router.get("/mine", response_model=List[DeliveryRecordOut])

@@ -13,7 +13,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime, Integer, Boolean, Enum as SqlEnum
+from sqlalchemy import Column, String, DateTime, Enum as SqlEnum
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -27,32 +27,6 @@ class DeliveryStatus(str, enum.Enum):
     delivered = "delivered"
     failed_attempt = "failed_attempt"
     cancelled = "cancelled"
-
-
-class DeliveryPriority(str, enum.Enum):
-    """
-    Dispatcher queue priority. Deliberately a plain String column below
-    (not a SqlEnum like `status`) — SQLAlchemy's Enum type renders a
-    CHECK constraint baked with whatever values existed when a table
-    was first created, and this project's lightweight migration system
-    (db/migrate.py) only ever ADDs columns, it never touches an
-    existing CHECK constraint. A plain String avoids that trap entirely
-    (same reasoning `delivery_type` above already follows) while still
-    getting real validation via this enum at the Pydantic layer.
-    """
-    low = "low"
-    normal = "normal"
-    high = "high"
-    urgent = "urgent"
-
-
-# Higher number = more urgent = sorts first in the dispatcher queue.
-PRIORITY_RANK = {
-    DeliveryPriority.urgent.value: 3,
-    DeliveryPriority.high.value: 2,
-    DeliveryPriority.normal.value: 1,
-    DeliveryPriority.low.value: 0,
-}
 
 
 # ---------- Database Table ----------
@@ -133,58 +107,6 @@ class DeliveryRecordDB(Base):
     # complete (see routes/deliveries.py's update_delivery).
     delivery_type = Column(String, nullable=False, default="delivery")
 
-    # Dispatcher-queue priority — see DeliveryPriority above for why
-    # this is a plain string rather than a SqlEnum. Settable at
-    # creation and editable afterward via PATCH /deliveries/{id}/priority.
-    priority = Column(String, nullable=False, default=DeliveryPriority.normal.value)
-
-    # How many real delivery ATTEMPTS (delivered/failed_attempt/
-    # partial_delivery outcomes) this delivery has had — see
-    # services/delivery_attempts.py and models/delivery_attempt.py.
-    # Kept denormalized here (rather than always COUNT()-ing the
-    # delivery_attempts table) so it's a free read alongside the
-    # delivery record itself, e.g. for a dispatcher table column.
-    attempt_count = Column(Integer, nullable=False, default=0)
-
-    # Reschedule workflow: set by POST /deliveries/{id}/reschedule
-    # after a failed attempt. `rescheduled_to` is the new promised
-    # date/window; `reschedule_reason` is why (e.g. "customer asked
-    # for tomorrow"); `reschedule_count` tracks how many times this
-    # has happened, since a delivery rescheduled 4 times is a real
-    # operational signal worth surfacing to a dispatcher.
-    rescheduled_to = Column(DateTime, nullable=True)
-    reschedule_reason = Column(String, nullable=True)
-    reschedule_count = Column(Integer, nullable=False, default=0)
-
-    # Partial-delivery marking: set when an agent marks a delivery
-    # "Delivered" but not everything ordered was actually handed over
-    # (e.g. one item out of stock on the vehicle, or the customer only
-    # accepted part of the order). Status stays `delivered` — a
-    # partial delivery IS a completed attempt, not a failure — this
-    # flag + notes just record that it wasn't 100% complete, for
-    # whoever needs to follow up (refund the missing item, redeliver
-    # it, etc.).
-    is_partial = Column(Boolean, nullable=False, default=False)
-    partial_notes = Column(String, nullable=True)
-
-    # SLA tracking (Phase 2) — see models/sla.py and services/sla.py.
-    # sla_policy_id: which SLAPolicyDB matched at assignment time (kept
-    # even if that policy is later edited/deactivated, so a delivery's
-    # deadline doesn't retroactively move under it).
-    # sla_target_at: the computed deadline itself. Null means either no
-    # matching policy exists for this org, or the delivery hasn't been
-    # assigned yet (deadlines are computed from assignment time).
-    # sla_status: "not_applicable" (no policy/deadline) | "on_track" |
-    # "at_risk" (near-breach warning fired) | "breached" (deadline
-    # passed, still not delivered) | "met" (delivered by the deadline) |
-    # "missed" (delivered after the deadline). A plain String, not a
-    # SqlEnum — same CHECK-constraint-migration trap `priority` above
-    # already avoids.
-    sla_policy_id = Column(String, nullable=True)
-    sla_target_at = Column(DateTime, nullable=True)
-    sla_status = Column(String, nullable=False, default="not_applicable")
-    sla_breach_notified = Column(Boolean, nullable=False, default=False)
-
 
 # ---------- Pydantic Schemas (API request/response shapes) ----------
 
@@ -206,7 +128,6 @@ class DeliveryRecordCreate(BaseModel):
     slot_end: Optional[datetime] = None
     customer_email: Optional[str] = None
     customer_phone: Optional[str] = None
-    priority: Optional[DeliveryPriority] = DeliveryPriority.normal
 
 
 class ClaimOrderRequest(BaseModel):
@@ -229,16 +150,6 @@ class DeliveryRecordUpdate(BaseModel):
     location_note: Optional[str] = None
     updated_at: datetime
     proof_of_delivery: Optional[str] = None
-
-    # Required (enforced server-side, see update_delivery()) when
-    # status == failed_attempt — must reference an active
-    # FailedDeliveryReasonDB row belonging to the caller's org.
-    reason_code_id: Optional[str] = None
-
-    # Only meaningful when status == delivered — see
-    # DeliveryRecordDB.is_partial above for what this means.
-    is_partial: bool = False
-    partial_notes: Optional[str] = None
 
 
 class DeliveryRecordOut(BaseModel):
@@ -263,15 +174,6 @@ class DeliveryRecordOut(BaseModel):
     customer_phone: Optional[str] = None
     customer_id: Optional[str] = None
     delivery_type: str = "delivery"
-    priority: str = DeliveryPriority.normal.value
-    attempt_count: int = 0
-    rescheduled_to: Optional[datetime] = None
-    reschedule_reason: Optional[str] = None
-    reschedule_count: int = 0
-    is_partial: bool = False
-    partial_notes: Optional[str] = None
-    sla_target_at: Optional[datetime] = None
-    sla_status: str = "not_applicable"
 
     class Config:
         from_attributes = True  # allows conversion from SQLAlchemy objects
