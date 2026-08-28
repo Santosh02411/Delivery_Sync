@@ -1317,3 +1317,202 @@ export async function updateDeliveryPriority(token, deliveryId, priority) {
   if (!response.ok) throw new Error(data.detail || "Failed to update priority");
   return data;
 }
+
+// ---------- Workforce: shifts ----------
+
+export async function createShift(token, shift) {
+  const response = await fetch(`${API_BASE_URL}/workforce/shifts`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(shift),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create shift");
+  return data;
+}
+
+export async function fetchShifts(token, { userId, dateFrom, dateTo } = {}) {
+  const params = new URLSearchParams();
+  if (userId) params.set("user_id", userId);
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
+  const response = await fetch(`${API_BASE_URL}/workforce/shifts?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load shifts");
+  return data;
+}
+
+export async function fetchMyShifts(token, { dateFrom, dateTo } = {}) {
+  const params = new URLSearchParams();
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
+  const response = await fetch(`${API_BASE_URL}/workforce/shifts/mine?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load your shifts");
+  return data;
+}
+
+export async function updateShift(token, shiftId, updates) {
+  const response = await fetch(`${API_BASE_URL}/workforce/shifts/${shiftId}`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify(updates),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update shift");
+  return data;
+}
+
+export async function deleteShift(token, shiftId) {
+  const response = await fetch(`${API_BASE_URL}/workforce/shifts/${shiftId}`, {
+    method: "DELETE", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to delete shift");
+  return data;
+}
+
+// ---------- Workforce: attendance ----------
+
+export async function clockIn(token, shiftId, note) {
+  const response = await fetch(`${API_BASE_URL}/workforce/attendance/clock-in`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ shift_id: shiftId || null, note: note || null }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to clock in");
+  return data;
+}
+
+export async function clockOut(token, note) {
+  const response = await fetch(`${API_BASE_URL}/workforce/attendance/clock-out`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ note: note || null }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to clock out");
+  return data;
+}
+
+export async function fetchMyAttendance(token) {
+  const response = await fetch(`${API_BASE_URL}/workforce/attendance/mine`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load attendance");
+  return data;
+}
+
+export async function fetchAttendance(token, { userId, dateFrom, dateTo } = {}) {
+  const params = new URLSearchParams();
+  if (userId) params.set("user_id", userId);
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
+  const response = await fetch(`${API_BASE_URL}/workforce/attendance?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load attendance");
+  return data;
+}
+
+// ---------- Workforce: leave requests ----------
+
+export async function createLeaveRequest(token, request) {
+  const response = await fetch(`${API_BASE_URL}/workforce/leave-requests`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(request),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to submit leave request");
+  return data;
+}
+
+export async function fetchMyLeaveRequests(token) {
+  const response = await fetch(`${API_BASE_URL}/workforce/leave-requests/mine`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load leave requests");
+  return data;
+}
+
+export async function cancelLeaveRequest(token, requestId) {
+  const response = await fetch(`${API_BASE_URL}/workforce/leave-requests/${requestId}/cancel`, {
+    method: "POST", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to cancel leave request");
+  return data;
+}
+
+export async function fetchLeaveRequests(token, { status, userId } = {}) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (userId) params.set("user_id", userId);
+  const response = await fetch(`${API_BASE_URL}/workforce/leave-requests?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load leave requests");
+  return data;
+}
+
+export async function approveLeaveRequest(token, requestId, reviewNote) {
+  const response = await fetch(`${API_BASE_URL}/workforce/leave-requests/${requestId}/approve`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ review_note: reviewNote || null }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to approve leave request");
+  return data;
+}
+
+export async function rejectLeaveRequest(token, requestId, reviewNote) {
+  const response = await fetch(`${API_BASE_URL}/workforce/leave-requests/${requestId}/reject`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ review_note: reviewNote || null }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to reject leave request");
+  return data;
+}
+
+// ---------- Workforce: pay rates + earnings ----------
+
+export async function setPayRate(token, userId, updates) {
+  const response = await fetch(`${API_BASE_URL}/workforce/pay-rate/${userId}`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify(updates),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update pay rate");
+  return data;
+}
+
+export async function generateEarnings(token, { userId, periodStart, periodEnd }) {
+  const response = await fetch(`${API_BASE_URL}/workforce/earnings/generate`, {
+    method: "POST", headers: authHeaders(token),
+    body: JSON.stringify({ user_id: userId || null, period_start: periodStart, period_end: periodEnd }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to generate earnings");
+  return data;
+}
+
+export async function fetchMyEarnings(token) {
+  const response = await fetch(`${API_BASE_URL}/workforce/earnings/mine`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load earnings");
+  return data;
+}
+
+export async function fetchEarnings(token, { userId, status } = {}) {
+  const params = new URLSearchParams();
+  if (userId) params.set("user_id", userId);
+  if (status) params.set("status", status);
+  const response = await fetch(`${API_BASE_URL}/workforce/earnings?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load earnings");
+  return data;
+}
+
+export async function finalizeEarnings(token, statementId) {
+  const response = await fetch(`${API_BASE_URL}/workforce/earnings/${statementId}/finalize`, {
+    method: "POST", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to finalize statement");
+  return data;
+}
+
+export async function markEarningsPaid(token, statementId) {
+  const response = await fetch(`${API_BASE_URL}/workforce/earnings/${statementId}/mark-paid`, {
+    method: "POST", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to mark statement paid");
+  return data;
+}
