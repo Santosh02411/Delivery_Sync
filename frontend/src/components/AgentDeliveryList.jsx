@@ -8,11 +8,10 @@ import {
   queueLocationPing,
 } from "../services/indexedDb";
 import { startAutoSync, runSync, describeConflict } from "../services/syncEngine";
-import { startPodSync, queuePod, countQueuedPod } from "../services/podOfflineQueue";
 import { startLocationPingAutoSync } from "../services/locationSyncEngine";
 import { writeSyncContext } from "../services/backgroundSyncContext";
 import { API_BASE_URL } from "../services/api";
-import { deleteDeliveryOnServer, fetchMyDeliveriesFromServer, updateMyAgentLocation, detectMyArea, clearMyArea, setMyArea, fetchAreaSuggestions, rescheduleDelivery } from "../services/api";
+import { deleteDeliveryOnServer, fetchMyDeliveriesFromServer, updateMyAgentLocation, detectMyArea, clearMyArea, setMyArea, fetchAreaSuggestions } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import DeliveryStatusUpdater from "./DeliveryStatusUpdater";
@@ -41,7 +40,6 @@ export default function AgentDeliveryList() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDelivery, setSelectedDelivery] = useState(null);
   const [pendingDelivered, setPendingDelivered] = useState(null);
-  const [pendingPodCount, setPendingPodCount] = useState(0);
   const [showScanner, setShowScanner] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [isSharingLocation, setIsSharingLocation] = useState(false);
@@ -52,10 +50,6 @@ export default function AgentDeliveryList() {
   const [manualAreaInput, setManualAreaInput] = useState("");
   const [isSettingArea, setIsSettingArea] = useState(false);
   const [conflictNotices, setConflictNotices] = useState([]);
-  const [reschedulingId, setReschedulingId] = useState(null);
-  const [rescheduleDate, setRescheduleDate] = useState("");
-  const [rescheduleReason, setRescheduleReason] = useState("");
-  const [isRescheduling, setIsRescheduling] = useState(false);
   const watchIdRef = React.useRef(null);
 
   useEffect(() => {
@@ -79,11 +73,6 @@ export default function AgentDeliveryList() {
     });
 
     const stopLocationSync = startLocationPingAutoSync(token);
-    const stopPodSync = startPodSync(() => token);
-    countQueuedPod().then(setPendingPodCount).catch(() => {});
-    const podCountIntervalId = setInterval(() => {
-      countQueuedPod().then(setPendingPodCount).catch(() => {});
-    }, PULL_INTERVAL_MS);
 
     const pullIntervalId = setInterval(() => {
       if (navigator.onLine) pullAssignedDeliveries();
@@ -92,9 +81,7 @@ export default function AgentDeliveryList() {
     return () => {
       stopAutoSync();
       stopLocationSync();
-      stopPodSync();
       clearInterval(pullIntervalId);
-      clearInterval(podCountIntervalId);
     };
   }, []);
 
@@ -124,20 +111,17 @@ export default function AgentDeliveryList() {
     setDeliveries(sorted);
   }
 
-  async function handleStatusUpdate(deliveryId, newStatus, notes, extras = {}) {
+  async function handleStatusUpdate(deliveryId, newStatus, notes) {
     if (newStatus === "delivered") {
       // Don't save yet — require proof of delivery first. The actual
       // save happens in handleProofConfirm once the agent provides it.
-      // `extras` here carries is_partial/partial_notes from
-      // DeliveryStatusUpdater's "partially delivered" toggle, so that
-      // still applies once proof is captured.
-      setPendingDelivered({ deliveryId, notes, extras });
+      setPendingDelivered({ deliveryId, notes });
       return;
     }
-    await applyStatusUpdate(deliveryId, newStatus, notes, null, extras);
+    await applyStatusUpdate(deliveryId, newStatus, notes, null);
   }
 
-  async function applyStatusUpdate(deliveryId, newStatus, notes, proofOfDelivery, extras = {}) {
+  async function applyStatusUpdate(deliveryId, newStatus, notes, proofOfDelivery) {
     const existing = deliveries.find((d) => d.id === deliveryId);
     const now = new Date().toISOString();
 
@@ -147,58 +131,17 @@ export default function AgentDeliveryList() {
       notes: notes || existing?.notes || "",
       updated_at: now,
       ...(proofOfDelivery ? { proof_of_delivery: proofOfDelivery } : {}),
-      // reason_code_id (failed_attempt) / is_partial + partial_notes
-      // (delivered) — see routes/sync.py's SyncRecordIn and
-      // services/conflict_resolver.py for how these get applied and
-      // logged as a delivery attempt once this syncs to the server.
-      ...extras,
     };
 
     await saveDeliveryLocally(updatedRecord);
     await loadFromLocalStorage();
   }
 
-  async function handleProofConfirm(podPayload) {
-    const { deliveryId, notes, extras } = pendingDelivered;
+  async function handleProofConfirm(proofDataUrl) {
+    const { deliveryId, notes } = pendingDelivered;
     setPendingDelivered(null);
-    // podPayload is the full Phase 1 capture (recipient/OTP/signature/
-    // photo/GPS/notes) — the legacy `proof_of_delivery` blob field on
-    // the delivery record itself still gets the signature/photo (so
-    // older UI that only reads that field keeps working unchanged);
-    // the richer structured record is queued separately to
-    // POST /deliveries/{id}/pod, which is what actually satisfies an
-    // org's configured POD requirements (see services/pod.py).
-    const legacyProofBlob = podPayload.signature_data_url || podPayload.photo_data_url || null;
-    await applyStatusUpdate(deliveryId, "delivered", notes, legacyProofBlob, extras);
-    await queuePod(deliveryId, podPayload);
-    setPendingPodCount(await countQueuedPod());
-    showToast(
-      extras && extras.is_partial ? "Partial delivery confirmed with proof." : "Delivery confirmed with proof.",
-      "success"
-    );
-  }
-
-  async function handleRescheduleSubmit(deliveryId) {
-    if (!rescheduleDate || !rescheduleReason.trim()) return;
-    setIsRescheduling(true);
-    try {
-      const updated = await rescheduleDelivery(token, deliveryId, new Date(rescheduleDate).toISOString(), rescheduleReason.trim());
-      // Reschedule is an online-only endpoint (not part of the offline
-      // sync flow, since it needs the server's own failed-attempt
-      // enforcement + reason logging immediately) — merge the server's
-      // response straight into the local cache so the UI reflects it
-      // without waiting for the next full re-fetch.
-      await mergeAssignedDeliveries([updated]);
-      await loadFromLocalStorage();
-      showToast("Delivery rescheduled.", "success");
-      setReschedulingId(null);
-      setRescheduleDate("");
-      setRescheduleReason("");
-    } catch (error) {
-      showToast(`Couldn't reschedule: ${error.message}`, "error");
-    } finally {
-      setIsRescheduling(false);
-    }
+    await applyStatusUpdate(deliveryId, "delivered", notes, proofDataUrl);
+    showToast("Delivery confirmed with proof.", "success");
   }
 
   async function handleDelete(delivery) {
@@ -613,61 +556,6 @@ export default function AgentDeliveryList() {
             currentStatus={delivery.status}
             onUpdate={handleStatusUpdate}
           />
-
-          {delivery.status !== "delivered" && delivery.status !== "cancelled" && (
-            reschedulingId === delivery.id ? (
-              <div style={{ marginTop: "10px", padding: "10px", border: "1px solid var(--border)", borderRadius: "8px" }}>
-                <label style={{ fontSize: "13px", fontWeight: 600, display: "block", marginBottom: "6px" }}>
-                  New delivery date/time
-                </label>
-                <input
-                  type="datetime-local"
-                  className="input"
-                  value={rescheduleDate}
-                  onChange={(e) => setRescheduleDate(e.target.value)}
-                  style={{ width: "100%" }}
-                />
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="Reason (e.g. customer asked for tomorrow)"
-                  value={rescheduleReason}
-                  onChange={(e) => setRescheduleReason(e.target.value)}
-                  style={{ marginTop: "8px", width: "100%" }}
-                />
-                <div style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                  <button
-                    className="btn btn-primary"
-                    disabled={isRescheduling || !rescheduleDate || !rescheduleReason.trim()}
-                    onClick={() => handleRescheduleSubmit(delivery.id)}
-                  >
-                    {isRescheduling ? "Rescheduling…" : "Confirm Reschedule"}
-                  </button>
-                  <button className="btn" onClick={() => setReschedulingId(null)}>Cancel</button>
-                </div>
-                {!navigator.onLine && (
-                  <p style={{ fontSize: "12px", color: "var(--danger)", marginTop: "6px" }}>
-                    Rescheduling needs a connection — try again once you're back online.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <button
-                className="btn"
-                style={{ marginTop: "8px" }}
-                onClick={() => { setReschedulingId(delivery.id); setRescheduleDate(""); setRescheduleReason(""); }}
-              >
-                Reschedule
-              </button>
-            )
-          )}
-
-          {delivery.reschedule_count > 0 && (
-            <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "6px" }}>
-              Rescheduled {delivery.reschedule_count}x
-              {delivery.rescheduled_to && ` — next attempt: ${new Date(delivery.rescheduled_to).toLocaleString()}`}
-            </p>
-          )}
         </div>
       ))}
 
@@ -688,16 +576,9 @@ export default function AgentDeliveryList() {
 
       {pendingDelivered && (
         <ProofOfDeliveryModal
-          deliveryId={pendingDelivered.deliveryId}
-          token={token}
           onConfirm={handleProofConfirm}
           onCancel={() => setPendingDelivered(null)}
         />
-      )}
-      {pendingPodCount > 0 && (
-        <div style={{ position: "fixed", bottom: 16, right: 16, background: "#334155", color: "#fff", padding: "8px 14px", borderRadius: 8, fontSize: 13 }}>
-          {pendingPodCount} proof-of-delivery {pendingPodCount === 1 ? "record" : "records"} waiting to sync
-        </div>
       )}
     </div>
   );

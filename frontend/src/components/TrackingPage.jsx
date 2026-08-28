@@ -71,12 +71,6 @@ export default function TrackingPage({ deliveryId }) {
             <h2 className="mono" style={{ marginBottom: "8px" }}>{data.order_id}</h2>
             <StatusBadge status={data.status} />
 
-            {(data.sla_status === "at_risk" || data.sla_status === "breached" || data.sla_status === "missed") && (
-              <div style={{ marginTop: "10px", fontSize: "13px", color: "var(--warning, #b45309)", fontWeight: 600 }}>
-                This delivery is running a bit behind schedule.
-              </div>
-            )}
-
             {(data.status === "picked_up" || data.status === "out_for_delivery") && (
               <div style={{ marginTop: "14px" }}>
                 <LiveTrackingMap deliveryId={deliveryId} />

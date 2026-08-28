@@ -15,9 +15,6 @@ import AnalyticsDashboard from "./components/AnalyticsDashboard";
 import AdminPanel from "./components/AdminPanel";
 import AuditLogViewer from "./components/AuditLogViewer";
 import ZoneManager from "./components/ZoneManager";
-import FailedDeliveryReasonManager from "./components/FailedDeliveryReasonManager";
-import MyWorkforce from "./components/MyWorkforce";
-import WorkforceManager from "./components/WorkforceManager";
 import ReturnRequestsPanel from "./components/ReturnRequestsPanel";
 import TwoFactorSettings from "./components/TwoFactorSettings";
 import AccountSettings from "./components/AccountSettings";
@@ -28,11 +25,6 @@ import ResetPasswordPage from "./components/ResetPasswordPage";
 import VerifyEmailPage from "./components/VerifyEmailPage";
 import TrackingPage from "./components/TrackingPage";
 import CustomerDashboard from "./components/CustomerDashboard";
-import SlaManager from "./components/SlaManager";
-import PodSettingsPanel from "./components/PodSettingsPanel";
-import WarehouseManager from "./components/WarehouseManager";
-import RbacManager from "./components/RbacManager";
-import ReconciliationDashboard from "./components/ReconciliationDashboard";
 
 function StaffDashboard({ user }) {
   const { token } = useAuth();
@@ -55,9 +47,6 @@ function StaffDashboard({ user }) {
           )}
           {user.role === "admin" && currentView === "admin" && <AdminPanel />}
           {user.role === "admin" && currentView === "zones" && <ZoneManager />}
-          {user.role === "admin" && currentView === "reason-codes" && <FailedDeliveryReasonManager />}
-          {user.role === "agent" && currentView === "workforce" && <MyWorkforce />}
-          {(user.role === "dispatcher" || user.role === "admin") && currentView === "workforce" && <WorkforceManager />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "returns" && (
             <ReturnRequestsPanel />
           )}
@@ -66,11 +55,6 @@ function StaffDashboard({ user }) {
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "products" && (
             <ProductManager />
           )}
-          {(user.role === "dispatcher" || user.role === "admin") && currentView === "sla" && <SlaManager />}
-          {(user.role === "dispatcher" || user.role === "admin") && currentView === "warehouses" && <WarehouseManager />}
-          {(user.role === "dispatcher" || user.role === "admin") && currentView === "reconciliation" && <ReconciliationDashboard />}
-          {user.role === "admin" && currentView === "pod-settings" && <PodSettingsPanel />}
-          {user.role === "admin" && currentView === "rbac" && <RbacManager />}
           {currentView === "account" && <AccountSettings />}
           {currentView === "security" && <TwoFactorSettings />}
         </div>

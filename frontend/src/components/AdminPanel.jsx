@@ -5,8 +5,6 @@ import {
   deactivateUser,
   activateUser,
   resetUserPassword,
-  fetchCustomRoles,
-  assignCustomRole,
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
@@ -28,31 +26,11 @@ export default function AdminPanel() {
   const [resetTargetId, setResetTargetId] = useState(null);
   const [newPassword, setNewPassword] = useState("");
   const [isResetting, setIsResetting] = useState(false);
-  const [customRoles, setCustomRoles] = useState([]);
 
   useEffect(() => {
     loadUsers();
     loadOrgInfo();
-    loadCustomRoles();
   }, []);
-
-  async function loadCustomRoles() {
-    try {
-      setCustomRoles(await fetchCustomRoles(token));
-    } catch (err) {
-      console.warn("Could not load custom roles:", err.message);
-    }
-  }
-
-  async function handleAssignRole(userId, customRoleId) {
-    try {
-      await assignCustomRole(token, userId, customRoleId || null);
-      showToast("Role assignment updated.", "success");
-      await loadUsers();
-    } catch (err) {
-      showToast(err.message, "error");
-    }
-  }
 
   async function loadOrgInfo() {
     try {
@@ -135,7 +113,6 @@ export default function AdminPanel() {
               <th>Display Name</th>
               <th>Username</th>
               <th>Role</th>
-              <th>Custom Role</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -146,23 +123,6 @@ export default function AdminPanel() {
                 <td>{u.display_name}</td>
                 <td className="mono">{u.username}</td>
                 <td style={{ textTransform: "capitalize" }}>{u.role}</td>
-                <td>
-                  {u.role === "admin" ? (
-                    <span style={{ color: "var(--text-muted)", fontSize: "12px" }}>N/A (full access)</span>
-                  ) : (
-                    <select
-                      className="input"
-                      style={{ fontSize: "12.5px", padding: "4px 6px" }}
-                      value={u.custom_role_id || ""}
-                      onChange={(e) => handleAssignRole(u.id, e.target.value)}
-                    >
-                      <option value="">Default ({u.role} permissions)</option>
-                      {customRoles.map((r) => (
-                        <option key={r.id} value={r.id}>{r.name}</option>
-                      ))}
-                    </select>
-                  )}
-                </td>
                 <td>
                   <span style={{ color: u.is_active ? "var(--status-delivered)" : "var(--danger)", fontWeight: 600 }}>
                     {u.is_active ? "Active" : "Deactivated"}

@@ -6,7 +6,6 @@ import VerificationBanner from "./VerificationBanner";
 import {
   fetchMyCustomerDeliveries,
   fetchMyCustomerDeliveryHistory,
-  fetchMyCustomerDeliveryPod,
   fetchMyCustomerDeliveryFeedback,
   fetchMyCustomerNotifications,
   markAllCustomerNotificationsRead,
@@ -48,7 +47,6 @@ import {
 import { startCustomerActionAutoSync } from "../services/customerSyncEngine";
 import { writeSyncContext } from "../services/backgroundSyncContext";
 import { urlBase64ToUint8Array } from "../services/pushUtil";
-import CustomerDeliveryMessages from "./CustomerDeliveryMessages";
 
 const STATUS_LABELS = {
   confirmed: "Order Confirmed",
@@ -853,7 +851,6 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
   const [returnReason, setReturnReason] = useState("");
   const [isSubmittingReturn, setIsSubmittingReturn] = useState(false);
   const [returnError, setReturnError] = useState(null);
-  const [podDetail, setPodDetail] = useState(null);
 
   useEffect(() => {
     if (isExpanded) loadDetails();
@@ -869,13 +866,6 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
       setFeedback(feedbackData);
     } catch (err) {
       console.warn("Could not load order details:", err.message);
-    }
-    if (delivery.status === "delivered") {
-      try {
-        setPodDetail(await fetchMyCustomerDeliveryPod(token, delivery.id));
-      } catch (err) {
-        console.warn("Could not load proof of delivery:", err.message);
-      }
     }
     if (delivery.status === "delivered") {
       try {
@@ -997,11 +987,6 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
         <span className="delivery-card-order-id">{delivery.order_id}</span>
         <StatusBadge status={delivery.status} />
       </div>
-      {(delivery.sla_status === "at_risk" || delivery.sla_status === "breached" || delivery.sla_status === "missed") && (
-        <div style={{ fontSize: "12px", color: "var(--warning, #b45309)", fontWeight: 600, marginTop: "4px" }}>
-          Running a bit behind schedule
-        </div>
-      )}
       <div style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginTop: "6px" }}>
         Last updated: {new Date(delivery.updated_at).toLocaleString()}
         {delivery.expected_by && ` · Expected by ${new Date(delivery.expected_by).toLocaleString()}`}
@@ -1110,20 +1095,6 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
                 alt="Proof of delivery"
                 style={{ maxWidth: "100%", maxHeight: "160px", borderRadius: "var(--radius-sm)", border: "1px solid var(--border-color)" }}
               />
-              {podDetail && (podDetail.recipient_name || podDetail.notes) && (
-                <div style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginTop: "6px" }}>
-                  {podDetail.recipient_name && <div>Received by: {podDetail.recipient_name}</div>}
-                  {podDetail.otp_verified && <div>Verified with a one-time code</div>}
-                  {podDetail.notes && <div>{podDetail.notes}</div>}
-                </div>
-              )}
-            </div>
-          )}
-
-          {!["delivered", "cancelled"].includes(delivery.status) && (
-            <div style={{ marginBottom: "14px" }}>
-              <div style={{ fontSize: "12.5px", fontWeight: 600, marginBottom: "8px" }}>Message the delivery team</div>
-              <CustomerDeliveryMessages deliveryId={delivery.id} />
             </div>
           )}
 

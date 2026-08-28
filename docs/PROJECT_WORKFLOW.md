@@ -688,50 +688,6 @@ didn't change" when anything upstream of it did.
 
 ---
 
-## Session: Rest of Group 2 — Delivery Lifecycle Completion
-
-**Scope:** failed-delivery reason codes (CRUD + enforcement),
-delivery-attempts logging, reschedule workflow, partial-delivery
-marking, priority-based dispatcher-queue sorting — the remaining
-delivery-lifecycle work after the core CRUD/offline-sync/dispatcher
-console had already shipped.
-
-**Design decision worth remembering:** `DeliveryPriority` is a plain
-`String` column on `DeliveryRecordDB`, not a `SqlEnum` like `status`.
-The reason is specific to this project's migration approach:
-`db/migrate.py` only ever ADDs new columns to an existing SQLite
-table, it never alters a column's constraints. SQLAlchemy's `Enum`
-type on SQLite renders as a `CHECK` constraint baked with whatever
-values existed at table-creation time — so if `status` had gained a
-new enum value the same way `priority` was added, any database file
-created before that value existed would reject it outright. Rather
-than touch that risk at all, the reschedule workflow reuses the
-existing `failed_attempt` status (a rescheduled delivery genuinely
-hasn't been delivered yet) instead of adding a `rescheduled` status
-value, and partial delivery is a boolean flag on top of `delivered`
-rather than a new status. `priority`, `attempt_count`, and the
-reschedule/partial fields are all new *columns* (safe, additive) with
-validation happening at the Pydantic layer instead of the DB layer.
-
-**Offline sync trade-off:** the online `PATCH /deliveries/{id}` path
-hard-rejects a `failed_attempt` update missing a valid reason code
-(400). The offline `/sync` path does not — `/sync` is intentionally
-unauthenticated and processes a whole batch of an agent's queued
-changes at once; rejecting a record over a missing reason code would
-strand it retrying forever with no way for the agent to fix it until
-they're back online and using the enforced path anyway. The attempt
-is still logged either way, just without a reason code if one wasn't
-present — a visible gap for a dispatcher to notice, rather than lost
-data or a permanently-stuck sync queue.
-
-No new bugs surfaced this session — the existing 100-test suite
-passed unchanged throughout, and all 21 new tests (reason-code CRUD,
-enforcement, attempt logging, reschedule, partial marking, priority
-sorting, and the offline-sync threading test) passed on first
-correct implementation after the initial route-registration fix.
-
----
-
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something

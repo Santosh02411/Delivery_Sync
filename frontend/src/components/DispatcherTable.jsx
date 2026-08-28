@@ -13,7 +13,6 @@ import {
   autoAssignDelivery,
   bulkUpdateDeliveryStatus,
   bulkAssignAgent,
-  updateDeliveryPriority,
   API_BASE_URL,
 } from "../services/api";
 import {
@@ -48,7 +47,6 @@ const SORT_OPTIONS = [
   { value: "updated_asc", label: "Oldest Updated First" },
   { value: "order_id_asc", label: "Order ID (A-Z)" },
   { value: "status", label: "Status" },
-  { value: "priority", label: "Priority" },
 ];
 
 const PAGE_SIZE = 8;
@@ -58,8 +56,6 @@ const PAGE_SIZE = 8;
  * deliveries, and browse all deliveries with status/agent/date filters,
  * sorting, search, pagination, and a click-through detail modal.
  */
-const PRIORITY_RANK = { urgent: 3, high: 2, normal: 1, low: 0 };
-
 export default function DispatcherTable() {
   const { token, user } = useAuth();
   const { showToast } = useToast();
@@ -87,7 +83,6 @@ export default function DispatcherTable() {
   const [showCoordFields, setShowCoordFields] = useState(false);
   const [newLatitude, setNewLatitude] = useState("");
   const [newLongitude, setNewLongitude] = useState("");
-  const [newPriority, setNewPriority] = useState("normal");
   const [isAssigning, setIsAssigning] = useState(false);
 
   const [selectedDelivery, setSelectedDelivery] = useState(null);
@@ -199,18 +194,6 @@ export default function DispatcherTable() {
     setSelectedIds(new Set());
   }
 
-  async function handlePriorityChange(deliveryId, newPriority) {
-    // Optimistic update so the row re-sorts/re-labels immediately
-    // rather than waiting on the round-trip.
-    setDeliveries((prev) => prev.map((d) => (d.id === deliveryId ? { ...d, priority: newPriority } : d)));
-    try {
-      await updateDeliveryPriority(token, deliveryId, newPriority);
-    } catch (err) {
-      showToast(`Couldn't update priority: ${err.message}`, "error");
-      loadDeliveries(); // revert to server truth on failure
-    }
-  }
-
   function summarizeBulkResult(result, actionLabel) {
     if (result.failure_count === 0) {
       showToast(`${actionLabel}: ${result.success_count} updated.`, "success");
@@ -288,7 +271,6 @@ export default function DispatcherTable() {
       latitude: latTrimmed || null,
       longitude: lonTrimmed || null,
       expected_by: newExpectedBy ? new Date(newExpectedBy).toISOString() : null,
-      priority: newPriority,
       created_at: now,
       updated_at: now,
     };
@@ -299,7 +281,6 @@ export default function DispatcherTable() {
       setNewNotes("");
       setNewZone("");
       setNewExpectedBy("");
-      setNewPriority("normal");
       setNewCustomerEmail("");
       setNewCustomerPhone("");
       setNewLatitude("");
@@ -367,8 +348,6 @@ export default function DispatcherTable() {
         return a.order_id.localeCompare(b.order_id);
       case "status":
         return a.status.localeCompare(b.status);
-      case "priority":
-        return (PRIORITY_RANK[b.priority] ?? 1) - (PRIORITY_RANK[a.priority] ?? 1) || new Date(a.created_at) - new Date(b.created_at);
       case "updated_desc":
       default:
         return new Date(b.updated_at) - new Date(a.updated_at);
@@ -463,15 +442,6 @@ export default function DispatcherTable() {
               <div>
                 <label className="field-label">Expected By (optional)</label>
                 <input className="input" type="datetime-local" value={newExpectedBy} onChange={(e) => setNewExpectedBy(e.target.value)} />
-              </div>
-              <div>
-                <label className="field-label">Priority</label>
-                <select className="input" value={newPriority} onChange={(e) => setNewPriority(e.target.value)}>
-                  <option value="low">Low</option>
-                  <option value="normal">Normal</option>
-                  <option value="high">High</option>
-                  <option value="urgent">Urgent</option>
-                </select>
               </div>
               <div style={{ flexGrow: 1, minWidth: "150px" }}>
                 <label className="field-label">Notes (optional)</label>
@@ -655,7 +625,6 @@ export default function DispatcherTable() {
               <th>Customer</th>
               <th>Agent</th>
               <th>Zone</th>
-              <th>Priority</th>
               <th>Status</th>
               <th>Expected By</th>
               <th>Last Updated</th>
@@ -685,24 +654,6 @@ export default function DispatcherTable() {
                   </td>
                   <td>{agentNameById.get(d.agent_id) || d.agent_id}</td>
                   <td>{d.zone || "—"}</td>
-                  <td onClick={(e) => e.stopPropagation()}>
-                    <select
-                      className="input"
-                      style={{
-                        padding: "2px 6px",
-                        fontSize: "12px",
-                        color: d.priority === "urgent" ? "var(--danger)" : d.priority === "high" ? "var(--warning, #b45309)" : undefined,
-                        fontWeight: (d.priority === "urgent" || d.priority === "high") ? 600 : 400,
-                      }}
-                      value={d.priority || "normal"}
-                      onChange={(e) => handlePriorityChange(d.id, e.target.value)}
-                    >
-                      <option value="low">Low</option>
-                      <option value="normal">Normal</option>
-                      <option value="high">High</option>
-                      <option value="urgent">Urgent</option>
-                    </select>
-                  </td>
                   <td><StatusBadge status={d.status} /></td>
                   <td style={{ color: isOverdue ? "var(--danger)" : undefined, fontWeight: isOverdue ? 600 : undefined }}>
                     {d.expected_by ? new Date(d.expected_by).toLocaleString() : "—"}
