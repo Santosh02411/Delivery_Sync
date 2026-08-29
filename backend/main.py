@@ -34,9 +34,10 @@ import os
 from app.db.session import Base, engine
 from app.db.migrate import run_lightweight_migrations
 from app.services.rate_limiter import limiter
-from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce
+from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce, pod, sla
 from app.db.session import SessionLocal
 from app.services.subscription_scheduler import start_subscription_scheduler
+from app.services.sla_monitor import start_sla_monitor
 
 # Create all database tables on startup (if they don't already exist),
 # then catch up any EXISTING table to the model's current columns — see
@@ -179,6 +180,8 @@ app.include_router(slots.router)
 app.include_router(subscriptions.router)
 app.include_router(failed_delivery_reasons.router)
 app.include_router(workforce.router)
+app.include_router(pod.router)
+app.include_router(sla.router)
 
 
 # Background task reference kept on app.state so it isn't garbage
@@ -187,6 +190,11 @@ app.include_router(workforce.router)
 @app.on_event("startup")
 async def _launch_subscription_scheduler():
     app.state.subscription_scheduler_task = start_subscription_scheduler(SessionLocal)
+
+
+@app.on_event("startup")
+async def _launch_sla_monitor():
+    app.state.sla_monitor_task = start_sla_monitor(SessionLocal)
 
 
 @app.get("/")
