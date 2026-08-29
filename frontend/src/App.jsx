@@ -30,6 +30,8 @@ import TrackingPage from "./components/TrackingPage";
 import CustomerDashboard from "./components/CustomerDashboard";
 import SlaManager from "./components/SlaManager";
 import PodSettingsPanel from "./components/PodSettingsPanel";
+import WarehouseManager from "./components/WarehouseManager";
+import RbacManager from "./components/RbacManager";
 
 function StaffDashboard({ user }) {
   const { token } = useAuth();
@@ -64,7 +66,9 @@ function StaffDashboard({ user }) {
             <ProductManager />
           )}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "sla" && <SlaManager />}
+          {(user.role === "dispatcher" || user.role === "admin") && currentView === "warehouses" && <WarehouseManager />}
           {user.role === "admin" && currentView === "pod-settings" && <PodSettingsPanel />}
+          {user.role === "admin" && currentView === "rbac" && <RbacManager />}
           {currentView === "account" && <AccountSettings />}
           {currentView === "security" && <TwoFactorSettings />}
         </div>
