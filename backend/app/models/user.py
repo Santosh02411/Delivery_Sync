@@ -87,6 +87,12 @@ class UserDB(Base):
     hourly_rate = Column(Float, nullable=True)
     per_delivery_rate = Column(Float, nullable=True)
 
+    # Granular RBAC (Phase 4) — see models/rbac.py's module docstring.
+    # Null means "use this user's base `role`'s default permission
+    # grants" (see services/permissions.py) — completely unaffected
+    # unless an admin explicitly assigns a custom role.
+    custom_role_id = Column(String, nullable=True)
+
 
 # ---------- Pydantic Schemas ----------
 
@@ -128,6 +134,7 @@ class UserOut(BaseModel):
     area_name: Optional[str] = None
     hourly_rate: Optional[float] = None
     per_delivery_rate: Optional[float] = None
+    custom_role_id: Optional[str] = None
 
     class Config:
         from_attributes = True
