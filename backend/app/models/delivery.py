@@ -167,6 +167,24 @@ class DeliveryRecordDB(Base):
     is_partial = Column(Boolean, nullable=False, default=False)
     partial_notes = Column(String, nullable=True)
 
+    # SLA tracking (Phase 2) — see models/sla.py and services/sla.py.
+    # sla_policy_id: which SLAPolicyDB matched at assignment time (kept
+    # even if that policy is later edited/deactivated, so a delivery's
+    # deadline doesn't retroactively move under it).
+    # sla_target_at: the computed deadline itself. Null means either no
+    # matching policy exists for this org, or the delivery hasn't been
+    # assigned yet (deadlines are computed from assignment time).
+    # sla_status: "not_applicable" (no policy/deadline) | "on_track" |
+    # "at_risk" (near-breach warning fired) | "breached" (deadline
+    # passed, still not delivered) | "met" (delivered by the deadline) |
+    # "missed" (delivered after the deadline). A plain String, not a
+    # SqlEnum — same CHECK-constraint-migration trap `priority` above
+    # already avoids.
+    sla_policy_id = Column(String, nullable=True)
+    sla_target_at = Column(DateTime, nullable=True)
+    sla_status = Column(String, nullable=False, default="not_applicable")
+    sla_breach_notified = Column(Boolean, nullable=False, default=False)
+
 
 # ---------- Pydantic Schemas (API request/response shapes) ----------
 
@@ -252,6 +270,8 @@ class DeliveryRecordOut(BaseModel):
     reschedule_count: int = 0
     is_partial: bool = False
     partial_notes: Optional[str] = None
+    sla_target_at: Optional[datetime] = None
+    sla_status: str = "not_applicable"
 
     class Config:
         from_attributes = True  # allows conversion from SQLAlchemy objects

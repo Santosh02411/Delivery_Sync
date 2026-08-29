@@ -17,6 +17,9 @@ from app.services.delivery_attempts import record_delivery_attempt, ATTEMPT_OUTC
 from app.services.notifications import notify_customer_of_status_change
 from app.services.returns_workflow import handle_return_pickup_completion
 from app.services.websocket_manager import broadcast_sync, tracking_room
+from app.models.organization import OrganizationDB
+from app.services.pod import org_requires_any_pod, pod_exists_for_delivery
+from app.services.sla import assign_sla, classify_on_completion
 
 
 def _log_synced_attempt(db: Session, db_record: DeliveryRecordDB, agent_id: str, status, is_partial: bool, reason_code_id: str | None, notes: str | None, attempted_at: datetime) -> None:
@@ -130,9 +133,31 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
     # updating the record with the rest of record_data.
     reason_code_id = record_data.pop("reason_code_id", None)
 
+    # ENFORCEMENT (Phase 1 — Proof of Delivery): this is the OTHER place
+    # (besides routes/deliveries.py's online PATCH) a delivery can end
+    # up "delivered" — an agent completing a delivery while offline,
+    # synced here later. Same rule, same org opt-in: if the org requires
+    # POD and none has been captured for this delivery yet, the record
+    # is rejected (ValueError -> routes/sync.py's per-record `errors`
+    # list) rather than silently marked delivered. It stays "pending" on
+    # the client and retries on the next sync — which succeeds once the
+    # agent's queued POD capture (see frontend services/podOfflineQueue.js)
+    # has synced first. This never blocks orgs that haven't opted into
+    # any pod_require_* setting.
+    if record_data.get("status") == DeliveryStatus.delivered:
+        org = db.query(OrganizationDB).filter(OrganizationDB.id == agent.org_id).first()
+        if org and org_requires_any_pod(org) and not pod_exists_for_delivery(db, record_data["id"], agent.org_id):
+            raise ValueError(
+                "Proof of delivery is required before this delivery can be marked as delivered. "
+                "It will sync automatically once proof of delivery has been captured."
+            )
+
     if not existing:
         # No conflict — this is a new record, just insert it
         new_record = DeliveryRecordDB(**record_data)
+        assign_sla(db, new_record)  # SLA (Phase 2): compute a deadline for this newly-synced delivery too
+        if new_record.status == DeliveryStatus.delivered:
+            classify_on_completion(new_record, new_record.updated_at)
         db.add(new_record)
         db.commit()
         db.refresh(new_record)
@@ -171,6 +196,7 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
         if existing.status == DeliveryStatus.delivered:
             existing.is_partial = record_data.get("is_partial", False)
             existing.partial_notes = record_data.get("partial_notes") if existing.is_partial else None
+            classify_on_completion(existing, incoming_updated_at)
         db.commit()
         db.refresh(existing)
 

@@ -213,6 +213,29 @@ def notify_agent_of_new_assignment(db: Session, delivery_id: str, order_id: str,
     )
 
 
+def notify_dispatchers_of_sla_event(db: Session, org_id: str, order_id: str, event: str) -> None:
+    """
+    Web Push to every dispatcher/admin in an org when a delivery
+    crosses an SLA threshold — `event` is "at_risk" (near-breach
+    warning) or "breached". Mirrors notify_dispatchers_of_new_order
+    exactly; kept as its own function since the copy differs and a
+    future caller may want to filter/rate-limit SLA pushes separately
+    from new-order pushes.
+    """
+    staff_ids = [
+        row[0] for row in db.query(UserDB.id).filter(
+            UserDB.org_id == org_id,
+            UserDB.role.in_([UserRole.dispatcher, UserRole.admin]),
+        ).all()
+    ]
+    tracking_link = f"{FRONTEND_URL}/?dashboard"
+    if event == "breached":
+        title, body = "SLA breached", f"Order {order_id} has missed its delivery SLA deadline."
+    else:
+        title, body = "SLA at risk", f"Order {order_id} is approaching its delivery SLA deadline."
+    _push_to_user_ids(db, staff_ids, title=title, body=body, url=tracking_link)
+
+
 def notify_dispatchers_of_new_order(db: Session, org_id: str, order_id: str) -> None:
     """
     Web Push to every dispatcher AND admin in an org, the moment a new
