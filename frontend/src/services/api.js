@@ -1516,3 +1516,121 @@ export async function markEarningsPaid(token, statementId) {
   if (!response.ok) throw new Error(data.detail || "Failed to mark statement paid");
   return data;
 }
+
+// ---------- Proof of Delivery (Phase 1) ----------
+
+export async function generateDeliveryOtp(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/pod/otp`, {
+    method: "POST", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to send verification code");
+  return data;
+}
+
+export async function submitProofOfDelivery(token, deliveryId, payload) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/pod`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to submit proof of delivery");
+  return data;
+}
+
+export async function fetchProofOfDelivery(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/pod`, { headers: authHeaders(token) });
+  if (response.status === 404) return null;
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load proof of delivery");
+  return data;
+}
+
+export async function fetchProofOfDeliveryHistory(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/pod/history`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load proof of delivery history");
+  return data;
+}
+
+export async function fetchMyCustomerDeliveryPod(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/customer/deliveries/${deliveryId}/pod`, { headers: authHeaders(token) });
+  if (response.status === 404) return null;
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load proof of delivery");
+  return data;
+}
+
+export async function fetchPodSettings(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/pod-settings`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load POD settings");
+  return data;
+}
+
+export async function updatePodSettings(token, settings) {
+  const response = await fetch(`${API_BASE_URL}/admin/pod-settings`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify(settings),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update POD settings");
+  return data;
+}
+
+export async function exportPodReportCSV(token, dateFrom, dateTo) {
+  const params = new URLSearchParams();
+  if (dateFrom) params.set("date_from", dateFrom);
+  if (dateTo) params.set("date_to", dateTo);
+  const response = await fetch(`${API_BASE_URL}/admin/pod-report?${params}`, { headers: authHeaders(token) });
+  if (!response.ok) throw new Error("Failed to export POD report");
+  return response.blob();
+}
+
+// ---------- SLA Management (Phase 2) ----------
+
+export async function fetchSlaPolicies(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/sla/policies`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load SLA policies");
+  return data;
+}
+
+export async function createSlaPolicy(token, policy) {
+  const response = await fetch(`${API_BASE_URL}/admin/sla/policies`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(policy),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create SLA policy");
+  return data;
+}
+
+export async function updateSlaPolicy(token, policyId, updates) {
+  const response = await fetch(`${API_BASE_URL}/admin/sla/policies/${policyId}`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify(updates),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update SLA policy");
+  return data;
+}
+
+export async function deleteSlaPolicy(token, policyId) {
+  const response = await fetch(`${API_BASE_URL}/admin/sla/policies/${policyId}`, {
+    method: "DELETE", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to delete SLA policy");
+  return data;
+}
+
+export async function fetchSlaDashboard(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/sla/dashboard`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load SLA dashboard");
+  return data;
+}
+
+export async function fetchSlaAnalytics(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/sla/analytics`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load SLA analytics");
+  return data;
+}

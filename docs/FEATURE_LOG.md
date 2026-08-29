@@ -2065,6 +2065,81 @@ guarantee). Full suite: **142/142 passing** (up from 121). Frontend:
 
 ---
 
+## Missing-Features Rollout — Phase 1: Proof of Delivery
+
+**What was missing:** A delivery could be marked "Delivered" with only the
+existing free-form `proof_of_delivery` image blob — no structured record
+of who received it, no recipient verification, no GPS at the moment of
+capture, no org-level control over what's required, and no way to view
+a POD history separately from the general status-change history.
+
+**Why it was needed:** Dispute resolution, fraud prevention, and
+compliance all depend on a real, queryable proof-of-delivery record —
+not just an optional photo nobody is required to attach.
+
+**What it does:** A new `ProofOfDeliveryDB` table (recipient name/phone,
+OTP verification, signature/photo, GPS, notes, timestamp, offline-capture
+flag) plus a `DeliveryOtpDB` table for short-lived hashed recipient
+verification codes. Four org-level toggles (`pod_require_recipient_name`,
+`pod_require_signature_or_photo`, `pod_require_otp`, `pod_require_gps`),
+all OFF by default so no existing org's workflow changes unless an admin
+opts in. Enforcement is applied at BOTH places a delivery can be marked
+delivered: the online `PATCH /deliveries/{id}` route AND the offline-sync
+path (`services/conflict_resolver.py`) — the latter matters because that's
+actually the PRIMARY agent workflow (IndexedDB → `/sync`), not the PATCH
+route, and was the one place this could have been silently missed.
+New endpoints: OTP generate/verify, POD submit/view/history, org POD
+settings (admin), and a CSV export report. A customer can view POD for
+their own delivered orders only. Frontend: `ProofOfDeliveryModal` now
+captures recipient/OTP/GPS/notes alongside the existing signature/photo,
+queued through a dedicated offline retry queue
+(`services/podOfflineQueue.js`) so capture works identically online or
+offline; a `PodSettingsPanel` for admins; a POD viewer section in
+`DeliveryDetailModal`; and a POD summary in the customer dashboard.
+**15 new backend tests, all passing** (including a dedicated regression
+test proving the offline-sync path enforces the requirement, not just
+the PATCH route). Full backend suite: **168/168 passing**. Frontend:
+`npm run build` clean.
+
+---
+
+## Missing-Features Rollout — Phase 2: SLA Management
+
+**What was missing:** No concept of a delivery deadline, no way to know
+a delivery was running late until a human noticed, and no visibility
+into how often deliveries actually meet expectations.
+
+**Why it was needed:** Dispatchers need to catch at-risk deliveries
+before they're late, not after; customers deserve a plain-language
+"running late" signal instead of silence; and the business needs real
+SLA%, average delivery time, and average delay numbers instead of guesses.
+
+**What it does:** A new `SLAPolicyDB` table — org-scoped policies
+optionally narrowed by zone, delivery type, and/or priority, with a
+target duration and a configurable near-breach warning threshold.
+Matching picks the most specific active policy for a delivery (a
+zone+priority match beats a priority-only match beats the org-wide
+default). Three new columns on `DeliveryRecordDB` (`sla_policy_id`,
+`sla_target_at`, `sla_status`) track each delivery's computed deadline
+and live classification (`on_track` / `at_risk` / `breached` while in
+progress; `met` / `missed` once delivered; `not_applicable` if no policy
+matches). A background scanner (`services/sla_monitor.py`, same
+interval-loop shape as the existing subscription scheduler) runs every
+60 seconds, flips state as thresholds are crossed, and pushes a
+notification to every dispatcher/admin in the org on each transition.
+New endpoints: policy CRUD (admin), a dispatcher SLA worklist of
+currently at-risk/breached deliveries, and a live-computed analytics
+endpoint (SLA%, avg delivery time, avg delay, breakdown by agent and by
+zone). Public tracking and the customer dashboard both surface a
+plain-language "running a bit behind schedule" note (never exposing the
+org's actual policy configuration) when a delivery is at risk, breached,
+or was delivered late. Frontend: a new `SlaManager` view (dashboard +
+policy editor, role-gated the same way the rest of the admin UI already
+is) reachable from the sidebar. **11 new backend tests, all passing.**
+Full backend suite: **168/168 passing**. Frontend: `npm run build` clean.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

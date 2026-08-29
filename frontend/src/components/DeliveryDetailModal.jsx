@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { fetchDeliveryHistory, fetchDeliveryAttempts } from "../services/api";
+import { fetchDeliveryHistory, fetchDeliveryAttempts, fetchProofOfDeliveryHistory } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import StatusBadge from "./StatusBadge";
 import DeliveryMessages from "./DeliveryMessages";
@@ -12,6 +12,22 @@ const STATUS_LABELS = {
 };
 
 const PRIORITY_LABELS = { low: "Low", normal: "Normal", high: "High", urgent: "Urgent" };
+
+const SLA_STATUS_LABELS = {
+  not_applicable: null, // nothing worth showing
+  on_track: "On Track",
+  at_risk: "At Risk (near SLA deadline)",
+  breached: "SLA Breached",
+  met: "Met SLA",
+  missed: "Missed SLA",
+};
+const SLA_STATUS_COLORS = {
+  on_track: "var(--text-secondary)",
+  at_risk: "var(--warning, #b45309)",
+  breached: "var(--danger)",
+  met: "var(--success, #16a34a)",
+  missed: "var(--danger)",
+};
 
 const ATTEMPT_OUTCOME_LABELS = {
   delivered: "Delivered",
@@ -38,11 +54,15 @@ export default function DeliveryDetailModal({ delivery, agentName, onClose }) {
   const [attempts, setAttempts] = useState([]);
   const [attemptsError, setAttemptsError] = useState(null);
   const [isLoadingAttempts, setIsLoadingAttempts] = useState(false);
+  const [podHistory, setPodHistory] = useState([]);
+  const [podError, setPodError] = useState(null);
+  const [isLoadingPod, setIsLoadingPod] = useState(false);
 
   useEffect(() => {
     if (!delivery) return;
     loadHistory();
     loadAttempts();
+    loadPodHistory();
   }, [delivery]);
 
   async function loadHistory() {
@@ -69,6 +89,20 @@ export default function DeliveryDetailModal({ delivery, agentName, onClose }) {
       setAttemptsError(err.message);
     } finally {
       setIsLoadingAttempts(false);
+    }
+  }
+
+  async function loadPodHistory() {
+    if (delivery.sync_status === "pending") return; // no server ID yet
+    setIsLoadingPod(true);
+    setPodError(null);
+    try {
+      const records = await fetchProofOfDeliveryHistory(token, delivery.id);
+      setPodHistory(records);
+    } catch (err) {
+      setPodError(err.message);
+    } finally {
+      setIsLoadingPod(false);
     }
   }
 
@@ -197,6 +231,17 @@ export default function DeliveryDetailModal({ delivery, agentName, onClose }) {
           )}
           <DetailRow label="Created" value={new Date(delivery.created_at).toLocaleString()} />
           <DetailRow label="Last Updated" value={new Date(delivery.updated_at).toLocaleString()} />
+          {delivery.sla_status && SLA_STATUS_LABELS[delivery.sla_status] && (
+            <DetailRow
+              label="SLA"
+              value={
+                <span style={{ color: SLA_STATUS_COLORS[delivery.sla_status], fontWeight: 600 }}>
+                  {SLA_STATUS_LABELS[delivery.sla_status]}
+                  {delivery.sla_target_at && ` — deadline ${new Date(delivery.sla_target_at).toLocaleString()}`}
+                </span>
+              }
+            />
+          )}
           {delivery.sync_status && (
             <DetailRow
               label="Sync Status"
@@ -291,6 +336,54 @@ export default function DeliveryDetailModal({ delivery, agentName, onClose }) {
               ))}
             </div>
           )
+        )}
+
+        <hr style={{ margin: "20px 0", border: "none", borderTop: "1px solid var(--border-color)" }} />
+
+        <h4 style={{ marginBottom: "12px" }}>Proof of Delivery</h4>
+
+        {delivery.sync_status === "pending" && (
+          <p style={{ color: "var(--text-muted)", fontSize: "13px" }}>
+            This delivery hasn't synced to the server yet, so proof of delivery isn't available until it does.
+          </p>
+        )}
+
+        {delivery.sync_status !== "pending" && isLoadingPod && (
+          <p style={{ color: "var(--text-muted)", fontSize: "13px" }}>Loading proof of delivery...</p>
+        )}
+
+        {delivery.sync_status !== "pending" && podError && (
+          <p style={{ color: "var(--text-muted)", fontSize: "13px" }}>No proof of delivery has been captured for this delivery yet.</p>
+        )}
+
+        {delivery.sync_status !== "pending" && !isLoadingPod && !podError && podHistory.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
+            {podHistory.map((pod, idx) => (
+              <div key={pod.id} style={{ borderLeft: "3px solid var(--accent)", paddingLeft: "10px" }}>
+                <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
+                  {idx === 0 ? "Latest capture" : "Earlier capture"} · {new Date(pod.captured_at).toLocaleString()}
+                  {pod.captured_offline && " · captured offline, synced later"}
+                </div>
+                {pod.recipient_name && <DetailRow label="Recipient" value={pod.recipient_name} />}
+                {pod.recipient_phone && <DetailRow label="Recipient Phone" value={pod.recipient_phone} />}
+                <DetailRow label="Verified via OTP" value={pod.otp_verified ? "Yes" : "No"} />
+                {(pod.latitude && pod.longitude) && <DetailRow label="Captured At Location" value={`${pod.latitude}, ${pod.longitude}`} />}
+                {pod.notes && <DetailRow label="Notes" value={pod.notes} />}
+                {pod.signature_data_url && (
+                  <div style={{ marginTop: "6px" }}>
+                    <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>Signature</div>
+                    <img src={pod.signature_data_url} alt="Signature" style={{ maxWidth: "220px", border: "1px solid var(--border-color)", borderRadius: "var(--radius-sm)" }} />
+                  </div>
+                )}
+                {pod.photo_data_url && (
+                  <div style={{ marginTop: "6px" }}>
+                    <div style={{ fontSize: "11px", color: "var(--text-secondary)" }}>Photo</div>
+                    <img src={pod.photo_data_url} alt="Delivery proof" style={{ maxWidth: "220px", borderRadius: "var(--radius-sm)" }} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         )}
 
         <hr style={{ margin: "20px 0", border: "none", borderTop: "1px solid var(--border-color)" }} />
