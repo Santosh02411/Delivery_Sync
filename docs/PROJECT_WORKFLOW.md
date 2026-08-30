@@ -732,6 +732,40 @@ correct implementation after the initial route-registration fix.
 
 ---
 
+## Session: Phase 11 — Fleet Management
+
+**A stray reference from an earlier draft that broke every route on
+import.** While writing `services/fleet.py`, an early version of the
+utilization query referenced a model class named `DeliveryDB`. The
+project's actual delivery model is called `DeliveryRecordDB`
+(`models/delivery.py`) — `DeliveryDB` has never existed in this
+codebase. Because `main.py` imports every route module (including the
+new `routes/fleet.py`, which imports `services/fleet.py`) at process
+start, this single bad name turned into an `ImportError` that broke
+the entire app on startup, not just the one function — `pytest`
+failed at collection time with every test file reporting the same
+import error, before a single test could run. Fixed by correcting both
+references to `DeliveryRecordDB` in `services/fleet.py`. Caught
+immediately by running the new test file before assuming anything
+worked, which is exactly the point of running tests before declaring
+a feature done rather than after.
+
+**Design decision — vehicle location is derived, not stored.** It
+would have been easy to add `current_latitude`/`current_longitude`
+columns directly to `VehicleDB` and update them wherever an agent's
+location is updated. That was deliberately rejected: it would create a
+second, independently-updated copy of the same fact ("where is this
+agent right now") that the existing `AgentLocationDB` table (Phase 9)
+already tracks — two copies that could silently drift apart if one
+write path is ever missed. Instead, `GET /fleet/vehicles/{id}/location`
+looks up the vehicle's `assigned_agent_id` and reads its live position
+from the existing table on request. One source of truth, no sync risk.
+
+Full backend suite after this session: **276/276 passing** (263 → 276,
+13 new). Frontend `npm run build` clean.
+
+---
+
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something

@@ -48,6 +48,7 @@ import {
 import { startCustomerActionAutoSync } from "../services/customerSyncEngine";
 import { writeSyncContext } from "../services/backgroundSyncContext";
 import { urlBase64ToUint8Array } from "../services/pushUtil";
+import CustomerDeliveryMessages from "./CustomerDeliveryMessages";
 
 const STATUS_LABELS = {
   confirmed: "Order Confirmed",
@@ -1116,6 +1117,13 @@ function CustomerDeliveryCard({ delivery, token, isExpanded, onToggle, onChanged
                   {podDetail.notes && <div>{podDetail.notes}</div>}
                 </div>
               )}
+            </div>
+          )}
+
+          {!["delivered", "cancelled"].includes(delivery.status) && (
+            <div style={{ marginBottom: "14px" }}>
+              <div style={{ fontSize: "12.5px", fontWeight: 600, marginBottom: "8px" }}>Message the delivery team</div>
+              <CustomerDeliveryMessages deliveryId={delivery.id} />
             </div>
           )}
 

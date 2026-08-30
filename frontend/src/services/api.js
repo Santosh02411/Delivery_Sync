@@ -1845,3 +1845,406 @@ export async function assignCustomRole(token, userId, customRoleId) {
   if (!response.ok) throw new Error(data.detail || "Failed to update role assignment");
   return data;
 }
+
+// ---------- COD & Payment Reconciliation (Phase 5) ----------
+
+export async function collectCod(token, deliveryId, collectedAmount, notes) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/cod/collect`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ collected_amount: collectedAmount, notes }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to record COD collection");
+  return data;
+}
+
+export async function fetchCodCollection(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/cod`, { headers: authHeaders(token) });
+  if (response.status === 404 || response.status === 400) return null;
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load COD collection");
+  return data;
+}
+
+export async function fetchCodCollections(token, status, agentId) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  if (agentId) params.set("agent_id", agentId);
+  const response = await fetch(`${API_BASE_URL}/admin/reconciliation/cod?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load COD collections");
+  return data;
+}
+
+export async function createSettlement(token, agentId, notes) {
+  const response = await fetch(`${API_BASE_URL}/admin/reconciliation/settlements`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ agent_id: agentId, notes }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create settlement");
+  return data;
+}
+
+export async function fetchSettlements(token, agentId) {
+  const params = new URLSearchParams();
+  if (agentId) params.set("agent_id", agentId);
+  const response = await fetch(`${API_BASE_URL}/admin/reconciliation/settlements?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load settlements");
+  return data;
+}
+
+export async function settleSettlement(token, settlementId) {
+  const response = await fetch(`${API_BASE_URL}/admin/reconciliation/settlements/${settlementId}/settle`, {
+    method: "PATCH", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to settle");
+  return data;
+}
+
+export async function fetchLedger(token, filters = {}) {
+  const params = new URLSearchParams(filters);
+  const response = await fetch(`${API_BASE_URL}/admin/reconciliation/ledger?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load ledger");
+  return data;
+}
+
+export async function fetchFinancialDashboard(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/reconciliation/dashboard`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load financial dashboard");
+  return data;
+}
+
+// ---------- Customer <-> Agent Communication (Phase 6) ----------
+
+export async function fetchMessageTemplates(token) {
+  const response = await fetch(`${API_BASE_URL}/message-templates`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load message templates");
+  return data.templates;
+}
+
+export async function fetchDeliveryMessagesUnreadCount(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/messages/unread-count`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load unread count");
+  return data.unread_count;
+}
+
+export async function fetchMyCustomerMessagesUnreadCount(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/customer/deliveries/${deliveryId}/messages/unread-count`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load unread count");
+  return data.unread_count;
+}
+
+export async function sendCustomerMessage(token, deliveryId, message) {
+  const response = await fetch(`${API_BASE_URL}/customer/deliveries/${deliveryId}/messages`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ message }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to send message");
+  return data;
+}
+
+export async function fetchCustomerMessages(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/customer/deliveries/${deliveryId}/messages`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load messages");
+  return data;
+}
+
+// ---------- RTO Management (Phase 7) ----------
+
+export async function fetchRtoRequests(token, status) {
+  const params = new URLSearchParams();
+  if (status) params.set("status", status);
+  const response = await fetch(`${API_BASE_URL}/admin/rto/requests?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load RTO requests");
+  return data;
+}
+
+export async function approveRto(token, rtoId, note) {
+  const response = await fetch(`${API_BASE_URL}/admin/rto/requests/${rtoId}/approve`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ note }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to approve RTO");
+  return data;
+}
+
+export async function markRtoInTransit(token, rtoId) {
+  const response = await fetch(`${API_BASE_URL}/admin/rto/requests/${rtoId}/in-transit`, {
+    method: "POST", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update RTO");
+  return data;
+}
+
+export async function markRtoReceived(token, rtoId) {
+  const response = await fetch(`${API_BASE_URL}/admin/rto/requests/${rtoId}/received`, {
+    method: "POST", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update RTO");
+  return data;
+}
+
+export async function cancelRto(token, rtoId, note) {
+  const response = await fetch(`${API_BASE_URL}/admin/rto/requests/${rtoId}/cancel`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ note }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to cancel RTO");
+  return data;
+}
+
+export async function fetchRtoAnalytics(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/rto/analytics`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load RTO analytics");
+  return data;
+}
+
+export async function fetchRtoSettings(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/rto/settings`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load RTO settings");
+  return data;
+}
+
+export async function updateRtoSettings(token, rtoMaxAttempts) {
+  const response = await fetch(`${API_BASE_URL}/admin/rto/settings`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify({ rto_max_attempts: rtoMaxAttempts }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update RTO settings");
+  return data;
+}
+
+// ---------- Barcode/QR Package Scanning (Phase 8) ----------
+
+export async function fetchPackageQrUrl(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/package-qr`, { headers: authHeaders(token) });
+  if (!response.ok) throw new Error("Failed to load package QR code");
+  const blob = await response.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function resolveScannedCode(token, code) {
+  const response = await fetch(`${API_BASE_URL}/scan/${encodeURIComponent(code)}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Invalid scan");
+  return data;
+}
+
+export async function recordScan(token, deliveryId, payload) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/scan`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to record scan");
+  return data;
+}
+
+export async function fetchScanHistory(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/scans`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load scan history");
+  return data;
+}
+
+export async function fetchOrgScans(token, filters = {}) {
+  const params = new URLSearchParams(filters);
+  const response = await fetch(`${API_BASE_URL}/admin/scans?${params}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load scan log");
+  return data;
+}
+
+// ---------- Advanced Routing (Phase 9) ----------
+
+export async function fetchDynamicEta(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/eta`, { headers: authHeaders(token) });
+  if (response.status === 404) return null;
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load ETA");
+  return data;
+}
+
+export async function fetchRouteDeviation(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/route-deviation`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load route deviation");
+  return data;
+}
+
+export async function fetchRouteReplay(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/route-replay`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load route replay");
+  return data;
+}
+
+export async function fetchRouteEfficiency(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/route-efficiency`, { headers: authHeaders(token) });
+  if (response.status === 404) return null;
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load route efficiency");
+  return data;
+}
+
+export async function fetchDeliveryHeatmap(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/routing/heatmap`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load heatmap");
+  return data.points;
+}
+
+export async function optimizeMultiAgentRoutes(token, agentStarts) {
+  const response = await fetch(`${API_BASE_URL}/admin/routing/optimize-multi-agent`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ agent_starts: agentStarts }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to optimize routes");
+  return data.routes;
+}
+
+// ---------- Notification Templates (Phase 10) ----------
+
+export async function fetchNotificationTemplates(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/notification-templates/`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load notification templates");
+  return data;
+}
+
+export async function updateNotificationTemplate(token, eventType, payload) {
+  const response = await fetch(`${API_BASE_URL}/admin/notification-templates/${eventType}`, {
+    method: "PUT", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update notification template");
+  return data;
+}
+
+export async function resetNotificationTemplate(token, eventType) {
+  const response = await fetch(`${API_BASE_URL}/admin/notification-templates/${eventType}`, {
+    method: "DELETE", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to reset notification template");
+  return data;
+}
+
+// ---------- Fleet Management (Phase 11) ----------
+
+export async function fetchVehicles(token, status) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  const response = await fetch(`${API_BASE_URL}/fleet/vehicles${qs}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load vehicles");
+  return data;
+}
+
+export async function createVehicle(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/fleet/vehicles`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create vehicle");
+  return data;
+}
+
+export async function updateVehicle(token, vehicleId, payload) {
+  const response = await fetch(`${API_BASE_URL}/fleet/vehicles/${vehicleId}`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update vehicle");
+  return data;
+}
+
+export async function deactivateVehicle(token, vehicleId) {
+  const response = await fetch(`${API_BASE_URL}/fleet/vehicles/${vehicleId}`, {
+    method: "DELETE", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to deactivate vehicle");
+  return data;
+}
+
+export async function assignVehicle(token, vehicleId, agentId) {
+  const response = await fetch(`${API_BASE_URL}/fleet/vehicles/${vehicleId}/assign`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ agent_id: agentId }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to assign vehicle");
+  return data;
+}
+
+export async function recordVehicleInspection(token, vehicleId, payload) {
+  const response = await fetch(`${API_BASE_URL}/fleet/vehicles/${vehicleId}/inspection`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to record inspection");
+  return data;
+}
+
+export async function addVehicleMaintenance(token, vehicleId, payload) {
+  const response = await fetch(`${API_BASE_URL}/fleet/vehicles/${vehicleId}/maintenance`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to add maintenance record");
+  return data;
+}
+
+export async function fetchVehicleMaintenance(token, vehicleId) {
+  const response = await fetch(`${API_BASE_URL}/fleet/vehicles/${vehicleId}/maintenance`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load maintenance records");
+  return data;
+}
+
+export async function addVehicleFuelRecord(token, vehicleId, payload) {
+  const response = await fetch(`${API_BASE_URL}/fleet/vehicles/${vehicleId}/fuel`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to add fuel record");
+  return data;
+}
+
+export async function fetchVehicleFuelRecords(token, vehicleId) {
+  const response = await fetch(`${API_BASE_URL}/fleet/vehicles/${vehicleId}/fuel`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load fuel records");
+  return data;
+}
+
+export async function fetchVehicleUtilization(token, vehicleId, days = 30) {
+  const response = await fetch(`${API_BASE_URL}/fleet/vehicles/${vehicleId}/utilization?days=${days}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load vehicle utilization");
+  return data;
+}
+
+export async function fetchFleetUtilization(token, days = 30) {
+  const response = await fetch(`${API_BASE_URL}/fleet/utilization?days=${days}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load fleet utilization");
+  return data;
+}
+
+export async function fetchFleetReminders(token, withinDays = 14) {
+  const response = await fetch(`${API_BASE_URL}/fleet/reminders?within_days=${withinDays}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load fleet reminders");
+  return data;
+}

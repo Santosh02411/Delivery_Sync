@@ -2217,6 +2217,315 @@ Full backend suite after Phases 3+4: **192/192 passing**. Frontend:
 
 ---
 
+---
+
+## Missing-Features Rollout — Phase 5: COD & Payment Reconciliation
+
+**What was missing:** No auditable financial trail — a payment or
+refund happened, but nothing recorded it as a discrete, queryable
+event; COD orders had no tracking of expected vs. actually-collected
+cash.
+
+**Why it was needed:** "Every financial operation must be auditable" —
+real money handling needs a permanent record of every charge, refund,
+and cash collection, plus a way for an agent's collected cash to be
+formally handed off (settled) to the business.
+
+**What it does:** A new `PaymentLedgerDB` — an APPEND-ONLY log (nothing
+in it is ever edited or deleted; corrections are new rows) — plus
+`CodCollectionDB` (expected vs. collected amount per COD delivery, with
+automatic discrepancy detection) and `AgentSettlementDB` (batches an
+agent's unsettled collections, immutable once marked settled — same
+pattern `services/earnings.py` already uses for pay statements). Built
+additively: `services/checkout.py`'s real online-payment success path
+and `services/refund.py`'s real refund path each got exactly one new
+line — a call to log the ledger entry — with zero changes to their
+existing logic; verified with tests that place a REAL order through
+checkout and a REAL refund through cancellation and confirm the ledger
+entry actually appears, not just that the logging function works in
+isolation. An agent records what they collected via a new endpoint;
+a mismatch is flagged as `discrepancy` automatically. New endpoints:
+COD collection (agent-facing), settlement creation/settling, the raw
+ledger (filterable by order/date/type), per-order payment status
+history, and an admin financial dashboard — all gated on Phase 4's
+`payments.view`/`payments.manage` permissions, a second real
+demonstration of that system. Frontend: a new `ReconciliationDashboard`
+view (overview stats, COD collections, settlements, ledger) and a
+`CodCollectionWidget` embedded in the delivery detail view. **13 new
+backend tests, all passing.**
+
+---
+
+## Missing-Features Rollout — Phase 6: Customer <-> Agent Communication
+
+**What was missing:** The existing delivery chat thread
+(`DeliveryMessageDB`, WebSocket-backed) only had staff (agent/
+dispatcher/admin) as participants — a customer had no way to message
+the delivery team, and there was no read/unread tracking or predefined
+quick replies.
+
+**Why it was needed:** Customers need a direct channel to ask "where's
+my order" or share a gate code without a phone call, and staff need to
+see message state (read vs. unread) rather than guessing whether a
+reply's been seen.
+
+**What it does:** Extended the EXISTING `DeliveryMessageDB` table
+(added `read_by_staff_at` / `read_by_customer_at` columns and allowed
+`sender_role="customer"`) rather than building a parallel thread — a
+customer and staff member now read/write the exact same rows and see
+literally the same conversation. A new customer-scoped route
+(`routes/customer_messages.py`) mirrors the existing staff route
+(`routes/messages.py`) with the same ownership-check pattern every
+other customer endpoint uses. Both sides mark the other's messages read
+the moment they view the thread, with a dedicated unread-count endpoint
+each. Four predefined quick-reply strings ("I'm arriving...", "Unable
+to reach you...", etc.) sent through the exact same send-message
+endpoint — no separate "template" concept in the data model to keep in
+sync. The existing WebSocket chat endpoint (`routes/websockets.py`)
+was extended to also authenticate a customer's JWT, not just staff —
+this was a genuine gap caught and fixed, not initially planned: without
+it the customer side would have been polling-only while staff got live
+push. Frontend: `CustomerDeliveryMessages` (new, mirrors the existing
+`DeliveryMessages` component) embedded in the customer dashboard for
+any non-terminal delivery, and quick-reply buttons added to the
+existing staff-side chat widget. **9 new backend tests, all passing.**
+
+Full backend suite after Phases 5+6: **214/214 passing**. Frontend:
+`npm run build` clean.
+
+---
+
+---
+
+## Missing-Features Rollout — Phase 7: RTO Management
+
+**What was missing:** A delivery that genuinely couldn't be completed
+(wrong address, refused, unreachable after repeated attempts) just sat
+in `failed_attempt` status forever — no formal "this is going back to
+the sender" workflow, no eligibility rule, no lifecycle, no automatic
+refund/restock when it actually came back.
+
+**Why it was needed:** Real courier operations need a distinct
+Return-to-Origin process — separate from a customer-initiated RETURN of
+something they already received (`models/return_request.py`, untouched)
+— with clear eligibility rules and a resolution that actually restocks
+inventory and refunds the customer.
+
+**What it does:** A new `RtoRequestDB`, integrated with the EXISTING
+failed-delivery system rather than duplicating it: eligibility is
+checked automatically from inside `services/delivery_attempts.py`'s
+`record_delivery_attempt()` — the one function every failed-attempt
+path in the app already calls (the online PATCH, the offline-sync
+path, bulk actions, and the reschedule endpoint) — so there's exactly
+one place this logic needed to live. A delivery becomes RTO-eligible
+either because the reason code used is flagged `eligible_for_rto`
+(admin-configurable, added to the existing `FailedDeliveryReasonDB`)
+or because it's hit the org's configurable `rto_max_attempts`
+threshold (default 3). Full lifecycle — eligible → approved →
+in_transit → received_at_origin, or cancelled — gated on
+`deliveries.assign` (a real bug caught during testing: my first pass
+gated this on `deliveries.update`, which agents also have by default
+for updating their own delivery status, so agents could approve their
+own RTOs; switched to the dispatcher-only permission). Marking a
+request received reuses `refund_order_for_delivery()` exactly as
+cancellation does — a prepaid order gets a real refund (which, via
+Phase 5's hook, writes a ledger entry automatically) and restock; a COD
+order (never actually charged) just restocks, verified with a test
+that runs a complete online order through the full RTO cycle and
+confirms the refund and ledger entry both actually appear, plus a
+separate COD test confirming no refund fires. RTO analytics (counts by
+status, by reason, average resolution time) and a settings panel for
+the attempt threshold. Frontend: a new `RtoManager` view (analytics,
+settings, request list with stage-appropriate actions). **12 new
+backend tests, all passing.**
+
+---
+
+## Missing-Features Rollout — Phase 8: Barcode/QR Package Scanning
+
+**What was missing:** No way to physically scan a package at any stage
+of its journey — no generated code, no scan log, no duplicate
+protection.
+
+**Why it was needed:** Real fulfillment operations scan packages at
+pickup, hub transfers, dispatch, and delivery — both for an audit
+trail of where a package physically was, and to catch mis-scans.
+
+**What it does:** No new "package" concept was introduced — this
+project's delivery model is already one record per package, so a
+delivery's own ID IS the scannable code (a new `qrcode` dependency
+renders it as SVG, no Pillow/image-processing dependency needed). A
+new `PackageScanDB` is a purely ADDITIVE audit layer: recording a scan
+does NOT itself change delivery status — the agent still updates
+status the normal way — so scanning-related code never reaches into
+core delivery lifecycle logic. Endpoints: generate the QR, resolve a
+scanned code back to a delivery (org-scoped, so a foreign or
+nonexistent code correctly comes back as invalid — this is what
+"invalid scan handling" means here), record a scan of any stage
+(pickup/hub/out_for_delivery/delivery/return), scan history per
+delivery, and an org-wide filterable scan log. Duplicate-scan
+protection rejects an identical (delivery, stage) scan within a
+60-second window (an agent's scanner double-firing) while still
+allowing a legitimate later re-scan of the same stage — tested
+explicitly for both cases. Authorization mirrors Phase 1's POD routes
+exactly (an agent may only scan their own assigned deliveries; any
+dispatcher/admin may scan any of the org's deliveries) — during
+testing this caught a real bug where the code-resolution endpoint
+tried to serialize a raw database object whose primary key is named
+differently than the response schema expected, which would have 500'd
+in production; fixed by building the response explicitly. Frontend: a
+new `PackageScanWidget` (QR display + scan-stage buttons + history)
+embedded in the delivery detail view. **13 new backend tests, all
+passing.**
+
+Full backend suite after Phases 7+8: **239/239 passing**. Frontend:
+`npm run build` clean.
+
+---
+
+---
+
+## Missing-Features Rollout — Phase 9: Advanced Routing
+
+**What was missing:** No location HISTORY (only "where is this agent
+right now"), so no ETA recalculation as an agent actually moves, no
+deviation detection, no route replay, no heatmap, and no way to
+optimize routes across more than one agent at a time.
+
+**Why it was needed:** Dispatchers need to know when an agent has gone
+off-course, customers benefit from a live (not static) ETA, and
+planning benefits from seeing where delivery activity actually
+concentrates.
+
+**What it does:** A new `AgentLocationHistoryDB` ping log, purely
+additive alongside the EXISTING `AgentLocationDB` "latest position
+only" table — every existing consumer of that table (customer live
+tracking, the dispatcher map) is completely unaffected; this phase
+only adds a second, parallel write into the new history table from the
+exact same `PUT /users/me/location` endpoint. On top of that history:
+dynamic ETA (fresh road-distance recalculation from the agent's
+CURRENT position, not the once-computed value from assignment time),
+a disclosed pragmatic route-deviation heuristic (this project has no
+stored planned-route polyline anywhere to compare against, so
+deviation is detected as "meaningfully further from the destination
+than the closest approach so far" — a real, tested signal, not a
+false claim of full path-matching), geofence "arrived" alerts to
+dispatchers AND customers (deduplicated to fire once per delivery, not
+on every ping while an agent lingers nearby), route replay, distance-
+traveled/time-spent/efficiency-ratio metrics, a heatmap aggregation
+endpoint, and multi-agent route optimization — honestly scoped as
+grouping by each delivery's EXISTING agent assignment plus the
+already-existing single-route optimizer with a slot-deadline priority
+nudge, not a claim of solving vehicle-routing from scratch. Frontend:
+a `RouteInsightsWidget` in the delivery detail view and a
+`RoutingInsights` page (heatmap table + manual multi-agent optimize
+trigger). **14 new backend tests, all passing.**
+
+---
+
+## Missing-Features Rollout — Phase 10: Customer Communication & Notifications
+
+**What was missing:** Before writing anything, the existing
+notification system was audited: SMS/WhatsApp sending abstractions,
+email sending, and MOST status-driven customer notifications (order
+confirmed/picked-up/out-for-delivery/delivered/failed/cancelled/
+partial/rescheduled) already existed via
+`notify_customer_of_status_change`. What was genuinely missing: any
+notification at all for a refund, a return approval, an agent being
+physically nearby, an upcoming delivery, or an upcoming subscription
+renewal — plus no way for an org to customize wording.
+
+**Why it was needed:** A customer who gets refunded or has a return
+approved deserves to be told; a proactive "delivery reminder" and
+"subscription renews soon" give customers a chance to act before
+something happens rather than only after.
+
+**What it does:** A new `NotificationTemplateDB` — deliberately kept
+SEPARATE from the existing, heavily-tested
+`notify_customer_of_status_change()` (which was left completely
+untouched rather than risk a rewrite for comparatively little
+benefit) — powers exactly the five genuinely-new event types:
+refund_processed, return_approved, agent_nearby, delivery_reminder,
+subscription_reminder. Each has a sensible built-in default; an org
+can customize the subject/body per event and toggle which of
+email/SMS/WhatsApp/in-app fire, all through one
+`send_templated_notification()` function reused everywhere. Two new
+generic-text SMS/WhatsApp senders were added alongside the existing
+fixed-format ones (`send_status_notification_sms` etc.), which bake in
+a specific "order is now X" sentence that a free-text template can't
+reuse. Wired into REAL flows: `services/refund.py` now notifies on
+both the test-mode and real-gateway refund paths; `routes/returns.py`
+notifies on approval; Phase 9's geofence-arrival hook now also
+notifies the CUSTOMER (previously dispatcher-only); and a new
+`services/reminder_scheduler.py` (same interval-loop shape as the
+existing SLA/subscription schedulers) sends delivery and subscription
+reminders exactly once per occurrence via a `reminder_sent_at` marker,
+verified with tests proving a second scan never double-sends and a
+too-far-out delivery is correctly skipped. Explicitly scoped out: a
+duplicate "agent assigned" notification, since the app already sends
+one under the existing "picked up" status label — adding a second
+would be notification spam, not a missing feature. Frontend: a
+`NotificationTemplateManager` settings panel. **10 new backend tests,
+all passing**, including two that run a REAL refund and a REAL return
+approval through the system and confirm the customized notification
+text actually appears — not just that the sending function works in
+isolation.
+
+Full backend suite after Phases 9+10: **263/263 passing**. Frontend:
+`npm run build` clean.
+
+---
+
+## Missing-Features Rollout — Phase 11: Fleet Management
+
+**What was missing:** No representation of physical vehicles at all —
+no way to record what a delivery fleet actually consists of, which
+agent is driving which vehicle, servicing history, fuel cost, or
+upcoming insurance/registration/inspection deadlines.
+
+**Why it was needed:** A real delivery operation runs on vehicles, not
+just agents — a dispatcher needs to know a van is overdue for
+insurance renewal before it's out on the road, and an org tracking
+fuel spend needs a place to log it against a specific vehicle.
+
+**What it does:** Three new tables — `VehicleDB` (type, registration,
+capacity, status, current agent assignment, odometer, insurance/
+registration/inspection dates), `VehicleMaintenanceDB` (service
+history with a `next_due_date` for reminders), and
+`VehicleFuelRecordDB` (fuel purchase log). A vehicle's live location is
+deliberately NOT a separate, independently-updated field — it's
+derived on request from its assigned agent's existing `AgentLocationDB`
+row (the same Phase 9 "latest position" table already powering
+customer tracking), so there's exactly one source of truth for "where
+is this thing right now." Vehicle CRUD and assignment are dispatcher/
+admin actions (one vehicle per agent, enforced); any staff member can
+log a fuel record, but an agent can only log one against their own
+assigned vehicle. `GET /fleet/reminders` surfaces vehicles whose
+insurance, registration, or inspection falls within a configurable
+window, plus any maintenance record's `next_due_date` in that window.
+`GET /fleet/vehicles/{id}/utilization` counts deliveries completed by
+a vehicle's currently-assigned agent over a period — honestly scoped:
+this project has no vehicle-assignment history table, so a
+reassignment mid-window attributes the whole window to the current
+agent, and that trade-off is documented in the code rather than
+hidden. Capacity is integrated into the EXISTING Phase 9
+suggested-agents ranking as a new, purely advisory
+`vehicle_capacity_warning` field — it never changes agent ranking or
+blocks assignment, since vehicle capacity is a dispatcher judgment
+call, not a hard rule with no override. Frontend: a new `FleetManager`
+page — dispatchers/admins get the full manager (vehicle CRUD,
+assignment, maintenance/fuel logging, reminders banner); agents get a
+read-only view scoped to their own assigned vehicle (`GET
+/fleet/vehicles` already filters this server-side for the agent role).
+**13 new backend tests, all passing** (CRUD, tenant isolation,
+duplicate-registration rejection, one-vehicle-per-agent enforcement,
+agent-can-only-see/log-own-vehicle, reminders window, utilization).
+
+Full backend suite after Phase 11: **276/276 passing**. Frontend:
+`npm run build` clean.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

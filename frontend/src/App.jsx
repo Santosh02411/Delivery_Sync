@@ -31,7 +31,12 @@ import CustomerDashboard from "./components/CustomerDashboard";
 import SlaManager from "./components/SlaManager";
 import PodSettingsPanel from "./components/PodSettingsPanel";
 import WarehouseManager from "./components/WarehouseManager";
+import FleetManager from "./components/FleetManager";
 import RbacManager from "./components/RbacManager";
+import ReconciliationDashboard from "./components/ReconciliationDashboard";
+import RtoManager from "./components/RtoManager";
+import RoutingInsights from "./components/RoutingInsights";
+import NotificationTemplateManager from "./components/NotificationTemplateManager";
 
 function StaffDashboard({ user }) {
   const { token } = useAuth();
@@ -67,6 +72,11 @@ function StaffDashboard({ user }) {
           )}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "sla" && <SlaManager />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "warehouses" && <WarehouseManager />}
+          {currentView === "fleet" && (user.role === "dispatcher" || user.role === "admin" || user.role === "agent") && <FleetManager />}
+          {(user.role === "dispatcher" || user.role === "admin") && currentView === "reconciliation" && <ReconciliationDashboard />}
+          {(user.role === "dispatcher" || user.role === "admin") && currentView === "rto" && <RtoManager />}
+          {(user.role === "dispatcher" || user.role === "admin") && currentView === "routing" && <RoutingInsights />}
+          {(user.role === "dispatcher" || user.role === "admin") && currentView === "notification-templates" && <NotificationTemplateManager />}
           {user.role === "admin" && currentView === "pod-settings" && <PodSettingsPanel />}
           {user.role === "admin" && currentView === "rbac" && <RbacManager />}
           {currentView === "account" && <AccountSettings />}

@@ -3,6 +3,9 @@ import { fetchDeliveryHistory, fetchDeliveryAttempts, fetchProofOfDeliveryHistor
 import { useAuth } from "../context/AuthContext";
 import StatusBadge from "./StatusBadge";
 import DeliveryMessages from "./DeliveryMessages";
+import CodCollectionWidget from "./CodCollectionWidget";
+import PackageScanWidget from "./PackageScanWidget";
+import RouteInsightsWidget from "./RouteInsightsWidget";
 
 const STATUS_LABELS = {
   picked_up: "Picked Up",
@@ -341,6 +344,10 @@ export default function DeliveryDetailModal({ delivery, agentName, onClose }) {
         <hr style={{ margin: "20px 0", border: "none", borderTop: "1px solid var(--border-color)" }} />
 
         <h4 style={{ marginBottom: "12px" }}>Proof of Delivery</h4>
+
+        {delivery.sync_status !== "pending" && <CodCollectionWidget deliveryId={delivery.id} />}
+        {delivery.sync_status !== "pending" && <RouteInsightsWidget deliveryId={delivery.id} />}
+        {delivery.sync_status !== "pending" && <PackageScanWidget deliveryId={delivery.id} />}
 
         {delivery.sync_status === "pending" && (
           <p style={{ color: "var(--text-muted)", fontSize: "13px" }}>
