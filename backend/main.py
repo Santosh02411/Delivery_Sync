@@ -34,10 +34,11 @@ import os
 from app.db.session import Base, engine
 from app.db.migrate import run_lightweight_migrations
 from app.services.rate_limiter import limiter
-from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce, pod, sla, warehouse, rbac
+from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce, pod, sla, warehouse, rbac, reconciliation, customer_messages, rto, scan, route_analytics, notification_templates, fleet
 from app.db.session import SessionLocal
 from app.services.subscription_scheduler import start_subscription_scheduler
 from app.services.sla_monitor import start_sla_monitor
+from app.services.reminder_scheduler import start_reminder_scheduler
 
 # Create all database tables on startup (if they don't already exist),
 # then catch up any EXISTING table to the model's current columns — see
@@ -164,6 +165,7 @@ app.include_router(returns.customer_router)
 app.include_router(returns.admin_router)
 app.include_router(websockets.router)
 app.include_router(messages.router)
+app.include_router(messages.templates_router)
 app.include_router(tracking.router)
 app.include_router(customer_auth.router)
 app.include_router(customer_dashboard.router)
@@ -184,6 +186,13 @@ app.include_router(pod.router)
 app.include_router(sla.router)
 app.include_router(warehouse.router)
 app.include_router(rbac.router)
+app.include_router(reconciliation.router)
+app.include_router(customer_messages.router)
+app.include_router(rto.router)
+app.include_router(scan.router)
+app.include_router(route_analytics.router)
+app.include_router(notification_templates.router)
+app.include_router(fleet.router)
 
 
 # Background task reference kept on app.state so it isn't garbage
@@ -197,6 +206,11 @@ async def _launch_subscription_scheduler():
 @app.on_event("startup")
 async def _launch_sla_monitor():
     app.state.sla_monitor_task = start_sla_monitor(SessionLocal)
+
+
+@app.on_event("startup")
+async def _launch_reminder_scheduler():
+    app.state.reminder_scheduler_task = start_reminder_scheduler(SessionLocal)
 
 
 @app.get("/")
