@@ -19,6 +19,32 @@ TWILIO_AUTH_TOKEN = os.environ.get("TWILIO_AUTH_TOKEN")
 TWILIO_FROM_NUMBER = os.environ.get("TWILIO_FROM_NUMBER")
 
 
+def send_free_text_sms(to_phone: str, message: str) -> None:
+    """
+    Generic-text counterpart to send_status_notification_sms (Phase 10)
+    — used by services/notification_templates.py's send_templated_notification()
+    where the message is a template body, not a fixed "order is now X"
+    sentence. Same provider logic/fallback exactly, just without baking
+    in that specific wording.
+    """
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER):
+        print("=" * 60)
+        print("SMS (no Twilio credentials configured — printed instead of sent)")
+        print(f"To: {to_phone}")
+        print(message)
+        print("=" * 60)
+        return
+
+    try:
+        from twilio.rest import Client
+    except ImportError:
+        print("Twilio credentials are set but the 'twilio' package isn't installed. Run: pip install twilio")
+        return
+
+    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    client.messages.create(body=message, from_=TWILIO_FROM_NUMBER, to=to_phone)
+
+
 def send_status_notification_sms(to_phone: str, order_id: str, status_label: str, tracking_link: str) -> None:
     message = f"Delivery Sync: order {order_id} is now {status_label}. Track: {tracking_link}"
 
@@ -57,6 +83,27 @@ def send_status_notification_sms(to_phone: str, order_id: str, status_label: str
 # is genuinely out of reach for a project at this stage — the sandbox is
 # the honest, fully-real alternative available without that.
 TWILIO_WHATSAPP_FROM = os.environ.get("TWILIO_WHATSAPP_FROM")
+
+
+def send_free_text_whatsapp(to_phone: str, message: str) -> None:
+    """Generic-text counterpart to send_status_notification_whatsapp (Phase 10) — see send_free_text_sms's docstring above for the same reasoning."""
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_WHATSAPP_FROM):
+        print("=" * 60)
+        print("WHATSAPP (no Twilio WhatsApp sandbox configured — printed instead of sent)")
+        print(f"To: {to_phone}")
+        print(message)
+        print("=" * 60)
+        return
+
+    try:
+        from twilio.rest import Client
+    except ImportError:
+        print("Twilio credentials are set but the 'twilio' package isn't installed. Run: pip install twilio")
+        return
+
+    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+    to_whatsapp = to_phone if to_phone.startswith("whatsapp:") else f"whatsapp:{to_phone}"
+    client.messages.create(body=message, from_=TWILIO_WHATSAPP_FROM, to=to_whatsapp)
 
 
 def send_status_notification_whatsapp(to_phone: str, order_id: str, status_label: str, tracking_link: str) -> None:

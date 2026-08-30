@@ -41,6 +41,14 @@ class FailedDeliveryReasonDB(Base):
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
+    # RTO (Phase 7): reasons an agent can never resolve by reattempting
+    # (e.g. "Wrong address", "Refused by customer") get flagged here so
+    # a SINGLE failed attempt with this reason makes the delivery
+    # RTO-eligible immediately, instead of waiting for the org's
+    # attempt-count threshold (OrganizationDB.rto_max_attempts) to be
+    # reached — see services/rto.py's check_rto_eligibility().
+    eligible_for_rto = Column(Boolean, nullable=False, default=False)
+
 
 # ---------- Pydantic Schemas ----------
 
@@ -48,12 +56,14 @@ class FailedDeliveryReasonCreate(BaseModel):
     code: str
     label: str
     description: Optional[str] = None
+    eligible_for_rto: bool = False
 
 
 class FailedDeliveryReasonUpdate(BaseModel):
     label: Optional[str] = None
     description: Optional[str] = None
     active: Optional[bool] = None
+    eligible_for_rto: Optional[bool] = None
 
 
 class FailedDeliveryReasonOut(BaseModel):
@@ -62,6 +72,7 @@ class FailedDeliveryReasonOut(BaseModel):
     label: str
     description: Optional[str] = None
     active: bool
+    eligible_for_rto: bool = False
 
     class Config:
         from_attributes = True

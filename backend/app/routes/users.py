@@ -13,6 +13,7 @@ from datetime import datetime
 from app.db.session import get_db
 from app.models.user import UserDB, UserRole, UserOut, AreaDetectRequest, AreaSetRequest, AreaOut
 from app.models.agent_location import AgentLocationDB, AgentLocationUpdate, AgentLocationOut
+from app.models.location_history import AgentLocationHistoryDB
 from app.models.delivery import DeliveryRecordDB, DeliveryStatus
 from app.models.push_subscription import PushSubscriptionDB, PushSubscriptionCreate
 from app.routes.deliveries import require_dispatcher
@@ -20,6 +21,9 @@ from app.routes.auth import get_current_user
 from app.services.push import VAPID_PUBLIC_KEY
 from app.services.websocket_manager import broadcast_sync, tracking_room
 from app.services.geocoding import reverse_geocode_area
+from app.services.route_analytics import check_geofence_arrival, is_first_geofence_arrival
+from app.services.notifications import notify_dispatchers_of_geofence_arrival
+from app.services.notification_templates import send_templated_notification
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -69,6 +73,26 @@ def update_my_location(
     db.commit()
     db.refresh(existing)
 
+    # Route analytics (Phase 9): also append to the location HISTORY
+    # log — the "latest position" upsert above is unaffected, this is
+    # purely additive. Associated with whichever delivery is currently
+    # active for this agent, if any (best-effort — if there are
+    # multiple, the most recently updated one is used, since that's
+    # the one the agent is most likely actively working on right now).
+    try:
+        active_delivery = db.query(DeliveryRecordDB).filter(
+            DeliveryRecordDB.agent_id == current_user.id,
+            DeliveryRecordDB.status.in_([DeliveryStatus.picked_up, DeliveryStatus.out_for_delivery]),
+        ).order_by(DeliveryRecordDB.updated_at.desc()).first()
+        db.add(AgentLocationHistoryDB(
+            org_id=current_user.org_id, agent_id=current_user.id,
+            delivery_id=active_delivery.id if active_delivery else None,
+            latitude=payload.latitude, longitude=payload.longitude, recorded_at=now,
+        ))
+        db.commit()
+    except Exception:
+        pass  # best-effort — never let history logging break live location sharing
+
     # Push the new position to anyone watching this agent's active
     # deliveries live (the customer tracking page / LiveTrackingMap) —
     # broadcasts to every delivery currently out with this agent, since
@@ -86,6 +110,25 @@ def update_my_location(
             "latitude": payload.latitude,
             "longitude": payload.longitude,
         })
+
+    # Route analytics (Phase 9): fire a geofence "arrived" alert to
+    # dispatchers the first time a ping lands within range of an active
+    # delivery's destination. Deliberately checked against `active_delivery`
+    # (the most-recently-updated one, same as the history log above)
+    # rather than every active delivery, to avoid a burst of alerts
+    # when an agent legitimately has several deliveries out at once.
+    if active_delivery is not None:
+        try:
+            if check_geofence_arrival(active_delivery, payload.latitude, payload.longitude) and is_first_geofence_arrival(db, active_delivery.id):
+                notify_dispatchers_of_geofence_arrival(db, current_user.org_id, active_delivery.order_id)
+                if active_delivery.customer_id:
+                    send_templated_notification(
+                        db, org_id=current_user.org_id, event_type="agent_nearby", order_id=active_delivery.order_id,
+                        customer_id=active_delivery.customer_id, customer_email=active_delivery.customer_email,
+                        customer_phone=active_delivery.customer_phone, delivery_id=active_delivery.id,
+                    )
+        except Exception:
+            pass  # best-effort, same tolerance as every other notification send in this project
 
     return existing
 

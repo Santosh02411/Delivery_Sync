@@ -142,6 +142,7 @@ def run_subscription_cycle(db: Session) -> int:
             # cycle produced a payable order (e.g. everything sold out) -
             # see module docstring for why.
             subscription.next_run_date = subscription.next_run_date + timedelta(days=subscription.interval_days)
+            subscription.reminder_sent_at = None  # Phase 10: fresh reminder eligibility for the new cycle
             db.commit()
             if order:
                 notify_customer_of_subscription_order_ready(db, subscription.customer_id, order)

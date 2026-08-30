@@ -93,6 +93,12 @@ class DeliveryRecordDB(Base):
     slot_start = Column(DateTime, nullable=True)
     slot_end = Column(DateTime, nullable=True)
 
+    # Phase 10: set once an upcoming-delivery reminder has been sent
+    # for this slot — see services/reminder_scheduler.py. Left null
+    # forever for a delivery with no slot at all (nothing to remind
+    # about).
+    reminder_sent_at = Column(DateTime, nullable=True)
+
     # Multi-tenant scoping: every delivery belongs to exactly one
     # organization (inherited from the dispatcher who created it). All
     # queries elsewhere filter by this so two organizations never see

@@ -58,6 +58,12 @@ class SubscriptionDB(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     paused_at = Column(DateTime, nullable=True)
     cancelled_at = Column(DateTime, nullable=True)
+    # Phase 10: set once a pre-renewal reminder has been sent for the
+    # CURRENT next_run_date, so the reminder scan never double-sends.
+    # Cleared back to null whenever next_run_date advances (see
+    # services/subscription_scheduler.py's run_subscription_cycle) so
+    # each new cycle gets its own fresh reminder.
+    reminder_sent_at = Column(DateTime, nullable=True)
 
 
 class SubscriptionItemDB(Base):

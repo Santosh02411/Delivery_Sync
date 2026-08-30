@@ -22,8 +22,26 @@ from sqlalchemy.orm import Session
 from app.models.order import OrderDB, OrderStatus
 from app.services.payment import IS_CONFIGURED, create_razorpay_refund
 from app.services.inventory import restock_order_if_needed
+from app.services.reconciliation import log_ledger_entry
+from app.services.notification_templates import send_templated_notification
 
 logger = logging.getLogger(__name__)
+
+
+def _notify_customer_of_refund(db: Session, order: OrderDB, delivery_id: str) -> None:
+    """Best-effort — see services/notification_templates.py. Looks up contact info from the delivery record (which carries customer_email/phone) rather than requiring OrderDB to duplicate them."""
+    from app.models.delivery import DeliveryRecordDB
+    delivery = db.query(DeliveryRecordDB).filter(DeliveryRecordDB.id == delivery_id).first()
+    if not delivery:
+        return
+    try:
+        send_templated_notification(
+            db, org_id=order.org_id, event_type="refund_processed", order_id=order.id,
+            customer_id=order.customer_id, customer_email=delivery.customer_email,
+            customer_phone=delivery.customer_phone, delivery_id=delivery_id,
+        )
+    except Exception:
+        pass  # best-effort, same tolerance as every other notification send in this project
 
 
 def refund_order_for_delivery(db: Session, delivery_id: str) -> Optional[OrderDB]:
@@ -76,6 +94,8 @@ def refund_order_for_delivery(db: Session, delivery_id: str) -> Optional[OrderDB
         db.commit()
         db.refresh(order)
         restock_order_if_needed(db, order)
+        log_ledger_entry(db, order.org_id, "refund", refund_amount, order_id=order.id, delivery_id=delivery_id, note="Test-mode refund")
+        _notify_customer_of_refund(db, order, delivery_id)
         return order
 
     if not IS_CONFIGURED or not order.razorpay_payment_id:
@@ -104,4 +124,6 @@ def refund_order_for_delivery(db: Session, delivery_id: str) -> Optional[OrderDB
     db.refresh(order)
     if order.refund_status == "refunded":
         restock_order_if_needed(db, order)
+        log_ledger_entry(db, order.org_id, "refund", refund_amount, order_id=order.id, delivery_id=delivery_id, reference=order.razorpay_refund_id)
+        _notify_customer_of_refund(db, order, delivery_id)
     return order

@@ -47,6 +47,7 @@ from app.models.organization import OrganizationDB
 from app.models.proof_of_delivery import ProofOfDeliveryDB
 from app.services.pod import org_requires_any_pod, pod_exists_for_delivery
 from app.services.sla import assign_sla, classify_on_completion
+from app.services import fleet as fleet_service
 
 REAL_ROUTING_TOP_K = 3  # how many top-tier candidates get a real routing call, per suggested-agents/auto-assign request
 from app.routes.auth import get_current_user
@@ -253,6 +254,7 @@ class AgentSuggestionOut(BaseModel):
     zone_match: bool = False  # True when this agent's detected area matches the delivery's free-text `zone` field
     covers_matched_zone: bool = False  # True when this agent is an assigned coverer of the real Zone (see models/zone.py) the delivery's coordinates fall inside
     routed: bool = False  # True when distance_km is a real road distance (services/routing.py), False when it's straight-line haversine
+    vehicle_capacity_warning: Optional[str] = None  # Phase 11: set when this agent's assigned vehicle has a unit capacity that active_delivery_count + 1 would exceed. Advisory only — never affects ranking or blocks assignment.
 
 
 class SuggestedAgentsOut(BaseModel):
@@ -369,6 +371,7 @@ def _rank_agents_for_delivery(db: Session, org_id: str, db_record: DeliveryRecor
             area_name=agent.area_name,
             zone_match=_zone_matches_area(db_record.zone, agent.area_name),
             covers_matched_zone=agent.id in covering_agent_ids,
+            vehicle_capacity_warning=fleet_service.capacity_warning(db, agent.id, org_id, active_count + 1),
         ))
 
     # Sort: zone-coverers first, then free-text zone-matched agents,

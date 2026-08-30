@@ -80,6 +80,12 @@ class OrganizationDB(Base):
     pod_require_otp = Column(Boolean, nullable=False, default=False)
     pod_require_gps = Column(Boolean, nullable=False, default=False)
 
+    # RTO (Phase 7): how many failed_attempt outcomes on the same
+    # delivery before it becomes RTO-eligible even without an
+    # RTO-flagged reason code. Default 3 is a common courier-industry
+    # convention; org-configurable via PATCH /admin/rto/settings.
+    rto_max_attempts = Column(Integer, nullable=False, default=3)
+
 
 class OrganizationOut(BaseModel):
     id: str
@@ -98,6 +104,7 @@ class OrganizationOut(BaseModel):
     pod_require_signature_or_photo: bool = False
     pod_require_otp: bool = False
     pod_require_gps: bool = False
+    rto_max_attempts: int = 3
 
     class Config:
         from_attributes = True

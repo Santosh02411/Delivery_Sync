@@ -68,6 +68,7 @@ def create_reason_code(
         label=payload.label.strip(),
         description=payload.description,
         active=True,
+        eligible_for_rto=payload.eligible_for_rto,
         created_at=datetime.utcnow(),
     )
     db.add(reason)
@@ -98,6 +99,8 @@ def update_reason_code(
         reason.description = payload.description
     if payload.active is not None:
         reason.active = payload.active
+    if payload.eligible_for_rto is not None:
+        reason.eligible_for_rto = payload.eligible_for_rto
 
     db.commit()
     db.refresh(reason)

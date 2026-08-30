@@ -22,6 +22,7 @@ from app.models.user import UserDB
 from app.routes.customer_auth import get_current_customer
 from app.routes.deliveries import require_dispatcher
 from app.services.returns_workflow import create_return_pickup_delivery
+from app.services.notification_templates import send_templated_notification
 
 customer_router = APIRouter(prefix="/customer/return-requests", tags=["returns"])
 admin_router = APIRouter(prefix="/admin/return-requests", tags=["returns"])
@@ -138,6 +139,17 @@ def approve_return_request(
     request.resolution_note = payload.resolution_note
     db.commit()
     db.refresh(request)
+
+    try:
+        customer = db.query(CustomerDB).filter(CustomerDB.id == request.customer_id).first()
+        send_templated_notification(
+            db, org_id=current_user.org_id, event_type="return_approved", order_id=request.order_id,
+            customer_id=request.customer_id, customer_email=customer.email if customer else None,
+            customer_phone=original_delivery.customer_phone, delivery_id=original_delivery.id,
+        )
+    except Exception:
+        pass  # best-effort, same tolerance as every other notification send in this project
+
     return request
 
 

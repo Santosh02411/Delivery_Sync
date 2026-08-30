@@ -48,4 +48,16 @@ def record_delivery_attempt(
     db.add(entry)
     db.commit()
     db.refresh(db_record)
+
+    # RTO (Phase 7): the ONE place every failed-attempt path in this
+    # project already funnels through (update_delivery, bulk_update_status,
+    # and the offline-sync conflict resolver all call this function) —
+    # so this is also the one place RTO eligibility needs to be checked,
+    # rather than duplicating the check at each call site.
+    if outcome == "failed_attempt":
+        from app.models.failed_delivery_reason import FailedDeliveryReasonDB
+        from app.services.rto import check_rto_eligibility
+        reason = db.query(FailedDeliveryReasonDB).filter(FailedDeliveryReasonDB.id == reason_code_id).first() if reason_code_id else None
+        check_rto_eligibility(db, db_record, reason)
+
     return entry
