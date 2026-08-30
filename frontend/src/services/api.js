@@ -2248,3 +2248,97 @@ export async function fetchFleetReminders(token, withinDays = 14) {
   if (!response.ok) throw new Error(data.detail || "Failed to load fleet reminders");
   return data;
 }
+
+// ---------- Customer Support (Phase 12) ----------
+
+export async function createSupportTicket(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/customer/support/tickets`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create ticket");
+  return data;
+}
+
+export async function fetchMySupportTickets(token) {
+  const response = await fetch(`${API_BASE_URL}/customer/support/tickets`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load tickets");
+  return data;
+}
+
+export async function fetchMySupportTicket(token, ticketId) {
+  const response = await fetch(`${API_BASE_URL}/customer/support/tickets/${ticketId}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load ticket");
+  return data;
+}
+
+export async function fetchMySupportTicketMessages(token, ticketId) {
+  const response = await fetch(`${API_BASE_URL}/customer/support/tickets/${ticketId}/messages`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load messages");
+  return data;
+}
+
+export async function replyToMySupportTicket(token, ticketId, message) {
+  const response = await fetch(`${API_BASE_URL}/customer/support/tickets/${ticketId}/messages`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ message }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to send message");
+  return data;
+}
+
+// ---------- Support (staff side, Phase 12) ----------
+
+export async function fetchSupportTickets(token, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([k, v]) => { if (v !== undefined && v !== "") params.set(k, v); });
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(`${API_BASE_URL}/admin/support/tickets${qs}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load tickets");
+  return data;
+}
+
+export async function fetchSupportTicketMessages(token, ticketId) {
+  const response = await fetch(`${API_BASE_URL}/admin/support/tickets/${ticketId}/messages`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load messages");
+  return data;
+}
+
+export async function replyToSupportTicket(token, ticketId, message, isInternalNote = false) {
+  const response = await fetch(`${API_BASE_URL}/admin/support/tickets/${ticketId}/messages`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ message, is_internal_note: isInternalNote }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to send message");
+  return data;
+}
+
+export async function updateSupportTicket(token, ticketId, payload) {
+  const response = await fetch(`${API_BASE_URL}/admin/support/tickets/${ticketId}`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update ticket");
+  return data;
+}
+
+export async function resolveSupportTicket(token, ticketId, resolutionNotes) {
+  const response = await fetch(`${API_BASE_URL}/admin/support/tickets/${ticketId}/resolve`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ resolution_notes: resolutionNotes }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to resolve ticket");
+  return data;
+}
+
+export async function fetchSupportAnalytics(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/support/analytics`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load support analytics");
+  return data;
+}

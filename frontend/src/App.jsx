@@ -32,6 +32,7 @@ import SlaManager from "./components/SlaManager";
 import PodSettingsPanel from "./components/PodSettingsPanel";
 import WarehouseManager from "./components/WarehouseManager";
 import FleetManager from "./components/FleetManager";
+import SupportManager from "./components/SupportManager";
 import RbacManager from "./components/RbacManager";
 import ReconciliationDashboard from "./components/ReconciliationDashboard";
 import RtoManager from "./components/RtoManager";
@@ -73,6 +74,7 @@ function StaffDashboard({ user }) {
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "sla" && <SlaManager />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "warehouses" && <WarehouseManager />}
           {currentView === "fleet" && (user.role === "dispatcher" || user.role === "admin" || user.role === "agent") && <FleetManager />}
+          {(user.role === "dispatcher" || user.role === "admin") && currentView === "support" && <SupportManager />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "reconciliation" && <ReconciliationDashboard />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "rto" && <RtoManager />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "routing" && <RoutingInsights />}

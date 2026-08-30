@@ -49,6 +49,7 @@ import { startCustomerActionAutoSync } from "../services/customerSyncEngine";
 import { writeSyncContext } from "../services/backgroundSyncContext";
 import { urlBase64ToUint8Array } from "../services/pushUtil";
 import CustomerDeliveryMessages from "./CustomerDeliveryMessages";
+import CustomerSupportPanel from "./CustomerSupportPanel";
 
 const STATUS_LABELS = {
   confirmed: "Order Confirmed",
@@ -213,6 +214,7 @@ export default function CustomerDashboard() {
     { key: "shop", label: "Shop", icon: "\u25A3" },
     { key: "subscriptions", label: "Recurring Orders", icon: "\u27F3" },
     { key: "addresses", label: "Addresses", icon: "\u2691" },
+    { key: "support", label: "Support", icon: "\u2753" },
     { key: "privacy", label: "Privacy", icon: "\u26BF" },
     { key: "profile", label: "Profile", icon: "\u25C9" },
   ];
@@ -298,6 +300,12 @@ export default function CustomerDashboard() {
       {activeView === "addresses" && (
         <div>
           <AddressBook token={token} />
+        </div>
+      )}
+
+      {activeView === "support" && (
+        <div>
+          <CustomerSupportPanel />
         </div>
       )}
 

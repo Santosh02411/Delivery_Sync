@@ -2526,6 +2526,60 @@ Full backend suite after Phase 11: **276/276 passing**. Frontend:
 
 ---
 
+## Missing-Features Rollout — Phase 12: Customer Support
+
+**What was missing:** No formal support-ticket system — a customer
+with a complaint, payment dispute, or general question had no
+in-product way to raise it and have staff triage/track/resolve it.
+The existing delivery chat (Phase 6) is a live, in-the-moment channel
+tied to one delivery in progress, not a place for a longer-lived issue
+that may not even involve an active delivery (a payment question, an
+account issue).
+
+**Why it was needed:** Every real e-commerce/delivery operation needs
+a support queue — customers need somewhere to raise an issue and see
+it tracked to resolution; dispatchers/admins need to triage, assign,
+and report on it.
+
+**What it does:** Two new tables — `SupportTicketDB` (category,
+priority, status, optional order/delivery reference, an `is_dispute`
+flag for complaints contesting an outcome, assignment, resolution) and
+`SupportTicketMessageDB` (the ticket's thread, with an
+`is_internal_note` flag for staff-only notes never returned to the
+customer-facing endpoints). Deliberately kept separate from the
+existing delivery chat rather than overloading it. A customer creates
+a ticket via `POST /customer/support/tickets` — `org_id` is never
+trusted from the client; it's derived from the customer's own
+order/delivery record (or their most recent order, since a customer
+account spans stores in this project's marketplace model), so a
+customer can never open a ticket in an org they've never ordered from.
+Staff routes (`/admin/support/...`, dispatcher/admin only) support
+filtering, replying (a non-internal-note reply auto-moves a brand-new
+ticket from "open" to "in_progress" — the same convention already used
+elsewhere in this project for "first action taken"), assignment
+(validated against real dispatchers/admins in the org), and resolution
+with required notes and a timestamp. A customer reply on a "resolved"
+ticket automatically reopens it to "in_progress" — silence isn't "still
+fine," and a stray follow-up shouldn't need a human to notice it before
+the ticket's status reflects reality. `GET /admin/support/analytics`
+reports counts by status/category/priority, open disputes, and average
+resolution time in hours. Attachment upload reuses the exact
+validation approach already proven in `routes/products.py` (allowed
+image types, PDF, 5 MB cap) rather than inventing a second one.
+Frontend: a new customer-facing `CustomerSupportPanel` (create/browse/
+reply to own tickets) added as a tab in the existing customer
+dashboard, and a new staff-facing `SupportManager` (triage, reply,
+internal notes, resolve, analytics) wired into the dispatcher/admin
+sidebar. **13 new backend tests, all passing** (ticket creation tied
+to a real order, tenant isolation, internal-notes-hidden-from-customer,
+reopen-on-reply, closed-ticket-reply-rejected, assignment validation,
+resolution, dispute/analytics counts, role gating).
+
+Full backend suite after Phase 12: **289/289 passing**. Frontend:
+`npm run build` clean.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

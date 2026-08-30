@@ -766,6 +766,33 @@ Full backend suite after this session: **276/276 passing** (263 → 276,
 
 ---
 
+## Session: Phase 12 — Customer Support
+
+**Getting `org_id` right for a ticket with no delivery attached.** A
+support ticket needs an `org_id` for tenant isolation, but unlike most
+records in this project, a ticket isn't always created from something
+that already has one in scope — a customer might file a general
+account question with no order or delivery reference at all. The
+naive fix (trust an `org_id` the client sends) was rejected outright:
+it would let a customer claim membership in any org's queue. Instead,
+`org_id` is always derived server-side — from the referenced order,
+the referenced delivery, or (when neither is given) the customer's own
+most recent order — so there's no code path where a client-supplied
+org value is ever used.
+
+**Reusing, not reinventing, file upload validation.** Ticket
+attachments needed the same shape of validation `routes/products.py`
+already has (allowed MIME types, a size cap, reject-empty-file) for
+product images. Rather than writing a second, slightly-different
+version of that logic, `routes/support.py` copies the same constants
+and validation flow, saving to a separate `uploads/support/` directory
+so the two upload types never collide on disk.
+
+Full backend suite after this session: **289/289 passing** (276 → 289,
+13 new). Frontend `npm run build` clean.
+
+---
+
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something

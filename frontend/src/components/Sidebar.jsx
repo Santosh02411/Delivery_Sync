@@ -83,6 +83,7 @@ export default function Sidebar({ activeView, onNavigate }) {
     { key: "workforce", label: "Workforce", icon: "\u25F0" },
     { key: "products", label: "Products", icon: "\u25A3" },
     { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
+    { key: "support", label: "Support", icon: "\u2753" },
     { key: "account", label: "My Account", icon: "\u25CB" },
     { key: "security", label: "Security", icon: "\u26BF" },
   ];
@@ -105,6 +106,7 @@ export default function Sidebar({ activeView, onNavigate }) {
     { key: "pod-settings", label: "Proof of Delivery", icon: "\u2713" },
     { key: "notification-templates", label: "Notifications", icon: "\u2709" },
     { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
+    { key: "support", label: "Support", icon: "\u2753" },
     { key: "audit-log", label: "Audit Log", icon: "\u2637" },
     { key: "account", label: "My Account", icon: "\u25CB" },
     { key: "security", label: "Security", icon: "\u26BF" },
