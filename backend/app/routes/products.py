@@ -130,6 +130,7 @@ def create_product(
         category=payload.category,
         is_active=payload.is_active,
         stock_quantity=payload.stock_quantity,
+        cost_price=payload.cost_price,
         created_at=datetime.utcnow(),
     )
     db.add(product)

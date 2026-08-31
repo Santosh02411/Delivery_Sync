@@ -172,6 +172,8 @@ def signup(request: Request, payload: UserSignup, db: Session = Depends(get_db))
         org = db.query(OrganizationDB).filter(OrganizationDB.invite_code == payload.invite_code).first()
         if not org:
             raise HTTPException(status_code=400, detail="That invite code doesn't match any organization.")
+        if org.is_suspended:
+            raise HTTPException(status_code=403, detail="This organization is currently suspended and isn't accepting new members.")
 
         # SECURITY: anyone joining via invite code must never be able to
         # self-select the "admin" role. An invite code is meant for

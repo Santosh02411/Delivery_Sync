@@ -46,6 +46,8 @@ from app.services.slots import validate_slot
 from app.services.websocket_manager import broadcast_sync, dispatcher_queue_room
 from app.services.rate_limiter import limiter
 from app.services.reconciliation import log_ledger_entry
+from app.services.finance import auto_generate_invoice_for_order
+from app.services.webhooks import emit_event
 
 router = APIRouter(prefix="/customer", tags=["checkout"])
 
@@ -104,6 +106,10 @@ def checkout(
     current_customer: CustomerDB = Depends(get_current_customer),
 ):
     org_id, line_snapshots, subtotal = _load_cart(db, current_customer.id)
+
+    org = db.query(OrganizationDB).filter(OrganizationDB.id == org_id).first()
+    if org and org.is_suspended:
+        raise HTTPException(status_code=403, detail="This store is temporarily unavailable and isn't accepting new orders.")
 
     if payload.payment_method not in ("online", "cod"):
         raise HTTPException(status_code=400, detail="payment_method must be 'online' or 'cod'.")
@@ -208,6 +214,7 @@ def checkout(
         # straight to fulfillment (stock decrement, Delivery creation,
         # dispatcher notification).
         db.commit()
+        emit_event(db, org_id, "order.created", {"order_id": order.id, "total": total, "payment_method": "cod"})
         return CheckoutResponse(
             order_id=order.id,
             razorpay_order_id=None,
@@ -245,6 +252,7 @@ def checkout(
             )
         order.razorpay_order_id = razorpay_order["id"]
         db.commit()
+        emit_event(db, org_id, "order.created", {"order_id": order.id, "total": total, "payment_method": "online"})
         return CheckoutResponse(
             order_id=order.id,
             razorpay_order_id=razorpay_order["id"],
@@ -261,6 +269,7 @@ def checkout(
     # frontend can visibly label it rather than pretending it's real.
     order.is_test_mode_payment = 1
     db.commit()
+    emit_event(db, org_id, "order.created", {"order_id": order.id, "total": total, "payment_method": "online"})
     return CheckoutResponse(
         order_id=order.id,
         razorpay_order_id=None,
@@ -416,6 +425,18 @@ def verify_payment(
             order_id=order.id, delivery_id=delivery.id,
             reference=order.razorpay_payment_id, user_id=current_customer.id,
         )
+
+    # Phase 13: an invoice represents what was SOLD, so it's generated for
+    # every paid order — including COD, where nothing has been collected
+    # yet (that's tracked separately by Phase 5's reconciliation system).
+    auto_generate_invoice_for_order(db, order)
+
+    # Phase 14: webhooks — order.paid fires once fulfillment created the
+    # delivery, so a subscriber's order.paid handler can already look up
+    # the associated delivery if it wants to.
+    emit_event(db, order.org_id, "order.paid", {"order_id": order.id, "total": order.total, "delivery_id": delivery.id})
+    emit_event(db, order.org_id, "delivery.created", {"delivery_id": delivery.id, "order_id": delivery.order_id, "status": "pending"})
+
 
     # Re-query items fresh rather than reusing the pre-commit list above -
     # SQLAlchemy expires all session objects on commit by default, and

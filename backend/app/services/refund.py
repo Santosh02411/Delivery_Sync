@@ -23,6 +23,8 @@ from app.models.order import OrderDB, OrderStatus
 from app.services.payment import IS_CONFIGURED, create_razorpay_refund
 from app.services.inventory import restock_order_if_needed
 from app.services.reconciliation import log_ledger_entry
+from app.services.finance import auto_generate_credit_note_for_refund
+from app.services.webhooks import emit_event
 from app.services.notification_templates import send_templated_notification
 
 logger = logging.getLogger(__name__)
@@ -95,6 +97,8 @@ def refund_order_for_delivery(db: Session, delivery_id: str) -> Optional[OrderDB
         db.refresh(order)
         restock_order_if_needed(db, order)
         log_ledger_entry(db, order.org_id, "refund", refund_amount, order_id=order.id, delivery_id=delivery_id, note="Test-mode refund")
+        auto_generate_credit_note_for_refund(db, order, refund_amount)
+        emit_event(db, order.org_id, "refund.created", {"order_id": order.id, "amount": refund_amount, "delivery_id": delivery_id})
         _notify_customer_of_refund(db, order, delivery_id)
         return order
 
@@ -125,5 +129,7 @@ def refund_order_for_delivery(db: Session, delivery_id: str) -> Optional[OrderDB
     if order.refund_status == "refunded":
         restock_order_if_needed(db, order)
         log_ledger_entry(db, order.org_id, "refund", refund_amount, order_id=order.id, delivery_id=delivery_id, reference=order.razorpay_refund_id)
+        auto_generate_credit_note_for_refund(db, order, refund_amount, ledger_reference=order.razorpay_refund_id)
+        emit_event(db, order.org_id, "refund.created", {"order_id": order.id, "amount": refund_amount, "delivery_id": delivery_id})
         _notify_customer_of_refund(db, order, delivery_id)
     return order

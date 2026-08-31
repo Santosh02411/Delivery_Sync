@@ -86,6 +86,25 @@ class OrganizationDB(Base):
     # convention; org-configurable via PATCH /admin/rto/settings.
     rto_max_attempts = Column(Integer, nullable=False, default=3)
 
+    # Enterprise org management (Phase 16): branding, locale, and
+    # operational status. All additive/optional with sensible
+    # defaults — an org that never touches these keeps behaving
+    # exactly as before this feature existed.
+    logo_url = Column(String, nullable=True)
+    brand_color = Column(String, nullable=True)  # hex, e.g. "#2563eb" — used by the admin UI and any future customer-facing theming
+    timezone = Column(String, nullable=False, default="Asia/Kolkata")  # IANA name, DISPLAY-ONLY — see routes/organization.py's docstring on why nothing computes with this yet
+    currency_code = Column(String, nullable=False, default="INR")
+    currency_symbol = Column(String, nullable=False, default="\u20B9")
+
+    # Self-service "pause operations" toggle — an org's OWN admin
+    # taking their own store offline (e.g. between seasons, during a
+    # dispute, while restructuring), not a platform-operator suspending
+    # a tenant from outside. See routes/organization.py's docstring for
+    # the full scoping of what suspension actually blocks.
+    is_suspended = Column(Boolean, nullable=False, default=False)
+    suspended_at = Column(DateTime, nullable=True)
+    suspended_reason = Column(String, nullable=True)
+
 
 class OrganizationOut(BaseModel):
     id: str
@@ -105,6 +124,14 @@ class OrganizationOut(BaseModel):
     pod_require_otp: bool = False
     pod_require_gps: bool = False
     rto_max_attempts: int = 3
+    logo_url: Optional[str] = None
+    brand_color: Optional[str] = None
+    timezone: str = "Asia/Kolkata"
+    currency_code: str = "INR"
+    currency_symbol: str = "\u20B9"
+    is_suspended: bool = False
+    suspended_at: Optional[datetime] = None
+    suspended_reason: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -151,6 +178,9 @@ class PublicOrganizationOut(BaseModel):
     slot_window_end_hour: int = 21
     category: Optional[str] = None
     description: Optional[str] = None
+    logo_url: Optional[str] = None
+    brand_color: Optional[str] = None
+    currency_symbol: str = "\u20B9"
 
     class Config:
         from_attributes = True

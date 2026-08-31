@@ -32,6 +32,15 @@ class ProductDB(Base):
     # checkout and restored on cancellation — see services/inventory.py.
     stock_quantity = Column(Integer, nullable=True, default=None)
 
+    # Phase 15: what this product costs the org to acquire/produce —
+    # used ONLY by admin-side profit/margin analytics
+    # (routes/advanced_analytics.py). Deliberately absent from ProductOut
+    # (models/product.py) — that schema is also what the public storefront
+    # (routes/stores.py) returns to customers, and margin data must never
+    # leak there. None means "not set" — margin analytics simply excludes
+    # that product from the profit calculation rather than assuming zero cost.
+    cost_price = Column(Float, nullable=True, default=None)
+
 
 class ProductCreate(BaseModel):
     name: str
@@ -41,6 +50,7 @@ class ProductCreate(BaseModel):
     category: Optional[str] = None
     is_active: bool = True
     stock_quantity: Optional[int] = Field(default=None, ge=0)
+    cost_price: Optional[float] = Field(default=None, ge=0)
 
 
 class ProductUpdate(BaseModel):
@@ -51,6 +61,7 @@ class ProductUpdate(BaseModel):
     category: Optional[str] = None
     is_active: Optional[bool] = None
     stock_quantity: Optional[int] = Field(default=None, ge=0)
+    cost_price: Optional[float] = Field(default=None, ge=0)
 
 
 class ProductOut(BaseModel):

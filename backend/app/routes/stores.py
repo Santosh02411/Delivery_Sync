@@ -36,7 +36,7 @@ def list_public_stores(
     admin-set category (see StoreProfileUpdate) — free text, not an
     enum, since real vendor categories aren't known in advance.
     """
-    query = db.query(OrganizationDB).filter(OrganizationDB.is_public_store == True)  # noqa: E712
+    query = db.query(OrganizationDB).filter(OrganizationDB.is_public_store == True, OrganizationDB.is_suspended == False)  # noqa: E712
     if search:
         query = query.filter(OrganizationDB.name.ilike(f"%{search}%"))
     if category:

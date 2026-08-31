@@ -48,6 +48,7 @@ from app.models.proof_of_delivery import ProofOfDeliveryDB
 from app.services.pod import org_requires_any_pod, pod_exists_for_delivery
 from app.services.sla import assign_sla, classify_on_completion
 from app.services import fleet as fleet_service
+from app.services.webhooks import emit_event
 
 REAL_ROUTING_TOP_K = 3  # how many top-tier candidates get a real routing call, per suggested-agents/auto-assign request
 from app.routes.auth import get_current_user
@@ -241,6 +242,9 @@ def _apply_agent_assignment(db: Session, current_user: UserDB, db_record: Delive
     notify_agent_of_new_assignment(db, delivery_id=db_record.id, order_id=db_record.order_id, agent_id=target_agent.id)
     broadcast_sync(dispatcher_queue_room(db_record.org_id), {"event": "queue_changed", "reason": "assigned"})
     broadcast_sync(tracking_room(db_record.id), {"event": "status_changed", "status": db_record.status.value})
+    emit_event(db, db_record.org_id, "delivery.assigned", {
+        "delivery_id": db_record.id, "order_id": db_record.order_id, "agent_id": target_agent.id,
+    })
     return db_record
 
 
@@ -860,6 +864,25 @@ def update_delivery(
                 notes=update.notes or update.partial_notes,
                 attempted_at=update.updated_at,
             )
+
+    # Phase 14: webhooks — one outbound event per delivery-status
+    # transition, mapped from this project's internal DeliveryStatus
+    # values to the public webhook event vocabulary. Only fires on an
+    # ACTUAL transition, for statuses the public event catalog
+    # recognizes — a same-status no-op update never queues a delivery
+    # no subscriber asked for.
+    if old_status != update.status:
+        event_map = {
+            DeliveryStatus.picked_up: "delivery.picked_up",
+            DeliveryStatus.out_for_delivery: "delivery.out_for_delivery",
+            DeliveryStatus.delivered: "delivery.delivered",
+            DeliveryStatus.failed_attempt: "delivery.failed",
+        }
+        event_type = event_map.get(update.status)
+        if event_type:
+            emit_event(db, db_record.org_id, event_type, {
+                "delivery_id": db_record.id, "order_id": db_record.order_id, "status": update.status.value,
+            })
 
     return db_record
 

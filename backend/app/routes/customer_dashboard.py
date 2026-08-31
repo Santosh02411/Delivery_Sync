@@ -26,6 +26,7 @@ from app.models.push_subscription import PushSubscriptionDB, PushSubscriptionCre
 from app.services.history import record_history_entry
 from app.services.push import VAPID_PUBLIC_KEY
 from app.services.refund import refund_order_for_delivery
+from app.services.webhooks import emit_event
 from app.routes.customer_auth import get_current_customer
 from app.models.proof_of_delivery import ProofOfDeliveryDB, ProofOfDeliveryOut
 
@@ -226,6 +227,8 @@ def cancel_my_delivery(
     # created deliveries with no linked Order, or ones that were never
     # paid in the first place.
     refund_order_for_delivery(db, delivery.id)
+
+    emit_event(db, delivery.org_id, "order.cancelled", {"delivery_id": delivery.id, "order_id": delivery.order_id})
 
     return delivery
 

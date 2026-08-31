@@ -23,6 +23,7 @@ from app.routes.customer_auth import get_current_customer
 from app.routes.deliveries import require_dispatcher
 from app.services.returns_workflow import create_return_pickup_delivery
 from app.services.notification_templates import send_templated_notification
+from app.services.webhooks import emit_event
 
 customer_router = APIRouter(prefix="/customer/return-requests", tags=["returns"])
 admin_router = APIRouter(prefix="/admin/return-requests", tags=["returns"])
@@ -76,6 +77,10 @@ def create_return_request(
     db.add(request)
     db.commit()
     db.refresh(request)
+    emit_event(db, request.org_id, "return.created", {
+        "return_request_id": request.id, "order_id": request.order_id, "delivery_id": request.delivery_id,
+        "request_type": request.request_type,
+    })
     return request
 
 
