@@ -2580,6 +2580,227 @@ Full backend suite after Phase 12: **289/289 passing**. Frontend:
 
 ---
 
+## Missing-Features Rollout — Phase 13: Invoicing & Finance
+
+**What was missing:** No formal financial documents — a customer who
+paid for an order had no invoice or receipt; a refund produced a
+ledger entry (Phase 5) but nothing a customer could point to as proof;
+there was no way to issue a manual credit or debit note for a
+goodwill adjustment or a COD shortfall.
+
+**Why it was needed:** A real commerce operation needs paper trail —
+GST invoices for tax compliance, receipts customers can download, and
+credit/debit notes for adjustments outside the normal checkout/refund
+flow.
+
+**What it does:** One new table, `FinancialDocumentDB`, covers
+invoices, receipts, refund receipts, credit notes, and debit notes via
+a `document_type` field rather than four or five nearly-identical
+tables — they all share the same shape (a snapshot of amounts, tied to
+an order, with a sequential per-org-per-type number). Amounts are
+NEVER recomputed: every document snapshots the figures already
+computed once, authoritatively, on `OrderDB` at checkout time
+(subtotal, discount, tax, delivery fee, total) or from the real
+`PaymentLedgerDB` refund event that caused it — so a document always
+matches what actually happened, even if the org's tax rate changes
+later. An invoice is auto-generated the moment an order becomes
+`paid` — for COD orders too, since an invoice represents what was
+SOLD, not what's been collected (COD collection stays Phase 5's
+separate concern). A credit note is auto-generated the moment a real
+refund is recorded, hooked directly into `services/refund.py` right
+after the existing ledger entry — the original invoice is never
+edited, exactly like a real credit note offsets rather than rewrites
+it. Dispatchers/admins can also issue manual credit notes (e.g. one
+missing item, not a full refund) and debit notes (e.g. a COD
+shortfall, optionally with no order reference at all). PDFs are
+rendered server-side with reportlab and regenerated on every download
+rather than cached, since the underlying stored amounts never change.
+`GET /admin/finance/reports` reuses Phase 5's existing
+`compute_financial_dashboard()` for the real money-movement figures
+rather than recomputing a second, possibly-divergent set of numbers,
+and adds document counts/totals on top. Frontend: a new customer-facing
+`CustomerInvoicesPanel` (download own invoices/credit notes as PDF, a
+new dashboard tab) and a new staff-facing `FinanceManager` (issue
+notes, browse all documents, download PDFs, see the report) wired into
+the dispatcher/admin sidebar. **12 new backend tests, all passing**
+(auto-invoice on both COD and online checkout, auto-credit-note on a
+real refund, sequential numbering, manual note validation, tenant
+isolation, customer-can't-see-another-customer's-document, PDF actually
+renders non-trivial bytes).
+
+Full backend suite after Phase 13: **301/301 passing**. Frontend:
+`npm run build` clean.
+
+---
+
+## Missing-Features Rollout — Phase 14: Public API & Webhooks
+
+**What was missing:** No way for an external system to integrate with
+this project at all — no API keys, no outbound event notifications.
+Every existing route required a staff JWT, which isn't something you
+hand to a third-party integration.
+
+**Why it was needed:** A real delivery/e-commerce platform needs an
+external integration layer — partners who want to pull their own
+delivery/order data, or receive a push the moment something happens,
+rather than polling.
+
+**What it does:** Two independent concerns. (1) `ApiKeyDB` — scoped,
+SHA-256-hashed API keys (`deliveries:read`, `deliveries:write`,
+`orders:read`, `webhooks:manage`) authenticating a small, deliberately
+narrow external surface at `/api/v1/deliveries` and `/api/v1/orders`
+via an `X-API-Key` header — versioned so an incompatible v2 could
+exist alongside it later without breaking existing integrations. The
+raw key is shown to the org admin exactly once, at creation or
+rotation; only its hash and a short prefix (for admin-UI
+identification) are ever stored. Rotation revokes the old key on the
+same database row before creating the new one, so there's never a
+window where both work. (2) `WebhookDB`/`WebhookDeliveryDB` — an org
+subscribes a URL to specific events
+(`delivery.created`/`assigned`/`picked_up`/`out_for_delivery`/
+`delivered`/`failed`, `order.created`/`paid`/`cancelled`,
+`refund.created`, `return.created`), and `emit_event()` is called
+directly from the real place each of those things actually happens —
+`routes/checkout.py`, `routes/deliveries.py`'s shared
+`_apply_agent_assignment`/status-update logic, `routes/customer_
+dashboard.py`'s cancellation, `services/refund.py` (both the test-mode
+and real Razorpay refund paths), and `routes/returns.py`. Crucially,
+`emit_event()` only ever QUEUES a `WebhookDeliveryDB` row — it never
+sends synchronously from inside a request handler, so an unreachable
+webhook URL can never slow down or fail a checkout/refund/status-
+update request. A background scheduler (same interval-loop shape as
+Phase 10's reminder scheduler) picks up pending/due deliveries,
+HMAC-SHA256 signs each payload with that webhook's own secret, and
+retries failed attempts with exponential backoff (1/5/15/60 minutes,
+5 attempts max) before marking a delivery permanently failed — which
+an admin can then manually replay. **16 new backend tests, all
+passing** (API key scope enforcement, rotation invalidating the old
+key, revocation, public-API tenant isolation, webhook event/URL
+validation, signature determinism, event-queuing-only-for-subscribed-
+events, a real delivery-status-change end-to-end queuing
+`delivery.assigned`, and a replay against a genuinely unreachable host
+failing gracefully and rescheduling rather than crashing). Frontend: a
+new `ApiWebhooksManager` (admin-only — issuing external API access or
+wiring outbound webhooks is an org-level integration decision) with
+key creation/rotation/revocation, webhook CRUD, and a delivery log
+with per-delivery replay.
+
+Full backend suite after Phase 14: **317/317 passing** (confirmed in
+two batches — the combined single run now exceeds this environment's
+tool execution-time ceiling with the added background scheduler, not
+a test failure). Frontend: `npm run build` clean.
+
+---
+
+## Missing-Features Rollout — Phase 15: Advanced Analytics
+
+**What was missing:** The base analytics dashboard (routes/analytics.py)
+only ever reported org-wide totals — revenue, order count, top
+products. Nothing broke performance down per agent, by failure reason,
+by return/cancellation, by repeat-customer behavior, by category or
+payment method, or by profit margin. SLA analytics, route efficiency/
+heatmaps, RTO analytics, support analytics, and fleet utilization
+already existed as separate, more specific reports elsewhere in this
+project — Phase 15 was scoped to add exactly what none of those
+already covered, not to duplicate any of them.
+
+**Why it was needed:** An admin running the business needs to know
+which agents are actually productive, why deliveries are failing,
+whether customers come back, which categories/payment methods drive
+revenue, and — new to this project — whether products are actually
+profitable.
+
+**What it does:** One new endpoint, `GET /admin/analytics/advanced/`,
+computed live from existing rows on every request (same tradeoff the
+base dashboard already documents and accepts — no drift between what
+the dashboard says and what the underlying data says, at the cost of
+real aggregation work per request). Adds: agent productivity
+(delivered/failed counts and on-time rate per agent — sliced by agent,
+unlike Phase 2's org-wide SLA % or Phase 11's per-VEHICLE utilization);
+failed-delivery breakdown by reason code; return/cancellation rates;
+customer retention (repeat-order rate); revenue by category and by
+payment method; profit margin; and a trend/forecast. Profit margin
+required one new nullable `cost_price` column on `ProductDB` —
+deliberately absent from `ProductOut`, which is also what the PUBLIC
+storefront (routes/stores.py) returns to customers, so margin data can
+never leak there. A product with no `cost_price` set is excluded from
+BOTH the revenue and cost side of the margin calculation (not just its
+cost, which would understate cost while still counting revenue and
+silently overstate margin) — `products_missing_cost_price` tells the
+admin how much of their catalog isn't covered yet. The forecast is
+explicitly labeled a naive moving-average projection, not a real
+predictive model — this project's data volume can't reliably support
+seasonality-aware forecasting, and a transparent naive baseline is
+more honest than dressing up a simple average as something smarter.
+**10 new backend tests, all passing** (agent productivity and on-time
+rate, an idle agent correctly reporting a null rather than 0% on-time
+rate, failed-delivery reason breakdown, cancellation rate, repeat-order
+rate, revenue breakdowns, profit-margin exclusion behavior verified
+with a mix of priced/unpriced products, forecast labeling, admin-only
+access, tenant isolation). Frontend: a new `AdvancedAnalyticsPanel`
+admin sidebar page.
+
+Full backend suite after Phase 15: **327/327 passing** (confirmed via
+two batched runs, same reason as Phase 14 — combined runtime now
+exceeds this environment's single-command execution ceiling).
+Frontend: `npm run build` clean.
+
+---
+
+## Missing-Features Rollout — Phase 16: Enterprise Organization Management
+
+**What was missing:** No branding, no locale settings, no visibility
+into how much an org is actually using the platform, and no way for
+an org to pause operations or export a portable snapshot of its own
+data. POD rules, SLA policies, delivery zones, and pricing/visibility/
+slot settings already existed as org-level settings elsewhere in this
+project — Phase 16 was scoped to add exactly what none of those
+covered, not a second parallel settings system.
+
+**Why it was needed:** A real multi-tenant platform needs each
+tenant's admin to be able to brand their store, see their own usage,
+and — critically for a project with no cross-org platform-operator
+role — pause their own operations and get their data out if they ever
+need to.
+
+**What it does:** Six new fields on `OrganizationDB` (logo_url,
+brand_color, timezone, currency_code, currency_symbol, plus
+is_suspended/suspended_at/suspended_reason), all additive with
+sensible defaults so an org that never touches them keeps behaving
+exactly as before. `GET /admin/organization/usage` reports live counts
+(staff, agents, deliveries, orders, unique customers) — same "never
+drift from the underlying data" tradeoff the analytics dashboards
+already accept. `POST /admin/organization/suspend` is explicitly a
+SELF-service "pause operations" toggle, not a platform-operator
+suspending a tenant from outside — this project has no cross-org
+superadmin role, so that's architecturally not something this endpoint
+could be, and the code says so plainly rather than implying more power
+than it has. What suspension actually blocks: the org drops off the
+public storefront listing (routes/stores.py), new invite-code signups
+are rejected (routes/auth.py), and new checkouts against the org are
+rejected (routes/checkout.py). It deliberately does NOT lock out
+existing staff — an admin needs to still be able to operate the org
+enough to reactivate it or wind things down, which a total lockout
+would prevent. `GET /admin/organization/export` is a portable JSON
+snapshot (org settings, staff roster with no password hashes,
+delivery/order aggregate counts) for backup/migration — explicitly
+NOT a full-database dump of every delivery/order/message row, which
+Phase 18's monitoring/backup work is the right home for. The
+`timezone` field is honestly documented as display-only for now:
+nothing in the backend currently converts stored UTC timestamps using
+it. **12 new backend tests, all passing** (branding/locale updates and
+validation, live usage counts, suspension blocking signup/checkout/
+storefront-listing while NOT blocking existing admin access,
+double-suspend and reactivate-when-not-suspended rejected, data export
+shape and no leaked password hashes, admin-only access, tenant
+isolation). Frontend: a new `OrganizationSettings` admin sidebar page.
+
+Full backend suite after Phase 16: **339/339 passing** (confirmed via
+two batched runs, same reason as Phases 14-15). Frontend: `npm run
+build` clean.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

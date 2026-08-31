@@ -793,6 +793,130 @@ Full backend suite after this session: **289/289 passing** (276 → 289,
 
 ---
 
+## Session: Phase 13 — Invoicing & Finance
+
+**One table instead of five.** The spec listed invoice, receipt,
+refund receipt, credit note, and debit note as separate features.
+Modeling each as its own SQLAlchemy table would have meant five
+schemas that are, structurally, the exact same thing: an amount
+snapshot, tied to an order, with a sequential number and a
+document-type-specific label. Built one `FinancialDocumentDB` table
+with a `document_type` column instead — same "reuse the existing
+shape, don't duplicate the concept" instruction this project's schema
+already follows everywhere else (e.g. Phase 11's vehicle location
+reusing Phase 9's agent-location table instead of a second one).
+
+**Hooking into two existing flows instead of adding a manual step.**
+An invoice or credit note that a dispatcher has to remember to
+generate by hand will eventually not get generated. Instead,
+`auto_generate_invoice_for_order()` is called directly inside
+`routes/checkout.py`'s `verify_payment()` right after `order.status =
+OrderStatus.paid`, and `auto_generate_credit_note_for_refund()` is
+called directly inside `services/refund.py` right after each of its
+two `log_ledger_entry(..., "refund", ...)` calls (test-mode and real
+Razorpay paths both needed the hook, not just one). Both are
+idempotent-safe: invoice generation checks for an existing invoice on
+that order first, so even if this function were ever called twice for
+the same order, only one invoice would exist.
+
+Full backend suite after this session: **301/301 passing** (289 → 301,
+12 new). Frontend `npm run build` clean.
+
+---
+
+## Session: Phase 14 — Public API & Webhooks
+
+**Queue, don't send.** The first draft of `emit_event()` was tempted
+to just call `attempt_delivery()` synchronously right there — simpler,
+one function does the whole job. Rejected immediately: `emit_event()`
+is called from inside `routes/checkout.py`'s `verify_payment()`,
+`services/refund.py`, and `routes/deliveries.py`'s core status-update
+path — if a subscribed webhook URL were slow or unreachable, a
+synchronous send would make an unrelated customer's checkout or
+refund hang or fail on network conditions it has nothing to do with.
+`emit_event()` only ever creates a `WebhookDeliveryDB` row with
+`status="pending"`; a separate background scheduler (services/
+webhook_scheduler.py) does the actual sending on its own schedule,
+completely decoupled from the request that triggered it.
+
+**Full-suite runtime crossed a tool ceiling, not a correctness
+ceiling.** Adding a fourth background scheduler (subscription, SLA
+monitor, reminder, now webhook) pushed the combined 317-test run past
+this environment's execution-time limit for a single command. Rather
+than treating that as a pass, the suite was split into two batches by
+file and both were run to completion and confirmed green (152 + 165 =
+317 passed) before this phase was called done — a tool-imposed limit
+on how long one command may run is not the same thing as "verified,"
+and a batched-but-actually-run confirmation was worth the two extra
+commands.
+
+Full backend suite after this session: **317/317 passing** (301 → 317,
+16 new; confirmed via two batched runs). Frontend `npm run build`
+clean.
+
+---
+
+## Session: Phase 15 — Advanced Analytics
+
+**A bug caught by the test, not assumed away.** The first version of
+`profit_margin_analytics()` summed EVERY line item's revenue, but only
+added a line's cost when its product had a `cost_price` set — meaning
+a product with no cost on record would still count its full revenue
+while contributing nothing to cost, silently overstating the margin.
+`test_profit_margin_excludes_products_without_cost_price` caught this
+immediately: it expected a ₹150 order (one ₹100 item WITH a cost
+price, one ₹50 item without) to report ₹100 revenue, not ₹150. Fixed
+by excluding a line from BOTH sides of the calculation when its
+product has no `cost_price` — revenue and cost now always come from
+the same subset of items, so the margin percentage is never distorted
+by mixing priced and unpriced lines.
+
+**Checked for duplication before writing anything.** Before designing
+this phase, existing analytics-shaped endpoints were searched first —
+SLA analytics (routes/sla.py), route efficiency/heatmaps
+(routes/route_analytics.py), RTO analytics (routes/rto.py), support
+analytics (routes/support.py), fleet utilization (routes/fleet.py) —
+and the new endpoint was scoped to add only what none of those already
+covered (agent-level productivity, failure-reason breakdown, retention,
+category/payment-method revenue, margin, trend), rather than building
+a second, overlapping "advanced" version of reports that already exist.
+
+Full backend suite after this session: **327/327 passing** (317 → 327,
+10 new; confirmed via two batched runs). Frontend `npm run build`
+clean.
+
+---
+
+## Session: Phase 16 — Enterprise Organization Management
+
+**Naming the actual limits of "suspension" instead of implying more.**
+The spec's phrase "organization suspension" reads like a platform
+operator taking a tenant offline from outside. This project has no
+such role — every admin is scoped to exactly one org, by design, for
+tenant isolation. Rather than either skipping the feature or quietly
+building something that doesn't match its name, `suspend_organization()`
+is a genuine self-service "pause operations" toggle, and its docstring
+says exactly that: what it blocks (storefront listing, new signups,
+new checkout) and what it deliberately does NOT block (existing staff
+access — an admin needs to be able to reactivate their own org, which
+a total lockout would prevent). Better to scope a feature honestly to
+what the architecture actually supports than to name it grandly and
+under-deliver.
+
+**Same reuse-check discipline as Phase 15.** Before writing
+routes/organization.py, the existing org-settings surfaces were
+checked first (POD rules in routes/pod.py, SLA policies in
+routes/sla.py, zones in routes/zones.py, pricing/visibility/slots in
+routes/products.py's store_router) so this phase adds exactly the
+missing pieces — branding, locale, usage, suspension, export — instead
+of a second, overlapping settings system.
+
+Full backend suite after this session: **339/339 passing** (327 → 339,
+12 new; confirmed via two batched runs). Frontend `npm run build`
+clean.
+
+---
+
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something
