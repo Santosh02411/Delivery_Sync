@@ -20,3 +20,4 @@ qrcode
 # ---- Test suite (backend/tests/) ----
 pytest
 httpx
+reportlab==4.2.5

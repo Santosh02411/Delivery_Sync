@@ -34,11 +34,12 @@ import os
 from app.db.session import Base, engine
 from app.db.migrate import run_lightweight_migrations
 from app.services.rate_limiter import limiter
-from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce, pod, sla, warehouse, rbac, reconciliation, customer_messages, rto, scan, route_analytics, notification_templates, fleet, support
+from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce, pod, sla, warehouse, rbac, reconciliation, customer_messages, rto, scan, route_analytics, notification_templates, fleet, support, finance, webhooks, public_api, advanced_analytics, organization
 from app.db.session import SessionLocal
 from app.services.subscription_scheduler import start_subscription_scheduler
 from app.services.sla_monitor import start_sla_monitor
 from app.services.reminder_scheduler import start_reminder_scheduler
+from app.services.webhook_scheduler import start_webhook_scheduler
 
 # Create all database tables on startup (if they don't already exist),
 # then catch up any EXISTING table to the model's current columns — see
@@ -195,6 +196,12 @@ app.include_router(notification_templates.router)
 app.include_router(fleet.router)
 app.include_router(support.customer_router)
 app.include_router(support.admin_router)
+app.include_router(finance.customer_router)
+app.include_router(finance.admin_router)
+app.include_router(webhooks.router)
+app.include_router(public_api.router)
+app.include_router(advanced_analytics.router)
+app.include_router(organization.router)
 
 
 # Background task reference kept on app.state so it isn't garbage
@@ -213,6 +220,11 @@ async def _launch_sla_monitor():
 @app.on_event("startup")
 async def _launch_reminder_scheduler():
     app.state.reminder_scheduler_task = start_reminder_scheduler(SessionLocal)
+
+
+@app.on_event("startup")
+async def _launch_webhook_scheduler():
+    app.state.webhook_scheduler_task = start_webhook_scheduler(SessionLocal)
 
 
 @app.get("/")
