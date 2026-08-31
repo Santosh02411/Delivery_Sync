@@ -12,6 +12,7 @@ import AgentPerformance from "./components/AgentPerformance";
 import DispatcherTable from "./components/DispatcherTable";
 import ProductManager from "./components/ProductManager";
 import AnalyticsDashboard from "./components/AnalyticsDashboard";
+import AdvancedAnalyticsPanel from "./components/AdvancedAnalyticsPanel";
 import AdminPanel from "./components/AdminPanel";
 import AuditLogViewer from "./components/AuditLogViewer";
 import ZoneManager from "./components/ZoneManager";
@@ -33,6 +34,9 @@ import PodSettingsPanel from "./components/PodSettingsPanel";
 import WarehouseManager from "./components/WarehouseManager";
 import FleetManager from "./components/FleetManager";
 import SupportManager from "./components/SupportManager";
+import FinanceManager from "./components/FinanceManager";
+import ApiWebhooksManager from "./components/ApiWebhooksManager";
+import OrganizationSettings from "./components/OrganizationSettings";
 import RbacManager from "./components/RbacManager";
 import ReconciliationDashboard from "./components/ReconciliationDashboard";
 import RtoManager from "./components/RtoManager";
@@ -68,6 +72,7 @@ function StaffDashboard({ user }) {
           )}
           {user.role === "admin" && currentView === "audit-log" && <AuditLogViewer />}
           {user.role === "admin" && currentView === "analytics" && <AnalyticsDashboard />}
+          {user.role === "admin" && currentView === "advanced-analytics" && <AdvancedAnalyticsPanel />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "products" && (
             <ProductManager />
           )}
@@ -75,6 +80,9 @@ function StaffDashboard({ user }) {
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "warehouses" && <WarehouseManager />}
           {currentView === "fleet" && (user.role === "dispatcher" || user.role === "admin" || user.role === "agent") && <FleetManager />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "support" && <SupportManager />}
+          {(user.role === "dispatcher" || user.role === "admin") && currentView === "invoicing" && <FinanceManager />}
+          {user.role === "admin" && currentView === "api-webhooks" && <ApiWebhooksManager />}
+          {user.role === "admin" && currentView === "organization" && <OrganizationSettings />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "reconciliation" && <ReconciliationDashboard />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "rto" && <RtoManager />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "routing" && <RoutingInsights />}

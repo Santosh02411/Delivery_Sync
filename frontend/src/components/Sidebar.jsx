@@ -84,6 +84,7 @@ export default function Sidebar({ activeView, onNavigate }) {
     { key: "products", label: "Products", icon: "\u25A3" },
     { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
     { key: "support", label: "Support", icon: "\u2753" },
+    { key: "invoicing", label: "Invoicing", icon: "\u20B9" },
     { key: "account", label: "My Account", icon: "\u25CB" },
     { key: "security", label: "Security", icon: "\u26BF" },
   ];
@@ -91,6 +92,7 @@ export default function Sidebar({ activeView, onNavigate }) {
   const adminLinks = [
     { key: "dashboard", label: "Dashboard", icon: "\u25A4" },
     { key: "analytics", label: "Analytics", icon: "\u25C8" },
+    { key: "advanced-analytics", label: "Advanced Analytics", icon: "\u25C9" },
     { key: "sla", label: "SLA", icon: "\u23F1" },
     { key: "warehouses", label: "Warehouses", icon: "\u2b1a" },
     { key: "reconciliation", label: "Finance", icon: "\u20B9" },
@@ -107,6 +109,9 @@ export default function Sidebar({ activeView, onNavigate }) {
     { key: "notification-templates", label: "Notifications", icon: "\u2709" },
     { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
     { key: "support", label: "Support", icon: "\u2753" },
+    { key: "invoicing", label: "Invoicing", icon: "\u20B9" },
+    { key: "api-webhooks", label: "API & Webhooks", icon: "\u2707" },
+    { key: "organization", label: "Organization", icon: "\u2302" },
     { key: "audit-log", label: "Audit Log", icon: "\u2637" },
     { key: "account", label: "My Account", icon: "\u25CB" },
     { key: "security", label: "Security", icon: "\u26BF" },

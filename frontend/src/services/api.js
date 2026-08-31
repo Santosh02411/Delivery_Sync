@@ -2342,3 +2342,225 @@ export async function fetchSupportAnalytics(token) {
   if (!response.ok) throw new Error(data.detail || "Failed to load support analytics");
   return data;
 }
+
+// ---------- Finance & Invoicing (Phase 13) ----------
+
+export async function fetchMyFinancialDocuments(token) {
+  const response = await fetch(`${API_BASE_URL}/customer/finance/documents`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load documents");
+  return data;
+}
+
+export function myFinancialDocumentPdfUrl(documentId) {
+  return `${API_BASE_URL}/customer/finance/documents/${documentId}/pdf`;
+}
+
+export async function fetchFinancialDocuments(token, filters = {}) {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([k, v]) => { if (v !== undefined && v !== "") params.set(k, v); });
+  const qs = params.toString() ? `?${params.toString()}` : "";
+  const response = await fetch(`${API_BASE_URL}/admin/finance/documents${qs}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load documents");
+  return data;
+}
+
+export function financialDocumentPdfUrl(documentId) {
+  return `${API_BASE_URL}/admin/finance/documents/${documentId}/pdf`;
+}
+
+export async function createCreditNote(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/admin/finance/credit-notes`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create credit note");
+  return data;
+}
+
+export async function createDebitNote(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/admin/finance/debit-notes`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create debit note");
+  return data;
+}
+
+export async function fetchFinancialReport(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/finance/reports`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load financial report");
+  return data;
+}
+
+async function _authedPdfFetch(url, token) {
+  const response = await fetch(url, { headers: authHeaders(token) });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || "Failed to download PDF");
+  }
+  return response.blob();
+}
+
+export async function downloadFinancialDocumentPdf(token, documentId, isCustomer = false) {
+  const url = isCustomer ? myFinancialDocumentPdfUrl(documentId) : financialDocumentPdfUrl(documentId);
+  const blob = await _authedPdfFetch(url, token);
+  const objectUrl = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = `${documentId}.pdf`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(objectUrl);
+}
+
+// ---------- Public API & Webhooks (Phase 14) ----------
+
+export async function fetchApiKeys(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/api-keys`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load API keys");
+  return data;
+}
+
+export async function createApiKey(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/admin/api-keys`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create API key");
+  return data;
+}
+
+export async function rotateApiKey(token, keyId) {
+  const response = await fetch(`${API_BASE_URL}/admin/api-keys/${keyId}/rotate`, {
+    method: "POST", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to rotate API key");
+  return data;
+}
+
+export async function revokeApiKey(token, keyId) {
+  const response = await fetch(`${API_BASE_URL}/admin/api-keys/${keyId}`, {
+    method: "DELETE", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to revoke API key");
+  return data;
+}
+
+export async function fetchWebhooks(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/webhooks`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load webhooks");
+  return data;
+}
+
+export async function createWebhook(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/admin/webhooks`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create webhook");
+  return data;
+}
+
+export async function updateWebhook(token, webhookId, payload) {
+  const response = await fetch(`${API_BASE_URL}/admin/webhooks/${webhookId}`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update webhook");
+  return data;
+}
+
+export async function deleteWebhook(token, webhookId) {
+  const response = await fetch(`${API_BASE_URL}/admin/webhooks/${webhookId}`, {
+    method: "DELETE", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to delete webhook");
+  return data;
+}
+
+export async function fetchWebhookDeliveries(token, webhookId, status) {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+  const response = await fetch(`${API_BASE_URL}/admin/webhooks/${webhookId}/deliveries${qs}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load webhook deliveries");
+  return data;
+}
+
+export async function replayWebhookDelivery(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/admin/webhooks/deliveries/${deliveryId}/replay`, {
+    method: "POST", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to replay delivery");
+  return data;
+}
+
+// ---------- Advanced Analytics (Phase 15) ----------
+
+export async function fetchAdvancedAnalytics(token, days = 30) {
+  const response = await fetch(`${API_BASE_URL}/admin/analytics/advanced/?days=${days}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load advanced analytics");
+  return data;
+}
+
+// ---------- Enterprise Organization Management (Phase 16) ----------
+
+export async function updateOrgBranding(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/admin/organization/branding`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update branding");
+  return data;
+}
+
+export async function updateOrgLocale(token, payload) {
+  const response = await fetch(`${API_BASE_URL}/admin/organization/locale`, {
+    method: "PATCH", headers: authHeaders(token), body: JSON.stringify(payload),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to update locale");
+  return data;
+}
+
+export async function fetchOrgUsage(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/organization/usage`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load usage metrics");
+  return data;
+}
+
+export async function suspendOrg(token, reason) {
+  const response = await fetch(`${API_BASE_URL}/admin/organization/suspend`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ reason }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to suspend organization");
+  return data;
+}
+
+export async function reactivateOrg(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/organization/reactivate`, {
+    method: "POST", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to reactivate organization");
+  return data;
+}
+
+export async function exportOrgData(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/organization/export`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to export organization data");
+  return data;
+}
