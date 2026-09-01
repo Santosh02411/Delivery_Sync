@@ -62,6 +62,13 @@ class ConnectionManager:
         if not connections:
             self._rooms.pop(room, None)
 
+    def connection_count(self) -> dict:
+        """Phase 18 monitoring: total live connections and how many distinct rooms currently have at least one, read fresh on every call — no separate counter to keep in sync with connect()/disconnect()."""
+        return {
+            "total_connections": sum(len(conns) for conns in self._rooms.values()),
+            "active_rooms": len(self._rooms),
+        }
+
     async def broadcast(self, room: str, payload: dict) -> None:
         connections = self._rooms.get(room)
         if not connections:

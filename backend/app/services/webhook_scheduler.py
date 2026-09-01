@@ -7,6 +7,7 @@ None — i.e. never attempted yet — or in the past) and attempts it.
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -14,6 +15,7 @@ from sqlalchemy import or_
 
 from app.models.webhook import WebhookDeliveryDB
 from app.services.webhooks import attempt_delivery
+from app.services import monitoring as monitoring_svc
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +42,24 @@ def run_webhook_delivery_scan(db: Session) -> int:
 
 async def _webhook_loop(session_factory):
     while True:
+        start = time.monotonic()
         try:
             db = session_factory()
             try:
                 count = run_webhook_delivery_scan(db)
                 if count:
                     logger.info("Webhook scan attempted %d delivery(ies).", count)
+                monitoring_svc.record_job_heartbeat(db, "webhook_scheduler", "success", int((time.monotonic() - start) * 1000))
             finally:
                 db.close()
-        except Exception:
+        except Exception as error:
             logger.exception("Webhook scan tick failed")
+            try:
+                db = session_factory()
+                monitoring_svc.record_job_heartbeat(db, "webhook_scheduler", "error", int((time.monotonic() - start) * 1000), str(error)[:500])
+                db.close()
+            except Exception:
+                pass
         await asyncio.sleep(WEBHOOK_SCAN_INTERVAL_SECONDS)
 
 

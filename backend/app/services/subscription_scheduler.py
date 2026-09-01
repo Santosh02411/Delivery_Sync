@@ -18,6 +18,7 @@ Two ways this runs:
 
 import asyncio
 import logging
+import time
 import uuid
 from datetime import datetime, timedelta
 
@@ -29,6 +30,7 @@ from app.models.organization import OrganizationDB
 from app.models.order import OrderDB, OrderItemDB, OrderStatus
 from app.services.coupons import find_and_validate_coupon, compute_discount, CouponError
 from app.services.inventory import check_stock_available, InsufficientStockError
+from app.services import monitoring as monitoring_svc
 
 logger = logging.getLogger(__name__)
 
@@ -155,16 +157,24 @@ def run_subscription_cycle(db: Session) -> int:
 
 async def _scheduler_loop(session_factory):
     while True:
+        start = time.monotonic()
         try:
             db = session_factory()
             try:
                 count = run_subscription_cycle(db)
                 if count:
                     logger.info("Subscription scheduler generated %d order(s).", count)
+                monitoring_svc.record_job_heartbeat(db, "subscription_scheduler", "success", int((time.monotonic() - start) * 1000))
             finally:
                 db.close()
-        except Exception:
+        except Exception as error:
             logger.exception("Subscription scheduler tick failed")
+            try:
+                db = session_factory()
+                monitoring_svc.record_job_heartbeat(db, "subscription_scheduler", "error", int((time.monotonic() - start) * 1000), str(error)[:500])
+                db.close()
+            except Exception:
+                pass
         await asyncio.sleep(SCHEDULER_INTERVAL_SECONDS)
 
 

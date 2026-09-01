@@ -17,6 +17,7 @@ double-send.
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
@@ -25,6 +26,7 @@ from app.models.delivery import DeliveryRecordDB, DeliveryStatus
 from app.models.subscription import SubscriptionDB, SubscriptionStatus
 from app.models.customer import CustomerDB
 from app.services.notification_templates import send_templated_notification
+from app.services import monitoring as monitoring_svc
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +98,7 @@ def run_subscription_reminder_scan(db: Session) -> int:
 
 async def _reminder_loop(session_factory):
     while True:
+        start = time.monotonic()
         try:
             db = session_factory()
             try:
@@ -103,10 +106,17 @@ async def _reminder_loop(session_factory):
                 subscription_count = run_subscription_reminder_scan(db)
                 if delivery_count or subscription_count:
                     logger.info("Reminder scan sent %d delivery and %d subscription reminder(s).", delivery_count, subscription_count)
+                monitoring_svc.record_job_heartbeat(db, "reminder_scheduler", "success", int((time.monotonic() - start) * 1000))
             finally:
                 db.close()
-        except Exception:
+        except Exception as error:
             logger.exception("Reminder scan tick failed")
+            try:
+                db = session_factory()
+                monitoring_svc.record_job_heartbeat(db, "reminder_scheduler", "error", int((time.monotonic() - start) * 1000), str(error)[:500])
+                db.close()
+            except Exception:
+                pass
         await asyncio.sleep(REMINDER_SCAN_INTERVAL_SECONDS)
 
 

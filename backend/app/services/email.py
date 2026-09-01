@@ -21,6 +21,8 @@ import os
 import smtplib
 from email.mime.text import MIMEText
 
+from app.services import monitoring as monitoring_svc
+
 SMTP_HOST = os.environ.get("SMTP_HOST")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
@@ -133,6 +135,7 @@ def _send_email(to_email: str, subject: str, body: str) -> None:
         print(f"Subject: {subject}")
         print(body)
         print("=" * 60)
+        monitoring_svc.record_notification_sent("email", success=True)
         return
 
     # SMTP_HOST is configured — actually send a real email.
@@ -141,8 +144,13 @@ def _send_email(to_email: str, subject: str, body: str) -> None:
     message["From"] = FROM_EMAIL
     message["To"] = to_email
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
-        if SMTP_USERNAME and SMTP_PASSWORD:
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        server.sendmail(FROM_EMAIL, [to_email], message.as_string())
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls()
+            if SMTP_USERNAME and SMTP_PASSWORD:
+                server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.sendmail(FROM_EMAIL, [to_email], message.as_string())
+        monitoring_svc.record_notification_sent("email", success=True)
+    except Exception:
+        monitoring_svc.record_notification_sent("email", success=False)
+        raise

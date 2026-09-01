@@ -67,7 +67,9 @@ def send_web_push(subscription_info: dict, title: str, body: str, url: str = "/"
             vapid_private_key=VAPID_PRIVATE_KEY_PEM,
             vapid_claims={"sub": VAPID_CLAIM_EMAIL},
         )
+        monitoring_svc.record_notification_sent("push", success=True)
         return True
     except WebPushException as e:
         print(f"Web push failed (subscription likely expired): {e}")
+        monitoring_svc.record_notification_sent("push", success=False)
         return False

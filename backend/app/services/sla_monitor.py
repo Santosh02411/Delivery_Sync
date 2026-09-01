@@ -9,6 +9,7 @@ on app.state so it isn't garbage collected).
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 
 from sqlalchemy.orm import Session
@@ -17,6 +18,7 @@ from app.models.delivery import DeliveryRecordDB
 from app.models.sla import SLAPolicyDB
 from app.services.sla import evaluate_active_delivery, ACTIVE_STATUSES
 from app.services.notifications import notify_dispatchers_of_sla_event
+from app.services import monitoring as monitoring_svc
 
 logger = logging.getLogger(__name__)
 
@@ -59,16 +61,24 @@ def run_sla_scan(db: Session) -> int:
 
 async def _scan_loop(session_factory):
     while True:
+        start = time.monotonic()
         try:
             db = session_factory()
             try:
                 count = run_sla_scan(db)
                 if count:
                     logger.info("SLA scan updated %d delivery/deliveries.", count)
+                monitoring_svc.record_job_heartbeat(db, "sla_monitor", "success", int((time.monotonic() - start) * 1000))
             finally:
                 db.close()
-        except Exception:
+        except Exception as error:
             logger.exception("SLA scan tick failed")
+            try:
+                db = session_factory()
+                monitoring_svc.record_job_heartbeat(db, "sla_monitor", "error", int((time.monotonic() - start) * 1000), str(error)[:500])
+                db.close()
+            except Exception:
+                pass
         await asyncio.sleep(SLA_SCAN_INTERVAL_SECONDS)
 
 
