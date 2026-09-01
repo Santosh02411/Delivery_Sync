@@ -73,6 +73,15 @@ class RefreshTokenDB(Base):
     revoked_at = Column(DateTime, nullable=True)
     replaced_by_id = Column(String, nullable=True)
 
+    # Phase 17: session metadata, captured once at the ORIGINAL login
+    # and carried forward through rotation (see routes/auth.py's
+    # refresh_access_token, which copies these onto the new row rather
+    # than re-detecting them) — so "Active Sessions" shows what device
+    # actually logged in, not just whatever made the most recent silent
+    # refresh call.
+    device_info = Column(String, nullable=True)  # a short parsed label, e.g. "Chrome on Windows" — see services/security.py's parse_user_agent
+    ip_address = Column(String, nullable=True)
+
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str

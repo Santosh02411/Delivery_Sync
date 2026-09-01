@@ -99,6 +99,31 @@ def send_two_factor_code_email(to_email: str, code: str, purpose: str) -> None:
     _send_email(to_email, subject, body)
 
 
+def send_security_alert_email(to_email: str, event_description: str, ip_address: str = None, device_info: str = None) -> None:
+    """
+    Phase 17: a plain security notification — new/suspicious login,
+    password changed, 2FA disabled, all sessions logged out. Same
+    dev-mode "print instead of send" fallback as every other email in
+    this module via _send_email, so this works out of the box without
+    SMTP credentials.
+    """
+    subject = f"Delivery Sync security alert: {event_description}"
+    context_lines = []
+    if device_info:
+        context_lines.append(f"Device: {device_info}")
+    if ip_address:
+        context_lines.append(f"IP address: {ip_address}")
+    context = ("\n" + "\n".join(context_lines) + "\n") if context_lines else ""
+    body = (
+        f"We noticed the following on your Delivery Sync account:\n\n"
+        f"    {event_description}\n"
+        f"{context}\n"
+        f"If this was you, no action is needed. If you don't recognize this, change your password immediately "
+        f"and review your active sessions."
+    )
+    _send_email(to_email, subject, body)
+
+
 def _send_email(to_email: str, subject: str, body: str) -> None:
     if not SMTP_HOST:
         # No SMTP configured — this is the default, zero-cost path.

@@ -33,6 +33,10 @@ from app.models.password_reset import PasswordResetTokenDB, ForgotPasswordReques
 from app.models.email_otp import EmailOtpDB, EMAIL_OTP_EXPIRY_MINUTES, generate_numeric_code, mask_email
 from app.models.email_verification import EmailVerificationTokenDB, VerifyEmailRequest, VERIFICATION_TOKEN_EXPIRY_HOURS
 from app.models.refresh_token import RefreshTokenDB, RefreshTokenRequest, RefreshTokenResponse
+from app.models.security import (
+    LoginHistoryDB, SecurityEventDB, SessionOut, LoginHistoryOut, SecurityEventOut,
+    RecoveryCodesGenerateRequest, RecoveryCodesOut,
+)
 from app.services.auth import (
     hash_password,
     verify_password,
@@ -46,7 +50,10 @@ from app.services.totp import generate_secret, get_provisioning_uri, verify_code
 from app.services.rate_limiter import limiter
 from app.services.email import send_password_reset_email, send_two_factor_code_email, send_verification_email
 from app.services.captcha import verify_captcha, IS_CONFIGURED as CAPTCHA_CONFIGURED
+from app.services import security as security_svc
+from app.services.email import send_security_alert_email
 from datetime import datetime, timedelta
+from typing import List
 import os
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -54,7 +61,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
 
-def _issue_refresh_token(db: Session, user_id: str) -> str:
+def _issue_refresh_token(db: Session, user_id: str, device_info: str = None, ip_address: str = None) -> str:
     """
     Creates a new refresh token row (hash stored, not the raw value) and
     returns the RAW token — the only place the raw value ever exists is
@@ -63,7 +70,7 @@ def _issue_refresh_token(db: Session, user_id: str) -> str:
     in plaintext.
     """
     raw_token = generate_refresh_token()
-    db.add(RefreshTokenDB(user_id=user_id, token_hash=hash_refresh_token(raw_token)))
+    db.add(RefreshTokenDB(user_id=user_id, token_hash=hash_refresh_token(raw_token), device_info=device_info, ip_address=ip_address))
     db.commit()
     return raw_token
 
@@ -216,12 +223,28 @@ def signup(request: Request, payload: UserSignup, db: Session = Depends(get_db))
 @router.post("/login", response_model=LoginResult)
 @limiter.limit("10/minute")
 def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
+    ip_address = security_svc.client_ip(request)
+    device_info = security_svc.parse_user_agent(request.headers.get("user-agent"))
+
     user = db.query(UserDB).filter(UserDB.username == payload.username).first()
-    if not user or not verify_password(payload.password, user.hashed_password):
+    if not user:
+        raise HTTPException(status_code=401, detail="Incorrect username or password.")
+
+    if security_svc.is_locked_out(user):
+        raise HTTPException(status_code=403, detail=f"Too many failed login attempts. Try again in a few minutes.")
+
+    if not verify_password(payload.password, user.hashed_password):
+        security_svc.register_failed_login(db, user)
+        security_svc.record_login_history(db, user.id, user.org_id, "login_failed", ip_address, device_info)
         raise HTTPException(status_code=401, detail="Incorrect username or password.")
 
     if not user.is_active:
         raise HTTPException(status_code=403, detail="This account has been deactivated. Contact your admin.")
+
+    # Password was correct — reset the failed-attempt counter regardless
+    # of whether 2FA is still pending, since the PASSWORD factor (the
+    # thing lockout actually protects) has now been proven.
+    security_svc.register_successful_login(db, user)
 
     if user.totp_enabled:
         # Password alone isn't enough for this account — hand back a
@@ -241,8 +264,13 @@ def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
             "masked_email": masked_email,
         }
 
+    suspicious = security_svc.is_suspicious_login(db, user.id, ip_address)
+    security_svc.record_login_history(db, user.id, user.org_id, "suspicious_login" if suspicious else "login_success", ip_address, device_info)
+    if suspicious:
+        send_security_alert_email(user.email, "New login from an unrecognized location", ip_address=ip_address, device_info=device_info)
+
     token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
-    refresh_token = _issue_refresh_token(db, user.id)
+    refresh_token = _issue_refresh_token(db, user.id, device_info=device_info, ip_address=ip_address)
     return {"access_token": token, "refresh_token": refresh_token, "user": user, "org_invite_code": None}
 
 
@@ -292,14 +320,29 @@ def verify_two_factor_login(request: Request, payload: TwoFactorLoginVerify, db:
         raise HTTPException(status_code=400, detail="Two-factor authentication is no longer enabled on this account.")
 
     if user.two_factor_method == "email":
-        if not _verify_and_consume_email_otp(db, user.id, purpose="login", code=payload.code.strip()):
-            raise HTTPException(status_code=401, detail="Incorrect or expired code. Request a new one and try again.")
+        code_valid = _verify_and_consume_email_otp(db, user.id, purpose="login", code=payload.code.strip())
     else:
-        if not user.totp_secret or not verify_code(user.totp_secret, payload.code):
-            raise HTTPException(status_code=401, detail="Incorrect code. Check your authenticator app and try again.")
+        code_valid = bool(user.totp_secret) and verify_code(user.totp_secret, payload.code)
+
+    if not code_valid:
+        # Fall back to a recovery code — lets someone back in when they've
+        # lost their authenticator app or can't reach the 2FA email inbox.
+        code_valid = security_svc.verify_and_consume_recovery_code(db, user.id, payload.code)
+        if code_valid:
+            security_svc.record_security_event(db, user.id, user.org_id, "recovery_code_used")
+
+    if not code_valid:
+        raise HTTPException(status_code=401, detail="Incorrect code. Check your authenticator app, or use a recovery code.")
+
+    ip_address = security_svc.client_ip(request)
+    device_info = security_svc.parse_user_agent(request.headers.get("user-agent"))
+    suspicious = security_svc.is_suspicious_login(db, user.id, ip_address)
+    security_svc.record_login_history(db, user.id, user.org_id, "suspicious_login" if suspicious else "login_success", ip_address, device_info)
+    if suspicious:
+        send_security_alert_email(user.email, "New login from an unrecognized location", ip_address=ip_address, device_info=device_info)
 
     token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
-    refresh_token = _issue_refresh_token(db, user.id)
+    refresh_token = _issue_refresh_token(db, user.id, device_info=device_info, ip_address=ip_address)
     return {"access_token": token, "refresh_token": refresh_token, "user": user, "org_invite_code": None}
 
 
@@ -358,10 +401,15 @@ def reset_password(request: Request, payload: ResetPasswordRequest, db: Session 
     user = db.query(UserDB).filter(UserDB.id == reset_token.user_id).first()
     if not user:
         raise HTTPException(status_code=400, detail="This reset link is invalid.")
+    if security_svc.is_password_reused(db, user.id, payload.new_password):
+        raise HTTPException(status_code=400, detail=f"That's one of your last {security_svc.PASSWORD_HISTORY_LIMIT} passwords. Choose a different one.")
 
+    security_svc.record_password_history(db, user.id, user.hashed_password)
     user.hashed_password = hash_password(payload.new_password)
     reset_token.used = True
     db.commit()
+    security_svc.record_security_event(db, user.id, user.org_id, "password_reset")
+    send_security_alert_email(user.email, "Your password was reset")
 
     return {"message": "Password reset successfully. You can now log in with your new password."}
 
@@ -480,7 +528,10 @@ def refresh_access_token(request: Request, payload: RefreshTokenRequest, db: Ses
         raise HTTPException(status_code=401, detail="Invalid refresh token. Log in again.")
 
     new_raw_token = generate_refresh_token()
-    new_row = RefreshTokenDB(user_id=user.id, token_hash=hash_refresh_token(new_raw_token))
+    new_row = RefreshTokenDB(
+        user_id=user.id, token_hash=hash_refresh_token(new_raw_token),
+        device_info=stored.device_info, ip_address=stored.ip_address,
+    )
     db.add(new_row)
     db.flush()  # assigns new_row.id without a second round trip
 
@@ -510,6 +561,9 @@ def logout(payload: RefreshTokenRequest, db: Session = Depends(get_db)):
     if stored and stored.revoked_at is None:
         stored.revoked_at = datetime.utcnow()
         db.commit()
+        user = db.query(UserDB).filter(UserDB.id == stored.user_id).first()
+        if user:
+            security_svc.record_security_event(db, user.id, user.org_id, "session_revoked", detail="Logged out")
     return {"message": "Logged out."}
 
 
@@ -564,9 +618,14 @@ def change_my_password(
         raise HTTPException(status_code=401, detail="Current password is incorrect.")
     if len(payload.new_password) < 6:
         raise HTTPException(status_code=400, detail="New password must be at least 6 characters.")
+    if security_svc.is_password_reused(db, current_user.id, payload.new_password):
+        raise HTTPException(status_code=400, detail=f"That's one of your last {security_svc.PASSWORD_HISTORY_LIMIT} passwords. Choose a different one.")
 
+    security_svc.record_password_history(db, current_user.id, current_user.hashed_password)
     current_user.hashed_password = hash_password(payload.new_password)
     db.commit()
+    security_svc.record_security_event(db, current_user.id, current_user.org_id, "password_changed")
+    send_security_alert_email(current_user.email, "Your password was changed")
     return {"message": "Password changed."}
 
 
@@ -617,7 +676,10 @@ def enable_two_factor(
     current_user.totp_enabled = True
     current_user.two_factor_method = "totp"
     db.commit()
-    return {"success": True, "message": "Two-factor authentication is now enabled on your account."}
+    security_svc.record_security_event(db, current_user.id, current_user.org_id, "2fa_enabled", detail="totp")
+    recovery_codes = security_svc.generate_recovery_codes(db, current_user.id)
+    security_svc.record_security_event(db, current_user.id, current_user.org_id, "recovery_codes_generated")
+    return {"success": True, "message": "Two-factor authentication is now enabled on your account.", "recovery_codes": recovery_codes}
 
 
 @router.post("/2fa/setup-email")
@@ -653,7 +715,10 @@ def enable_email_two_factor(
     current_user.two_factor_method = "email"
     current_user.totp_secret = None  # this account uses email codes, not an authenticator secret
     db.commit()
-    return {"success": True, "message": "Two-factor authentication is now enabled on your account."}
+    security_svc.record_security_event(db, current_user.id, current_user.org_id, "2fa_enabled", detail="email")
+    recovery_codes = security_svc.generate_recovery_codes(db, current_user.id)
+    security_svc.record_security_event(db, current_user.id, current_user.org_id, "recovery_codes_generated")
+    return {"success": True, "message": "Two-factor authentication is now enabled on your account.", "recovery_codes": recovery_codes}
 
 
 @router.post("/2fa/disable")
@@ -673,4 +738,87 @@ def disable_two_factor(
     current_user.totp_secret = None
     current_user.two_factor_method = "totp"
     db.commit()
+    security_svc.record_security_event(db, current_user.id, current_user.org_id, "2fa_disabled")
+    send_security_alert_email(current_user.email, "Two-factor authentication was disabled on your account")
     return {"success": True, "message": "Two-factor authentication has been disabled."}
+
+
+# ---------- Sessions, login history, security events, recovery codes (Phase 17) ----------
+# All self-service, staff-facing — mirrors the "acting on your own
+# account" reasoning already established above for change-password.
+
+@router.get("/sessions", response_model=List[SessionOut])
+def list_my_sessions(
+    current_refresh_token: str = None,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """
+    Active (not revoked, not expired) sessions for the logged-in user.
+    `current_refresh_token` is an OPTIONAL query param the frontend can
+    pass (it already has the raw token in memory/storage) so THIS
+    session can be marked is_current — there's no way to derive that
+    from an access token alone, since an access token carries no
+    session/session-id claim linking it back to the refresh token that
+    issued it.
+    """
+    now = datetime.utcnow()
+    sessions = db.query(RefreshTokenDB).filter(
+        RefreshTokenDB.user_id == current_user.id, RefreshTokenDB.revoked_at.is_(None), RefreshTokenDB.expires_at > now,
+    ).order_by(RefreshTokenDB.created_at.desc()).all()
+
+    current_hash = hash_refresh_token(current_refresh_token) if current_refresh_token else None
+    result = []
+    for s in sessions:
+        out = SessionOut.model_validate(s)
+        out.is_current = (s.token_hash == current_hash)
+        result.append(out)
+    return result
+
+
+@router.delete("/sessions/{session_id}")
+def revoke_my_session(session_id: str, db: Session = Depends(get_db), current_user: UserDB = Depends(get_current_user)):
+    session = db.query(RefreshTokenDB).filter(RefreshTokenDB.id == session_id, RefreshTokenDB.user_id == current_user.id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    security_svc.revoke_session(db, session)
+    security_svc.record_security_event(db, current_user.id, current_user.org_id, "session_revoked", detail="Revoked from Active Sessions")
+    return {"message": "Session revoked."}
+
+
+@router.post("/sessions/logout-all")
+def logout_all_sessions(db: Session = Depends(get_db), current_user: UserDB = Depends(get_current_user)):
+    """Revokes EVERY active session for this account, including the one making this request — the frontend should treat this the same as an immediate forced logout."""
+    count = security_svc.revoke_all_sessions(db, current_user.id)
+    security_svc.record_security_event(db, current_user.id, current_user.org_id, "all_sessions_revoked", detail=f"{count} session(s)")
+    send_security_alert_email(current_user.email, "You were logged out of all devices")
+    return {"message": f"{count} session(s) logged out."}
+
+
+@router.get("/login-history", response_model=List[LoginHistoryOut])
+def get_my_login_history(limit: int = 50, db: Session = Depends(get_db), current_user: UserDB = Depends(get_current_user)):
+    limit = min(max(limit, 1), 200)
+    return db.query(LoginHistoryDB).filter(LoginHistoryDB.user_id == current_user.id).order_by(LoginHistoryDB.created_at.desc()).limit(limit).all()
+
+
+@router.get("/security-events", response_model=List[SecurityEventOut])
+def get_my_security_events(limit: int = 50, db: Session = Depends(get_db), current_user: UserDB = Depends(get_current_user)):
+    limit = min(max(limit, 1), 200)
+    return db.query(SecurityEventDB).filter(SecurityEventDB.user_id == current_user.id).order_by(SecurityEventDB.created_at.desc()).limit(limit).all()
+
+
+@router.post("/2fa/recovery-codes/generate", response_model=RecoveryCodesOut)
+def regenerate_recovery_codes(
+    payload: RecoveryCodesGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """Requires the account password, same reasoning as /2fa/disable — regenerating codes invalidates every existing one, so it shouldn't be possible from a merely-unlocked device without proving it's really the account owner."""
+    if not current_user.totp_enabled:
+        raise HTTPException(status_code=400, detail="Two-factor authentication isn't enabled on this account.")
+    if not verify_password(payload.password, current_user.hashed_password):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+
+    codes = security_svc.generate_recovery_codes(db, current_user.id)
+    security_svc.record_security_event(db, current_user.id, current_user.org_id, "recovery_codes_generated")
+    return RecoveryCodesOut(codes=codes)

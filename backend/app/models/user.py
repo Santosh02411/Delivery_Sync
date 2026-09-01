@@ -17,7 +17,7 @@ login (which would need the login form to ask "which organization?" too).
 import enum
 import uuid
 
-from sqlalchemy import Column, String, Enum as SqlEnum, Boolean, Float
+from sqlalchemy import Column, String, Enum as SqlEnum, Boolean, Float, Integer, DateTime
 from pydantic import BaseModel
 from typing import Optional
 
@@ -65,6 +65,16 @@ class UserDB(Base):
     # code sent to `email` at login time — see services/email_otp.py).
     # Meaningless while totp_enabled is False.
     two_factor_method = Column(String, nullable=False, default="totp")
+
+    # Account lockout (Phase 17) — auto-expiring, no manual admin-unlock
+    # endpoint needed. failed_login_count resets to 0 on any successful
+    # login; locked_until is set once the count crosses
+    # services/security.py's threshold and simply expires on its own
+    # after a fixed window, rather than requiring an admin action to
+    # lift it (a locked-out legitimate user shouldn't need to file a
+    # support ticket just to wait out a lockout).
+    failed_login_count = Column(Integer, nullable=False, default=0)
+    locked_until = Column(DateTime, nullable=True)
 
     # An agent's real-world coverage area — set via "Detect my area" on
     # their profile (browser GPS -> services/geocoding.py reverse
