@@ -21,6 +21,7 @@ import MyWorkforce from "./components/MyWorkforce";
 import WorkforceManager from "./components/WorkforceManager";
 import ReturnRequestsPanel from "./components/ReturnRequestsPanel";
 import TwoFactorSettings from "./components/TwoFactorSettings";
+import SecurityDashboard from "./components/SecurityDashboard";
 import AccountSettings from "./components/AccountSettings";
 import LoginPage from "./components/LoginPage";
 import SignupPage from "./components/SignupPage";
@@ -90,7 +91,12 @@ function StaffDashboard({ user }) {
           {user.role === "admin" && currentView === "pod-settings" && <PodSettingsPanel />}
           {user.role === "admin" && currentView === "rbac" && <RbacManager />}
           {currentView === "account" && <AccountSettings />}
-          {currentView === "security" && <TwoFactorSettings />}
+          {currentView === "security" && (
+            <div>
+              <TwoFactorSettings />
+              <SecurityDashboard />
+            </div>
+          )}
         </div>
       </div>
     </div>

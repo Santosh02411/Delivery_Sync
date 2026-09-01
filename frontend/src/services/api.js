@@ -2564,3 +2564,54 @@ export async function exportOrgData(token) {
   if (!response.ok) throw new Error(data.detail || "Failed to export organization data");
   return data;
 }
+
+// ---------- Security & Session Management (Phase 17) ----------
+
+export async function fetchMySessions(token, currentRefreshToken) {
+  const qs = currentRefreshToken ? `?current_refresh_token=${encodeURIComponent(currentRefreshToken)}` : "";
+  const response = await fetch(`${API_BASE_URL}/auth/sessions${qs}`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load sessions");
+  return data;
+}
+
+export async function revokeMySession(token, sessionId) {
+  const response = await fetch(`${API_BASE_URL}/auth/sessions/${sessionId}`, {
+    method: "DELETE", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to revoke session");
+  return data;
+}
+
+export async function logoutAllSessions(token) {
+  const response = await fetch(`${API_BASE_URL}/auth/sessions/logout-all`, {
+    method: "POST", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to log out all sessions");
+  return data;
+}
+
+export async function fetchMyLoginHistory(token) {
+  const response = await fetch(`${API_BASE_URL}/auth/login-history`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load login history");
+  return data;
+}
+
+export async function fetchMySecurityEvents(token) {
+  const response = await fetch(`${API_BASE_URL}/auth/security-events`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load security events");
+  return data;
+}
+
+export async function regenerateRecoveryCodes(token, password) {
+  const response = await fetch(`${API_BASE_URL}/auth/2fa/recovery-codes/generate`, {
+    method: "POST", headers: authHeaders(token), body: JSON.stringify({ password }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to generate recovery codes");
+  return data;
+}
