@@ -38,6 +38,7 @@ import SupportManager from "./components/SupportManager";
 import FinanceManager from "./components/FinanceManager";
 import ApiWebhooksManager from "./components/ApiWebhooksManager";
 import OrganizationSettings from "./components/OrganizationSettings";
+import MonitoringDashboard from "./components/MonitoringDashboard";
 import RbacManager from "./components/RbacManager";
 import ReconciliationDashboard from "./components/ReconciliationDashboard";
 import RtoManager from "./components/RtoManager";
@@ -84,6 +85,7 @@ function StaffDashboard({ user }) {
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "invoicing" && <FinanceManager />}
           {user.role === "admin" && currentView === "api-webhooks" && <ApiWebhooksManager />}
           {user.role === "admin" && currentView === "organization" && <OrganizationSettings />}
+          {user.role === "admin" && currentView === "monitoring" && <MonitoringDashboard />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "reconciliation" && <ReconciliationDashboard />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "rto" && <RtoManager />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "routing" && <RoutingInsights />}

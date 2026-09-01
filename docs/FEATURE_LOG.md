@@ -2801,6 +2801,135 @@ build` clean.
 
 ---
 
+## Missing-Features Rollout — Phase 17: Security & Session Management
+
+**What was missing:** No visibility into WHO has logged in and from
+where — no active-sessions list, no login history, no security-event
+audit trail. No account lockout, so a password could be brute-forced
+with unlimited attempts. No password history, so a "changed" password
+could just be changed right back. No 2FA recovery codes, so losing
+your authenticator app meant losing the account. All of this sits
+NEXT TO the existing auth system (JWT access tokens, RefreshTokenDB
+rotation/theft-detection, TOTP/email 2FA, password reset, CAPTCHA,
+rate limiting) rather than replacing any of it.
+
+**Why it was needed:** Every real account-security surface needs
+these — a user should be able to see and revoke their own sessions,
+an account should lock out after repeated failed attempts instead of
+allowing unlimited guesses, and losing a 2FA device shouldn't mean
+losing the account forever.
+
+**What it does:** Three new tables (`LoginHistoryDB`, `SecurityEventDB`,
+`PasswordHistoryDB`, `RecoveryCodeDB`) plus two new columns on
+`UserDB` (`failed_login_count`, `locked_until`) and two new columns on
+`RefreshTokenDB` (`device_info`, `ip_address` — captured once at login
+and carried forward through token rotation, so "Active Sessions" shows
+what device actually logged in, not just whatever made the most recent
+silent refresh call). Account lockout is auto-expiring (15 minutes
+after 5 failed attempts) rather than requiring a manual admin unlock —
+a locked-out legitimate user shouldn't need to file a support ticket
+just to wait it out. Suspicious-login detection is a simple, honest
+heuristic: a login from an IP that hasn't appeared in the user's last
+20 successful logins gets flagged and triggers a security-alert email
+— and a user's very FIRST login is never flagged, since there's no
+history yet to compare against. "Active Sessions" isn't a new table —
+it's just `RefreshTokenDB` rows filtered to not-revoked/not-expired,
+since that table already IS the session record. 2FA recovery codes
+(10 single-use codes, SHA-256 hashed) are generated automatically the
+first time TOTP or email 2FA is enabled, and can be regenerated later
+(password-confirmed, since regenerating invalidates every existing
+code) — a wrong TOTP/email code at login now falls back to trying a
+recovery code before failing outright. Password history blocks
+re-using any of the last 5 passwords on both change-password and
+password-reset. OAuth/SSO were deliberately skipped — this project has
+no external OAuth provider registration or secrets available in this
+environment, and the original scope explicitly allowed skipping SSO/SAML
+"only if practical," which it isn't here; an honest skip beats a fake
+implementation. **13 new backend tests, all passing** (lockout
+triggering and auto-clearing on success, login history for both
+outcomes, session listing/is_current-marking/revoke/logout-all,
+cross-user session-revoke rejected, password-reuse rejected on both
+change and reset, security events recorded for every relevant action,
+recovery codes generated on enable and single-use, disabled 2FA and
+regeneration-requires-password). Frontend: a new `SecurityDashboard`
+(active sessions, login history, security activity, recovery-code
+management) mounted alongside the existing `TwoFactorSettings` on the
+Security page for all three staff roles.
+
+Full backend suite after Phase 17: **352/352 passing** (confirmed via
+three batched runs, same reason as Phases 14-16). Frontend: `npm run
+build` clean.
+
+---
+
+## Missing-Features Rollout — Phase 18: Monitoring & Reliability (final phase)
+
+**What was missing:** No way to know whether the application, its
+database, or its four background schedulers (reminder, SLA monitor,
+subscription, webhook) were actually healthy — a stuck scheduler would
+fail silently forever. No unhandled-exception tracking. No API request
+timing. No notification delivery visibility. No database backup
+mechanism at all.
+
+**Why it was needed:** Production observability is what turns "it
+broke and nobody noticed for three days" into "an admin saw the
+webhook scheduler go unhealthy on the dashboard this morning."
+
+**What it does:** Two new tables — `ErrorLogDB` (every unhandled
+exception, captured by extending the SAME security-headers middleware
+that already wraps every request, rather than adding a second
+middleware) and `JobHeartbeatDB` (one row per background scheduler,
+updated on every tick with success/failure, duration, and error
+detail — all four schedulers now record a heartbeat on both their
+success and exception-handling paths). API request timing and
+notification send/fail counts are deliberately IN-MEMORY, not
+database tables — see `services/monitoring.py`'s module docstring:
+they answer "is something wrong right now," reset cleanly on restart
+(a fresh process shouldn't inherit yesterday's slow-request history),
+and avoid a database write on every single request for data nobody
+needs to keep past the current process's lifetime. WebSocket
+monitoring reuses the EXISTING `ConnectionManager` singleton
+(`services/websocket_manager.py`) via a new `connection_count()`
+method rather than a second parallel counter that could drift out of
+sync with the real connection state. `GET /health` and `GET
+/health/db` are public and unauthenticated (a load balancer or uptime
+monitor shouldn't need credentials, and neither reveals anything
+sensitive); every other monitoring endpoint is admin-only. Database
+backup (`services/backup.py`) is scoped honestly: this project's
+default/test configuration is SQLite, so a REAL, working file-copy
+backup with SHA-256 checksums is implemented for it — and
+verification doesn't stop at a checksum match, it actually opens the
+backup file as a SQLite database and runs a query, since a checksum
+alone can't catch a truncated/corrupted-but-checksummed file. For
+PostgreSQL, the backup endpoint plainly says to use `pg_dump`/managed
+backups instead of pretending to back up a database it has no
+file-level access to. `docs/DISASTER_RECOVERY.md` documents backup/
+restore procedures for both database modes, why this project's
+all-additive migration history (every phase added tables or
+nullable/defaulted columns, never dropped or altered existing ones) is
+safe but not a substitute for backing up before an upgrade anyway, and
+the two alerting channels that already exist (Phase 17's security
+alert emails, and the monitoring dashboard itself) versus what would
+need external credentials this environment doesn't have (a real
+paging/alerting integration). **15 new backend tests, all passing**
+(public health checks, admin-only monitoring status, job heartbeat
+recording and staleness-based health evaluation, API/notification
+metrics recorded across real requests, backup create/list/verify
+including a genuinely corrupted file correctly rejected and a
+path-traversal filename rejected before ever touching the filesystem,
+admin-only access, and `record_error()` proven to never raise even
+when the logging attempt itself fails). Frontend: a new
+`MonitoringDashboard` admin sidebar page (health status, job
+heartbeats, slowest endpoints, notification delivery, backups with
+one-click create/verify, recent errors).
+
+Full backend suite after Phase 18 — **the final phase of the original
+18-phase rollout**: **367/367 passing** (confirmed via three batched
+runs, same reason as every phase since 14). Frontend: `npm run build`
+clean.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

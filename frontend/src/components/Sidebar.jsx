@@ -112,6 +112,7 @@ export default function Sidebar({ activeView, onNavigate }) {
     { key: "invoicing", label: "Invoicing", icon: "\u20B9" },
     { key: "api-webhooks", label: "API & Webhooks", icon: "\u2707" },
     { key: "organization", label: "Organization", icon: "\u2302" },
+    { key: "monitoring", label: "Monitoring", icon: "\u2699" },
     { key: "audit-log", label: "Audit Log", icon: "\u2637" },
     { key: "account", label: "My Account", icon: "\u25CB" },
     { key: "security", label: "Security", icon: "\u26BF" },

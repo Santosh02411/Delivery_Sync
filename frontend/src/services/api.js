@@ -2615,3 +2615,56 @@ export async function regenerateRecoveryCodes(token, password) {
   if (!response.ok) throw new Error(data.detail || "Failed to generate recovery codes");
   return data;
 }
+
+// ---------- Monitoring & Reliability (Phase 18) ----------
+
+export async function fetchMonitoringStatus(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/monitoring/status`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load monitoring status");
+  return data;
+}
+
+export async function fetchApiMetrics(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/monitoring/api-metrics`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load API metrics");
+  return data;
+}
+
+export async function fetchNotificationMetrics(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/monitoring/notification-metrics`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load notification metrics");
+  return data;
+}
+
+export async function fetchErrorLogs(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/monitoring/errors`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load error logs");
+  return data;
+}
+
+export async function fetchBackups(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/monitoring/backups`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load backups");
+  return data;
+}
+
+export async function triggerBackup(token) {
+  const response = await fetch(`${API_BASE_URL}/admin/monitoring/backups`, {
+    method: "POST", headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to create backup");
+  return data;
+}
+
+export async function verifyBackup(token, filename) {
+  const response = await fetch(`${API_BASE_URL}/admin/monitoring/backups/${encodeURIComponent(filename)}/verify`, { headers: authHeaders(token) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to verify backup");
+  return data;
+}

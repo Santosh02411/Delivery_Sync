@@ -917,6 +917,87 @@ clean.
 
 ---
 
+## Session: Phase 17 — Security & Session Management
+
+**A NameError caught before it ever reached a test.** After adding the
+new `/auth/sessions` endpoint with `response_model=List[SessionOut]`,
+the very first sanity check — `python -c "import main"` — failed
+immediately with `NameError: name 'List' is not defined`. `typing.List`
+had never been imported into `routes/auth.py` before this phase. Fixed
+in one line. This is exactly why the workflow here always runs the
+import check before writing a single test: a broken import crashes
+EVERY route in the app at process start, not just the new one, and
+catching that before test collection even begins is far cheaper than
+debugging a wall of unrelated-looking test failures.
+
+**A second self-inflicted bug from careless editing.** While drafting
+the recovery-codes-regenerate endpoint, a stray walrus-operator
+fragment (`if not user.totp_enabled if (user := current_user) else
+True: pass`) got left in from an editing mistake — dead, confusing,
+and pointless code that the very next line already handled correctly.
+Caught on a re-read before running anything, and removed. Worth noting
+plainly: this wasn't a subtle logic bug, it was sloppiness, and it's
+the kind of thing a second look catches before a reviewer (or a test
+failure) has to.
+
+**Reused RefreshTokenDB instead of inventing a session table.** The
+spec asked for "active sessions" and "session/device information" as
+if they were a new concept. They aren't, in this codebase —
+`RefreshTokenDB` already IS the durable server-side session record
+(Phase: refresh-token rotation with theft detection). Adding
+`device_info`/`ip_address` columns to it and filtering to
+not-revoked/not-expired rows was the entire "Active Sessions" feature.
+A parallel `SessionDB` table would have meant two systems that could
+drift out of sync about which sessions are actually valid.
+
+Full backend suite after this session: **352/352 passing** (339 → 352,
+13 new; confirmed via three batched runs). Frontend `npm run build`
+clean.
+
+---
+
+## Session: Phase 18 — Monitoring & Reliability (final phase)
+
+**Extending an existing middleware instead of stacking a new one.**
+`main.py` already had a single `@app.middleware("http")` wrapping
+every request to add security headers and catch unhandled exceptions
+into a generic 500 response. Rather than adding a SECOND middleware
+just for request timing and error logging, the existing one was
+extended in place — one `time.monotonic()` call at the top, one
+`monitoring_svc.record_api_request()` call on both the success and
+exception paths, and one `monitoring_svc.record_error()` call added to
+the exception branch that already existed. Two middlewares doing
+related work on every request would have meant two places to reason
+about request/response mutation order for no real benefit.
+
+**In-memory metrics were a deliberate choice, not a shortcut.** The
+instinct when asked for "API performance monitoring" is to reach for a
+database table logging every request. That would mean a write on
+every single API call — real cost, for data that only matters for the
+current process's uptime and that nobody needs to query historically
+across restarts. `API_METRICS`/`NOTIFICATION_METRICS` in
+`services/monitoring.py` are plain in-memory dicts behind a lock,
+explicitly documented as answering "is something wrong right now," not
+an audit trail — the same reasoning that led `ErrorLogDB` and
+`JobHeartbeatDB` (which genuinely need to survive a restart to be
+useful) to be actual tables while these didn't need to be.
+
+**An honest "not applicable" beats a fake "success."** `create_backup()`
+checks `IS_SQLITE` first and, for a PostgreSQL deployment, returns a
+plain explanation that this endpoint can't back up a database it has
+no file-level access to — rather than either crashing unhelpfully or,
+worse, returning a "success" response that silently backed up nothing.
+This is the same pattern already established for Phase 16's honestly-
+scoped organization suspension and Phase 14's OAuth/SSO skip: naming
+an actual limitation plainly is worth more than a response that looks
+complete but isn't.
+
+Full backend suite after this session — **the final phase**:
+**367/367 passing** (352 → 367, 15 new; confirmed via three batched
+runs). Frontend `npm run build` clean.
+
+---
+
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something

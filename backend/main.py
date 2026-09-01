@@ -30,15 +30,17 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 import logging
 import os
+import time
 
 from app.db.session import Base, engine
 from app.db.migrate import run_lightweight_migrations
 from app.services.rate_limiter import limiter
-from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce, pod, sla, warehouse, rbac, reconciliation, customer_messages, rto, scan, route_analytics, notification_templates, fleet, support, finance, webhooks, public_api, advanced_analytics, organization
+from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce, pod, sla, warehouse, rbac, reconciliation, customer_messages, rto, scan, route_analytics, notification_templates, fleet, support, finance, webhooks, public_api, advanced_analytics, organization, monitoring
 from app.db.session import SessionLocal
 from app.services.subscription_scheduler import start_subscription_scheduler
 from app.services.sla_monitor import start_sla_monitor
 from app.services.reminder_scheduler import start_reminder_scheduler
+from app.services import monitoring as monitoring_svc
 from app.services.webhook_scheduler import start_webhook_scheduler
 
 # Create all database tables on startup (if they don't already exist),
@@ -142,12 +144,28 @@ async def add_security_headers(request: Request, call_next):
     client always gets back a real 500 JSON response instead of a
     dropped connection, so a genuine crash always shows up as a genuine
     error message, never a misleading "offline" one.
+
+    Also doubles as Phase 18's API request-timing hook (services/
+    monitoring.py's record_api_request) — one middleware measuring
+    every request rather than a second one added just for metrics.
     """
+    start = time.monotonic()
     try:
         response = await call_next(request)
-    except Exception:
+    except Exception as error:
         logging.getLogger(__name__).exception("Unhandled exception for %s %s", request.method, request.url.path)
+        monitoring_svc.record_api_request(request.method, request.url.path, (time.monotonic() - start) * 1000, 500)
+        try:
+            db = SessionLocal()
+            try:
+                monitoring_svc.record_error(db, getattr(request.state, "org_id", None), request.method, request.url.path, error)
+            finally:
+                db.close()
+        except Exception:
+            pass  # logging the error must never itself crash the error response below
         return JSONResponse(status_code=500, content={"detail": "Internal Server Error"})
+
+    monitoring_svc.record_api_request(request.method, request.url.path, (time.monotonic() - start) * 1000, response.status_code)
 
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
@@ -202,6 +220,7 @@ app.include_router(webhooks.router)
 app.include_router(public_api.router)
 app.include_router(advanced_analytics.router)
 app.include_router(organization.router)
+app.include_router(monitoring.router)
 
 
 # Background task reference kept on app.state so it isn't garbage
