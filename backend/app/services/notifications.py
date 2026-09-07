@@ -214,6 +214,25 @@ def notify_agent_of_new_assignment(db: Session, delivery_id: str, order_id: str,
     )
 
 
+def notify_agent_of_unassignment(db: Session, delivery_id: str, order_id: str, agent_id: str) -> None:
+    """
+    Web Push to an agent the moment a dispatcher pulls a delivery back
+    off them and returns it to the unassigned pool — the mirror image
+    of notify_agent_of_new_assignment(). Without this, an agent's only
+    signal that an order disappeared would be it silently vanishing
+    from their list on next refresh, which reads as a bug rather than
+    a deliberate dispatcher action. Same best-effort semantics: a
+    missing/expired push subscription is silently a no-op.
+    """
+    tracking_link = f"{FRONTEND_URL}/?deliveries"
+    _push_to_user_ids(
+        db, [agent_id],
+        title="Delivery reassigned",
+        body=f"Order {order_id} has been taken off your list and returned to dispatch.",
+        url=tracking_link,
+    )
+
+
 def notify_dispatchers_of_sla_event(db: Session, org_id: str, order_id: str, event: str) -> None:
     """
     Web Push to every dispatcher/admin in an org when a delivery

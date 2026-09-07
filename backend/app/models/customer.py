@@ -30,6 +30,22 @@ class CustomerDB(Base):
     # UserDB are entirely separate identity systems.
     email_verified = Column(Boolean, nullable=False, default=False)
 
+    # OAuth/SSO (Google) — same fields, same meaning, and same
+    # has_usable_password fallback-login story as UserDB's (see that
+    # model's own comment for the reasoning in full); duplicated here
+    # rather than shared since CustomerDB and UserDB are entirely
+    # separate identity systems with no common base class. Unlike
+    # staff, a customer account needs no org context at all to sign up
+    # via Google — there's no invite code/org name decision to carry
+    # through the redirect (see routes/customer_auth.py's /oauth/*
+    # routes), which is what makes the customer flow noticeably
+    # simpler than the staff one despite being the same underlying
+    # OAuth mechanics (services/oauth.py is shared, unchanged, between
+    # both).
+    oauth_provider = Column(String, nullable=True)
+    oauth_subject_id = Column(String, nullable=True, index=True)
+    has_usable_password = Column(Boolean, nullable=False, default=True)
+
 
 class CustomerSignup(BaseModel):
     email: str
@@ -48,9 +64,17 @@ class CustomerOut(BaseModel):
     email: str
     name: str
     email_verified: bool = False
+    oauth_provider: Optional[str] = None
+    has_usable_password: bool = True
 
     class Config:
         from_attributes = True
+
+
+class CustomerSetPassword(BaseModel):
+    """For POST /customer/me/set-password — see UserSetPassword's
+    docstring in models/user.py; identical reasoning, customer side."""
+    new_password: str
 
 
 class CustomerProfileUpdate(BaseModel):

@@ -35,7 +35,7 @@ from app.models.failed_delivery_reason import FailedDeliveryReasonDB, FailedDeli
 from app.models.delivery_attempt import DeliveryAttemptDB, DeliveryAttemptOut
 from app.services.history import record_history_entry
 from app.services.delivery_attempts import record_delivery_attempt
-from app.services.notifications import notify_customer_of_status_change, notify_agent_of_new_assignment
+from app.services.notifications import notify_customer_of_status_change, notify_agent_of_new_assignment, notify_agent_of_unassignment
 from app.services.refund import refund_order_for_delivery
 from app.services.returns_workflow import handle_return_pickup_completion
 from app.services.websocket_manager import broadcast_sync, dispatcher_queue_room, tracking_room
@@ -542,6 +542,72 @@ def assign_agent_to_delivery(
         raise HTTPException(status_code=400, detail="The selected agent doesn't exist in your organization.")
 
     return _apply_agent_assignment(db, current_user, db_record, target_agent)
+
+
+@router.patch("/{delivery_id}/return-to-pool", response_model=DeliveryRecordOut)
+def return_delivery_to_pool(
+    delivery_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_dispatcher),
+):
+    """
+    Dispatcher pulls a customer order back off its currently-assigned
+    agent and drops it back into the unassigned pool (GET
+    /deliveries/unassigned), so it can be picked up by — or handed to —
+    a different agent. Mirrors assign_agent_to_delivery()'s own
+    restriction to customer-placed (checkout) orders, since a manually
+    created delivery has no "pool" to return to (it always has an
+    agent from creation). Only makes sense before the agent has
+    actually moved the package (picked_up is the "just assigned, not
+    yet touched" state) — once it's out_for_delivery, delivered, or
+    cancelled, returning it to the pool would be confusing rather than
+    useful, so those are rejected the same way bulk-assign-agent
+    rejects delivered/cancelled.
+    """
+    db_record = db.query(DeliveryRecordDB).filter(
+        DeliveryRecordDB.id == delivery_id,
+        DeliveryRecordDB.org_id == current_user.org_id,
+    ).first()
+    if not db_record:
+        raise HTTPException(status_code=404, detail="Delivery record not found")
+
+    if not db_record.customer_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Only customer-placed orders can be returned to the unassigned pool.",
+        )
+    if db_record.status != DeliveryStatus.picked_up:
+        raise HTTPException(
+            status_code=400,
+            detail="Only a just-assigned order (not yet out for delivery, delivered, or cancelled) can be returned to the pool.",
+        )
+
+    old_agent_id = db_record.agent_id
+    old_agent = db.query(UserDB).filter(UserDB.id == old_agent_id).first() if old_agent_id else None
+    now = datetime.utcnow()
+
+    db_record.agent_id = None
+    db_record.status = DeliveryStatus.pending
+    db_record.updated_at = now
+    db.commit()
+    db.refresh(db_record)
+
+    record_history_entry(
+        db,
+        delivery_id=db_record.id,
+        changed_by_user_id=current_user.id,
+        changed_by_display_name=current_user.display_name,
+        old_status=DeliveryStatus.picked_up,
+        new_status=db_record.status,
+        changed_at=now,
+        note=f"Returned to unassigned pool by {current_user.display_name}"
+        + (f" (was assigned to {old_agent.display_name})" if old_agent else ""),
+    )
+    if old_agent_id:
+        notify_agent_of_unassignment(db, delivery_id=db_record.id, order_id=db_record.order_id, agent_id=old_agent_id)
+    broadcast_sync(dispatcher_queue_room(current_user.org_id), {"event": "queue_changed", "reason": "returned_to_pool"})
+    broadcast_sync(tracking_room(db_record.id), {"event": "status_changed", "status": db_record.status.value})
+    return db_record
 
 
 class BulkStatusUpdateRequest(BaseModel):

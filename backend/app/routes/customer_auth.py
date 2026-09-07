@@ -8,13 +8,14 @@ never be confused with each other, even accidentally.
 """
 
 import os
+import secrets
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.models.customer import CustomerDB, CustomerSignup, CustomerLogin, CustomerTokenResponse, CustomerOut, CustomerProfileUpdate, CustomerPasswordChange
+from app.models.customer import CustomerDB, CustomerSignup, CustomerLogin, CustomerTokenResponse, CustomerOut, CustomerProfileUpdate, CustomerPasswordChange, CustomerSetPassword
 from app.models.customer_password_reset import CustomerPasswordResetTokenDB, CustomerForgotPasswordRequest, CustomerResetPasswordRequest
 from app.models.customer_email_verification import CustomerEmailVerificationTokenDB, CustomerVerifyEmailRequest
 from app.models.customer_refresh_token import CustomerRefreshTokenDB, CustomerRefreshTokenRequest, CustomerRefreshTokenResponse
@@ -26,10 +27,15 @@ from app.services.auth import (
     decode_access_token,
     generate_refresh_token,
     hash_refresh_token,
+    create_customer_oauth_state_token,
+    create_customer_oauth_login_code,
 )
 from app.services.email import send_customer_password_reset_email, send_customer_verification_email
 from app.services.captcha import verify_captcha, IS_CONFIGURED as CAPTCHA_CONFIGURED
 from app.services.rate_limiter import limiter
+from app.services import oauth as oauth_svc
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 router = APIRouter(prefix="/customer", tags=["customer-auth"])
 
@@ -96,6 +102,129 @@ def customer_login(request: Request, payload: CustomerLogin, db: Session = Depen
     customer = db.query(CustomerDB).filter(CustomerDB.email == payload.email).first()
     if not customer or not verify_password(payload.password, customer.hashed_password):
         raise HTTPException(status_code=401, detail="Incorrect email or password.")
+
+    token = create_access_token({"customer_id": customer.id})
+    refresh_token = _issue_customer_refresh_token(db, customer.id)
+    return {"access_token": token, "refresh_token": refresh_token, "customer": customer}
+
+
+class CustomerOAuthAuthorizationUrlOut(BaseModel):
+    authorization_url: str
+
+
+class CustomerOAuthExchangeRequest(BaseModel):
+    code: str
+
+
+@router.get("/oauth/google/login", response_model=CustomerOAuthAuthorizationUrlOut)
+@limiter.limit("10/minute")
+def start_customer_google_oauth_login(request: Request):
+    """
+    Customer-side equivalent of routes/auth.py's staff
+    /oauth/google/login — see that route's docstring for the overall
+    flow. Notably simpler here: no org_name/invite_code/role query
+    params at all, since a customer account carries no org context
+    (see CustomerDB's own comment on why).
+    """
+    if not oauth_svc.GOOGLE_OAUTH_CONFIGURED:
+        raise HTTPException(
+            status_code=400,
+            detail="Google sign-in isn't configured for this deployment. Set GOOGLE_CLIENT_ID and "
+                   "GOOGLE_CLIENT_SECRET to enable it.",
+        )
+    state = create_customer_oauth_state_token()
+    return {"authorization_url": oauth_svc.build_authorization_url(state, redirect_uri=oauth_svc.GOOGLE_CUSTOMER_REDIRECT_URI)}
+
+
+@router.get("/oauth/google/callback")
+def customer_google_oauth_callback(code: str | None = None, state: str | None = None, error: str | None = None, db: Session = Depends(get_db)):
+    """
+    Customer-side equivalent of routes/auth.py's staff
+    /oauth/google/callback. Same "Google redirects the browser here
+    directly, so every path ends in a redirect back to the frontend"
+    shape — see that route's docstring for why. Also links to an
+    existing password-based customer account by verified email, same
+    trust bar as the staff flow, and retroactively links any past
+    deliveries placed under this email before an account existed —
+    mirroring what /customer/signup already does for a password
+    signup, so an OAuth signup doesn't behave differently there.
+    """
+    def _redirect_with_error(message: str) -> RedirectResponse:
+        from urllib.parse import quote
+        return RedirectResponse(f"{FRONTEND_URL}/?customer_oauth_error={quote(message)}")
+
+    if error:
+        return _redirect_with_error("Google sign-in was cancelled or denied.")
+    if not oauth_svc.GOOGLE_OAUTH_CONFIGURED:
+        return _redirect_with_error("Google sign-in isn't configured for this deployment.")
+    if not code or not state:
+        return _redirect_with_error("Missing information from Google's redirect. Please try again.")
+
+    decoded_state = decode_access_token(state)
+    if not decoded_state or "customer_oauth_provider" not in decoded_state:
+        return _redirect_with_error("This sign-in attempt has expired. Please try again.")
+
+    try:
+        profile = oauth_svc.exchange_code_for_profile(code, redirect_uri=oauth_svc.GOOGLE_CUSTOMER_REDIRECT_URI)
+    except oauth_svc.GoogleOAuthError as err:
+        return _redirect_with_error(str(err))
+
+    customer = db.query(CustomerDB).filter(
+        CustomerDB.oauth_provider == "google",
+        CustomerDB.oauth_subject_id == profile["subject_id"],
+    ).first()
+
+    if not customer:
+        customer = db.query(CustomerDB).filter(CustomerDB.email == profile["email"]).first()
+        if customer:
+            customer.oauth_provider = "google"
+            customer.oauth_subject_id = profile["subject_id"]
+            customer.email_verified = True
+            db.commit()
+            db.refresh(customer)
+
+    if not customer:
+        customer = CustomerDB(
+            email=profile["email"],
+            hashed_password=hash_password(secrets.token_urlsafe(32)),
+            has_usable_password=False,
+            name=profile["name"],
+            email_verified=True,
+            oauth_provider="google",
+            oauth_subject_id=profile["subject_id"],
+        )
+        db.add(customer)
+        db.commit()
+        db.refresh(customer)
+
+        # Same retroactive-linking behavior as POST /customer/signup —
+        # see that route's own comment.
+        db.query(DeliveryRecordDB).filter(
+            DeliveryRecordDB.customer_email == profile["email"],
+            DeliveryRecordDB.customer_id.is_(None),
+        ).update({"customer_id": customer.id})
+        db.commit()
+
+    login_code = create_customer_oauth_login_code(customer.id)
+    from urllib.parse import quote
+    return RedirectResponse(f"{FRONTEND_URL}/?customer_oauth_code={quote(login_code)}")
+
+
+@router.post("/oauth/exchange", response_model=CustomerTokenResponse)
+@limiter.limit("10/minute")
+def exchange_customer_oauth_login_code(request: Request, payload: CustomerOAuthExchangeRequest, db: Session = Depends(get_db)):
+    """
+    Customer-side equivalent of routes/auth.py's staff
+    /oauth/exchange — trades the one-time code from the callback
+    redirect for a real access/refresh token pair.
+    """
+    decoded = decode_access_token(payload.code)
+    if not decoded or "customer_oauth_login_customer_id" not in decoded:
+        raise HTTPException(status_code=401, detail="This sign-in link has expired. Please sign in again.")
+
+    customer = db.query(CustomerDB).filter(CustomerDB.id == decoded["customer_oauth_login_customer_id"]).first()
+    if not customer:
+        raise HTTPException(status_code=401, detail="This sign-in link has expired. Please sign in again.")
 
     token = create_access_token({"customer_id": customer.id})
     refresh_token = _issue_customer_refresh_token(db, customer.id)
@@ -313,3 +442,26 @@ def change_my_password(
     current_customer.hashed_password = hash_password(payload.new_password)
     db.commit()
     return {"message": "Password changed."}
+
+
+@router.post("/me/set-password")
+def set_my_customer_password(
+    payload: CustomerSetPassword,
+    db: Session = Depends(get_db),
+    current_customer: CustomerDB = Depends(get_current_customer),
+):
+    """Customer-side equivalent of routes/auth.py's staff
+    /me/set-password — see UserSetPassword's docstring for the
+    reasoning in full; identical logic, customer side."""
+    if current_customer.has_usable_password:
+        raise HTTPException(
+            status_code=400,
+            detail="This account already has a password. Use \"Change password\" instead.",
+        )
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+
+    current_customer.hashed_password = hash_password(payload.new_password)
+    current_customer.has_usable_password = True
+    db.commit()
+    return {"message": "Password set. You can now log in with it, in addition to Google Sign-In."}

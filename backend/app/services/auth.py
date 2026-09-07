@@ -100,6 +100,74 @@ def decode_access_token(token: str) -> dict | None:
         return None
 
 
+# ---------- OAuth / SSO (Google) ----------
+# Both of these are short-lived signed JWTs with a distinct claim shape
+# from a real access token, following the exact same "self-contained,
+# no server-side session storage needed" pattern as
+# create_two_factor_challenge_token above.
+
+OAUTH_STATE_EXPIRE_MINUTES = 10
+
+
+def create_oauth_state_token(provider: str, org_name: str | None, invite_code: str | None, role: str | None) -> str:
+    """
+    Carries the signup context (which org to join/create, which role)
+    across the redirect to Google and back — Google echoes the `state`
+    query param back to our callback verbatim, and since it's signed,
+    the callback can trust it wasn't tampered with in transit without
+    needing a server-side session/state table.
+    """
+    expire = datetime.now(timezone.utc) + timedelta(minutes=OAUTH_STATE_EXPIRE_MINUTES)
+    to_encode = {
+        "oauth_provider": provider,
+        "oauth_org_name": org_name,
+        "oauth_invite_code": invite_code,
+        "oauth_role": role,
+        "exp": expire,
+    }
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+OAUTH_LOGIN_CODE_EXPIRE_MINUTES = 2
+
+
+def create_oauth_login_code(user_id: str) -> str:
+    """
+    Issued after a successful Google OAuth callback and handed to the
+    frontend as a one-time `?oauth_code=` query param, which it then
+    exchanges (POST /auth/oauth/exchange) for real access/refresh
+    tokens. Deliberately NOT the real tokens themselves — putting a
+    long-lived refresh token directly in a redirect URL would leave it
+    exposed in browser history and any HTTP referrer logging; this
+    short-lived (2 min), single-purpose code carries none of that risk
+    since on its own it grants nothing beyond "prove you're the
+    browser Google just redirected".
+    """
+    expire = datetime.now(timezone.utc) + timedelta(minutes=OAUTH_LOGIN_CODE_EXPIRE_MINUTES)
+    to_encode = {"oauth_login_user_id": user_id, "exp": expire}
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_customer_oauth_state_token() -> str:
+    """
+    Customer-side equivalent of create_oauth_state_token above, but
+    much simpler: a customer account needs no org context at all to
+    sign up (see CustomerDB's own comment on this), so there is
+    nothing to carry through the redirect except proof the callback
+    wasn't reached some other way — the signed token itself IS that
+    proof, same CSRF-mitigation role `state` plays in the staff flow.
+    """
+    expire = datetime.now(timezone.utc) + timedelta(minutes=OAUTH_STATE_EXPIRE_MINUTES)
+    return jwt.encode({"customer_oauth_provider": "google", "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def create_customer_oauth_login_code(customer_id: str) -> str:
+    """Customer-side equivalent of create_oauth_login_code above."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=OAUTH_LOGIN_CODE_EXPIRE_MINUTES)
+    to_encode = {"customer_oauth_login_customer_id": customer_id, "exp": expire}
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
 # ---------- Refresh tokens ----------
 # Shared by both staff (models/refresh_token.py) and customer
 # (models/customer_refresh_token.py) sessions — the generation/hashing

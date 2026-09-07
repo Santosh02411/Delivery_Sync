@@ -19,6 +19,7 @@ from app.models.user import (
     UserOut,
     UserProfileUpdate,
     UserPasswordChange,
+    UserSetPassword,
     TokenResponse,
     LoginResult,
     TwoFactorSetupOut,
@@ -45,6 +46,8 @@ from app.services.auth import (
     create_two_factor_challenge_token,
     generate_refresh_token,
     hash_refresh_token,
+    create_oauth_state_token,
+    create_oauth_login_code,
 )
 from app.services.totp import generate_secret, get_provisioning_uri, verify_code
 from app.services.rate_limiter import limiter
@@ -52,6 +55,9 @@ from app.services.email import send_password_reset_email, send_two_factor_code_e
 from app.services.captcha import verify_captcha, IS_CONFIGURED as CAPTCHA_CONFIGURED
 from app.services import security as security_svc
 from app.services.email import send_security_alert_email
+from app.services import oauth as oauth_svc
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from datetime import datetime, timedelta
 from typing import List
 import os
@@ -264,6 +270,202 @@ def login(request: Request, payload: UserLogin, db: Session = Depends(get_db)):
             "masked_email": masked_email,
         }
 
+    suspicious = security_svc.is_suspicious_login(db, user.id, ip_address)
+    security_svc.record_login_history(db, user.id, user.org_id, "suspicious_login" if suspicious else "login_success", ip_address, device_info)
+    if suspicious:
+        send_security_alert_email(user.email, "New login from an unrecognized location", ip_address=ip_address, device_info=device_info)
+
+    token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
+    refresh_token = _issue_refresh_token(db, user.id, device_info=device_info, ip_address=ip_address)
+    return {"access_token": token, "refresh_token": refresh_token, "user": user, "org_invite_code": None}
+
+
+class OAuthAuthorizationUrlOut(BaseModel):
+    authorization_url: str
+
+
+class OAuthExchangeRequest(BaseModel):
+    code: str
+
+
+@router.get("/oauth/google/login", response_model=OAuthAuthorizationUrlOut)
+@limiter.limit("10/minute")
+def start_google_oauth_login(
+    request: Request,
+    org_name: str | None = None,
+    invite_code: str | None = None,
+    role: str = "agent",
+):
+    """
+    Step 1 of Google SSO: returns the URL the frontend should send the
+    browser to (`window.location.href = authorization_url`). `org_name`
+    and `invite_code` are the same "create a new org" vs "join an
+    existing one via invite code" choice as POST /auth/signup —
+    optional here because they're only actually needed if this Google
+    account turns out to be brand new to this app (see the callback
+    below); logging into an ALREADY-linked account needs no org
+    context at all, same as an ordinary password login needing no org
+    context either.
+    """
+    if not oauth_svc.GOOGLE_OAUTH_CONFIGURED:
+        raise HTTPException(
+            status_code=400,
+            detail="Google sign-in isn't configured for this deployment. Set GOOGLE_CLIENT_ID and "
+                   "GOOGLE_CLIENT_SECRET to enable it.",
+        )
+    if role not in ("agent", "dispatcher", "admin"):
+        raise HTTPException(status_code=400, detail="Invalid role.")
+    state = create_oauth_state_token("google", org_name, invite_code, role)
+    return {"authorization_url": oauth_svc.build_authorization_url(state)}
+
+
+@router.get("/oauth/google/callback")
+def google_oauth_callback(code: str | None = None, state: str | None = None, error: str | None = None, db: Session = Depends(get_db)):
+    """
+    Step 2: Google redirects the user's browser HERE directly (not a
+    fetch call from the frontend), so failures here can't hand back a
+    JSON error the way the rest of this API does — every path below
+    ends in a redirect back to the frontend, either with a one-time
+    `?oauth_code=` (success — see POST /oauth/exchange) or an
+    `?oauth_error=` message the login page can display.
+    """
+    def _redirect_with_error(message: str) -> RedirectResponse:
+        from urllib.parse import quote
+        return RedirectResponse(f"{FRONTEND_URL}/?oauth_error={quote(message)}")
+
+    if error:
+        return _redirect_with_error("Google sign-in was cancelled or denied.")
+    if not oauth_svc.GOOGLE_OAUTH_CONFIGURED:
+        return _redirect_with_error("Google sign-in isn't configured for this deployment.")
+    if not code or not state:
+        return _redirect_with_error("Missing information from Google's redirect. Please try again.")
+
+    decoded_state = decode_access_token(state)
+    if not decoded_state or "oauth_provider" not in decoded_state:
+        return _redirect_with_error("This sign-in attempt has expired. Please try again.")
+
+    try:
+        profile = oauth_svc.exchange_code_for_profile(code)
+    except oauth_svc.GoogleOAuthError as err:
+        return _redirect_with_error(str(err))
+
+    user = db.query(UserDB).filter(
+        UserDB.oauth_provider == "google",
+        UserDB.oauth_subject_id == profile["subject_id"],
+    ).first()
+
+    if not user:
+        # Not linked yet — if an account with this (Google-verified)
+        # email already exists from an ordinary password signup, link
+        # this Google identity to it rather than erroring or creating
+        # a confusing second account for the same person. Trusting
+        # Google's own email_verified flag here is the same trust bar
+        # this project already applies to its own email-verification
+        # links elsewhere.
+        user = db.query(UserDB).filter(UserDB.email == profile["email"]).first()
+        if user:
+            user.oauth_provider = "google"
+            user.oauth_subject_id = profile["subject_id"]
+            user.email_verified = True
+            db.commit()
+            db.refresh(user)
+
+    new_org_invite_code = None
+
+    if not user:
+        # Genuinely new to this app — provision an account the same
+        # way POST /auth/signup does, using the org context carried
+        # through in `state`.
+        org_name = decoded_state.get("oauth_org_name")
+        invite_code = decoded_state.get("oauth_invite_code")
+        role = decoded_state.get("oauth_role") or "agent"
+
+        if not org_name and not invite_code:
+            return _redirect_with_error("No organization was selected before starting Google sign-in. Please try again.")
+        if org_name and invite_code:
+            return _redirect_with_error("Provide only one of organization name or invite code, not both.")
+
+        if org_name:
+            org = OrganizationDB(name=org_name.strip(), invite_code=generate_invite_code())
+            db.add(org)
+            db.commit()
+            db.refresh(org)
+            org_id = org.id
+            effective_role = "admin"
+            new_org_invite_code = org.invite_code
+        else:
+            org = db.query(OrganizationDB).filter(OrganizationDB.invite_code == invite_code).first()
+            if not org:
+                return _redirect_with_error("That invite code doesn't match any organization.")
+            if org.is_suspended:
+                return _redirect_with_error("This organization is currently suspended and isn't accepting new members.")
+            # Same anti-privilege-escalation rule as POST /auth/signup:
+            # an invite code alone must never grant self-selected admin.
+            effective_role = "agent" if role == "admin" else role
+            org_id = org.id
+
+        base_username = profile["email"].split("@")[0]
+        username = base_username
+        suffix = 1
+        while db.query(UserDB).filter(UserDB.username == username).first():
+            suffix += 1
+            username = f"{base_username}{suffix}"
+
+        user = UserDB(
+            username=username,
+            email=profile["email"],
+            # OAuth-only accounts have no password of their own — this
+            # column is NOT NULL (see models/user.py), so a securely
+            # random value is stored that is never shared with the
+            # user and never usable to log in via POST /auth/login.
+            # has_usable_password=False is what actually marks the
+            # account as OAuth-only (see POST /auth/me/set-password
+            # for the self-service fallback if Google sign-in is later
+            # disabled for this deployment).
+            hashed_password=hash_password(secrets.token_urlsafe(32)),
+            has_usable_password=False,
+            role=effective_role,
+            display_name=profile["name"],
+            org_id=org_id,
+            is_active=True,
+            email_verified=True,
+            oauth_provider="google",
+            oauth_subject_id=profile["subject_id"],
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    if not user.is_active:
+        return _redirect_with_error("This account has been deactivated. Contact your admin.")
+
+    login_code = create_oauth_login_code(user.id)
+    from urllib.parse import quote
+    return RedirectResponse(f"{FRONTEND_URL}/?oauth_code={quote(login_code)}")
+
+
+@router.post("/oauth/exchange", response_model=TokenResponse)
+@limiter.limit("10/minute")
+def exchange_oauth_login_code(request: Request, payload: OAuthExchangeRequest, db: Session = Depends(get_db)):
+    """
+    Step 3: the frontend lands on `/?oauth_code=...` after the Google
+    redirect, immediately calls this with that code, and gets back a
+    real session — the same access_token/refresh_token/user shape as
+    POST /auth/login, so the rest of the app treats an SSO session
+    identically to a password one. See create_oauth_login_code's
+    docstring for why this handoff step exists instead of putting real
+    tokens directly in the redirect URL.
+    """
+    decoded = decode_access_token(payload.code)
+    if not decoded or "oauth_login_user_id" not in decoded:
+        raise HTTPException(status_code=401, detail="This sign-in link has expired. Please sign in again.")
+
+    user = db.query(UserDB).filter(UserDB.id == decoded["oauth_login_user_id"]).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=401, detail="This sign-in link has expired. Please sign in again.")
+
+    ip_address = security_svc.client_ip(request)
+    device_info = security_svc.parse_user_agent(request.headers.get("user-agent"))
     suspicious = security_svc.is_suspicious_login(db, user.id, ip_address)
     security_svc.record_login_history(db, user.id, user.org_id, "suspicious_login" if suspicious else "login_success", ip_address, device_info)
     if suspicious:
@@ -627,6 +829,41 @@ def change_my_password(
     security_svc.record_security_event(db, current_user.id, current_user.org_id, "password_changed")
     send_security_alert_email(current_user.email, "Your password was changed")
     return {"message": "Password changed."}
+
+
+@router.post("/me/set-password")
+def set_my_password(
+    payload: UserSetPassword,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """
+    Lets an OAuth-only account (has_usable_password False — see
+    UserDB's docstring) add a real password for the first time, so
+    they have a fallback way to log in if Google sign-in is later
+    disabled or unreachable. Deliberately rejects this for an account
+    that already has a usable password — that's what
+    /me/change-password is for, and it correctly requires proving the
+    CURRENT password first, a check this route has nothing to compare
+    against for a brand-new password.
+    """
+    if current_user.has_usable_password:
+        raise HTTPException(
+            status_code=400,
+            detail="This account already has a password. Use \"Change password\" instead.",
+        )
+    if len(payload.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters.")
+
+    current_user.hashed_password = hash_password(payload.new_password)
+    current_user.has_usable_password = True
+    db.commit()
+    security_svc.record_security_event(db, current_user.id, current_user.org_id, "password_changed")
+    send_security_alert_email(
+        current_user.email,
+        "A password was added to your account — you can now log in with it as well as Google Sign-In.",
+    )
+    return {"message": "Password set. You can now log in with it, in addition to Google Sign-In."}
 
 
 # ---------- Two-factor auth: setup / enable / disable (staff, logged in) ----------

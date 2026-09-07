@@ -103,6 +103,33 @@ class UserDB(Base):
     # unless an admin explicitly assigns a custom role.
     custom_role_id = Column(String, nullable=True)
 
+    # OAuth/SSO (Google) — set only for an account created via, or
+    # later linked to, Google sign-in (see routes/auth.py's
+    # /oauth/google/* endpoints and services/oauth.py). oauth_subject_id
+    # is Google's own stable per-account "sub" claim — NOT the email
+    # address, since an email can be reused/changed on Google's side
+    # in ways their subject id never is. Both stay NULL for every
+    # ordinary password-only account, which is the common case and
+    # requires no change to existing rows. An OAuth-provisioned
+    # account still gets a `hashed_password` (never NULL, per the
+    # column's own constraint) — see the callback route for why that's
+    # a securely-random, never-shared value rather than skipped.
+    oauth_provider = Column(String, nullable=True)
+    oauth_subject_id = Column(String, nullable=True, index=True)
+    # True for every ordinary password-signup account (the default,
+    # so existing rows and every future non-OAuth INSERT get True for
+    # free — see migrate.py's scalar-default handling). Explicitly set
+    # False only at OAuth account-creation time (routes/auth.py's
+    # Google callback), since that account's hashed_password is a
+    # securely-random value never shared with the user and can't
+    # actually be used to log in via POST /auth/login. Flips back to
+    # True once the user sets a real password via POST
+    # /auth/me/set-password (see that route) — the self-service
+    # fallback this project didn't have when OAuth/SSO first shipped:
+    # without it, an OAuth-only account had no way to log in at all if
+    # Google sign-in were later disabled for the deployment.
+    has_usable_password = Column(Boolean, nullable=False, default=True)
+
 
 # ---------- Pydantic Schemas ----------
 
@@ -145,6 +172,8 @@ class UserOut(BaseModel):
     hourly_rate: Optional[float] = None
     per_delivery_rate: Optional[float] = None
     custom_role_id: Optional[str] = None
+    oauth_provider: Optional[str] = None
+    has_usable_password: bool = True
 
     class Config:
         from_attributes = True
@@ -169,6 +198,21 @@ class UserProfileUpdate(BaseModel):
 
 class UserPasswordChange(BaseModel):
     current_password: str
+    new_password: str
+
+
+class UserSetPassword(BaseModel):
+    """
+    For POST /auth/me/set-password — an OAuth-only account (see
+    UserDB.has_usable_password) adding a real password for the first
+    time. Deliberately a SEPARATE model from UserPasswordChange rather
+    than making current_password optional on that one: this route only
+    ever applies to an account that has no usable password to prove
+    knowledge of in the first place, so there's nothing to reuse the
+    "verify current, then set new" shape for — see the route itself
+    for what it checks instead (a valid session is the only proof
+    available, same trust level Google's own sign-in already granted).
+    """
     new_password: str
 
 
