@@ -42,7 +42,7 @@ from app.services.sla_monitor import start_sla_monitor
 from app.services.reminder_scheduler import start_reminder_scheduler
 from app.services import monitoring as monitoring_svc
 from app.services.webhook_scheduler import start_webhook_scheduler
-
+from app.services.backup_scheduler import start_backup_scheduler
 # Create all database tables on startup (if they don't already exist),
 # then catch up any EXISTING table to the model's current columns — see
 # app/db/migrate.py's module docstring for why both steps are needed:
@@ -244,6 +244,21 @@ async def _launch_reminder_scheduler():
 @app.on_event("startup")
 async def _launch_webhook_scheduler():
     app.state.webhook_scheduler_task = start_webhook_scheduler(SessionLocal)
+
+
+@app.on_event("startup")
+async def _launch_backup_scheduler():
+    # Deliberately skipped during the test suite (TESTING=1) — unlike
+    # the other schedulers above, a real backup tick does actual file
+    # I/O (a full SQLite file copy, or a subprocess pg_dump), and every
+    # one of this project's 300+ tests spins up a fresh app instance
+    # via TestClient's lifespan handling. Without this guard that would
+    # mean hundreds of real backup files written to backend/backups/
+    # per test run for no reason — see services/backup_scheduler.py's
+    # own module docstring for the same point in more detail.
+    if os.environ.get("TESTING") == "1":
+        return
+    app.state.backup_scheduler_task = start_backup_scheduler(SessionLocal)
 
 
 @app.get("/")
