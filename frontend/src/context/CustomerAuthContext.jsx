@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
-import { customerRefreshTokenRequest, customerLogoutRequest } from "../services/authApi";
+import { customerRefreshTokenRequest, customerLogoutRequest, exchangeCustomerOAuthLoginCode } from "../services/authApi";
 
 const CustomerAuthContext = createContext(null);
 const STORAGE_KEY = "delivery_sync_customer_auth";
@@ -95,6 +95,12 @@ export function CustomerAuthProvider({ children }) {
     return data.customer;
   }
 
+  async function completeOAuthLogin(oauthCode) {
+    const data = await exchangeCustomerOAuthLoginCode(oauthCode);
+    persistSession(data.access_token, data.refresh_token, data.customer);
+    return data.customer;
+  }
+
   function logout() {
     if (refreshTokenRef.current) {
       customerLogoutRequest(refreshTokenRef.current); // best-effort server-side revocation
@@ -120,7 +126,7 @@ export function CustomerAuthProvider({ children }) {
   }
 
   return (
-    <CustomerAuthContext.Provider value={{ customer, token, isLoading, signup, login, logout, updateCustomer }}>
+    <CustomerAuthContext.Provider value={{ customer, token, isLoading, signup, login, completeOAuthLogin, logout, updateCustomer }}>
       {children}
     </CustomerAuthContext.Provider>
   );

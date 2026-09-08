@@ -13,6 +13,7 @@ import {
   autoAssignDelivery,
   bulkUpdateDeliveryStatus,
   bulkAssignAgent,
+  returnDeliveryToPool,
   updateDeliveryPriority,
   API_BASE_URL,
 } from "../services/api";
@@ -98,6 +99,8 @@ export default function DispatcherTable() {
   const [bulkStatusChoice, setBulkStatusChoice] = useState("picked_up");
   const [bulkAgentChoice, setBulkAgentChoice] = useState("");
   const [isBulkActing, setIsBulkActing] = useState(false);
+  const [reassigningId, setReassigningId] = useState(null);
+  const [returningId, setReturningId] = useState(null);
 
   useEffect(() => {
     if (user?.id) {
@@ -234,6 +237,37 @@ export default function DispatcherTable() {
       showToast(`Bulk status update failed: ${err.message}`, "error");
     } finally {
       setIsBulkActing(false);
+    }
+  }
+
+  async function handleRowReassign(deliveryId, agentId) {
+    if (!agentId) return;
+    setReassigningId(deliveryId);
+    try {
+      const result = await bulkAssignAgent(token, [deliveryId], agentId);
+      if (result.failure_count > 0) {
+        showToast(result.results[0]?.error || "Reassign failed.", "error");
+      } else {
+        showToast("Agent reassigned.", "success");
+      }
+      await loadDeliveries();
+    } catch (err) {
+      showToast(`Reassign failed: ${err.message}`, "error");
+    } finally {
+      setReassigningId(null);
+    }
+  }
+
+  async function handleReturnToPool(deliveryId) {
+    setReturningId(deliveryId);
+    try {
+      await returnDeliveryToPool(token, deliveryId);
+      showToast("Order returned to the unassigned pool.", "success");
+      await loadDeliveries();
+    } catch (err) {
+      showToast(`Couldn't return to pool: ${err.message}`, "error");
+    } finally {
+      setReturningId(null);
     }
   }
 
@@ -659,6 +693,7 @@ export default function DispatcherTable() {
               <th>Status</th>
               <th>Expected By</th>
               <th>Last Updated</th>
+              <th>Reassign</th>
             </tr>
           </thead>
           <tbody>
@@ -667,8 +702,10 @@ export default function DispatcherTable() {
                 d.expected_by &&
                 d.status !== "delivered" &&
                 new Date(d.expected_by) < new Date();
+              const canReassign = d.agent_id && !["delivered", "cancelled"].includes(d.status);
+              const canReturnToPool = d.customer_id && d.agent_id && d.status === "picked_up";
               return (
-                <tr key={d.id} onClick={() => setSelectedDelivery(d)}>
+                <tr key={d.id} onClick={() => setSelectedDelivery(d)} className="row-animate">
                   <td onClick={(e) => e.stopPropagation()}>
                     <input
                       type="checkbox"
@@ -709,6 +746,37 @@ export default function DispatcherTable() {
                     {isOverdue && " (Overdue)"}
                   </td>
                   <td>{new Date(d.updated_at).toLocaleString()}</td>
+                  <td onClick={(e) => e.stopPropagation()}>
+                    {canReassign ? (
+                      <div style={{ display: "flex", gap: "6px", alignItems: "center", flexWrap: "wrap" }}>
+                        <select
+                          className="input"
+                          style={{ padding: "2px 6px", fontSize: "12px", maxWidth: "120px" }}
+                          value=""
+                          disabled={reassigningId === d.id}
+                          onChange={(e) => handleRowReassign(d.id, e.target.value)}
+                          title="Reassign this order to a different agent"
+                        >
+                          <option value="">{reassigningId === d.id ? "Working..." : "↻ Reassign..."}</option>
+                          {agents.filter((a) => a.id !== d.agent_id).map((a) => (
+                            <option key={a.id} value={a.id}>{a.display_name}</option>
+                          ))}
+                        </select>
+                        {canReturnToPool && (
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => handleReturnToPool(d.id)}
+                            disabled={returningId === d.id}
+                            title="Unassign and return this order to the unassigned pool"
+                          >
+                            {returningId === d.id ? "..." : "↩ Return"}
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <span style={{ color: "var(--text-muted)", fontSize: "12px" }}>—</span>
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -735,6 +803,17 @@ export default function DispatcherTable() {
           delivery={selectedDelivery}
           agentName={agentNameById.get(selectedDelivery.agent_id)}
           onClose={() => setSelectedDelivery(null)}
+          agents={agents}
+          isReassigning={reassigningId === selectedDelivery.id}
+          isReturning={returningId === selectedDelivery.id}
+          onReassign={async (deliveryId, agentId) => {
+            await handleRowReassign(deliveryId, agentId);
+            setSelectedDelivery((prev) => (prev && prev.id === deliveryId ? { ...prev, agent_id: agentId, status: "picked_up" } : prev));
+          }}
+          onReturnToPool={async (deliveryId) => {
+            await handleReturnToPool(deliveryId);
+            setSelectedDelivery(null);
+          }}
         />
       )}
     </div>

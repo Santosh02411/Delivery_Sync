@@ -48,7 +48,16 @@ const ATTEMPT_OUTCOME_LABELS = {
  * saved locally ("Saved locally" badge), history isn't available yet,
  * which this modal explains rather than showing a confusing empty state.
  */
-export default function DeliveryDetailModal({ delivery, agentName, onClose }) {
+export default function DeliveryDetailModal({
+  delivery,
+  agentName,
+  onClose,
+  agents,
+  onReassign,
+  onReturnToPool,
+  isReassigning,
+  isReturning,
+}) {
   const { token } = useAuth();
   const [history, setHistory] = useState([]);
   const [historyError, setHistoryError] = useState(null);
@@ -171,6 +180,50 @@ export default function DeliveryDetailModal({ delivery, agentName, onClose }) {
             </div>
           </div>
         )}
+
+        {onReassign && (() => {
+          const canReassign = delivery.agent_id && !["delivered", "cancelled"].includes(delivery.status);
+          const canReturnToPool = delivery.customer_id && delivery.agent_id && delivery.status === "picked_up";
+          if (!canReassign) return null;
+          return (
+            <div
+              className="card"
+              style={{
+                marginTop: "12px",
+                padding: "10px 12px",
+                display: "flex",
+                gap: "8px",
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
+              <strong style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Dispatcher actions:</strong>
+              <select
+                className="input"
+                style={{ padding: "4px 8px", fontSize: "12.5px", maxWidth: "160px" }}
+                value=""
+                disabled={isReassigning}
+                onChange={(e) => onReassign(delivery.id, e.target.value)}
+                title="Reassign this order to a different agent"
+              >
+                <option value="">{isReassigning ? "Working..." : "↻ Reassign to..."}</option>
+                {(agents || []).filter((a) => a.id !== delivery.agent_id).map((a) => (
+                  <option key={a.id} value={a.id}>{a.display_name}</option>
+                ))}
+              </select>
+              {canReturnToPool && onReturnToPool && (
+                <button
+                  className="btn btn-sm"
+                  onClick={() => onReturnToPool(delivery.id)}
+                  disabled={isReturning}
+                  title="Unassign and return this order to the unassigned pool"
+                >
+                  {isReturning ? "Returning..." : "↩ Return to pool"}
+                </button>
+              )}
+            </div>
+          );
+        })()}
 
         <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
           <DetailRow label="Status" value={<StatusBadge status={delivery.status} />} />

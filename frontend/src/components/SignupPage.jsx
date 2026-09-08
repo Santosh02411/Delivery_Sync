@@ -3,6 +3,9 @@ import { useAuth } from "../context/AuthContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useTheme } from "../context/ThemeContext";
 import Captcha from "./Captcha";
+import { getGoogleOAuthLoginUrl, getCustomerGoogleOAuthLoginUrl } from "../services/authApi";
+import PasswordInput from "./PasswordInput";
+import GoogleIcon from "./GoogleIcon";
 import "../styles/auth.css";
 
 // Single unified "I am a..." choice — replaces the old two-step
@@ -43,12 +46,48 @@ export default function SignupPage({ onSwitchToLogin, initialAccountType }) {
   const [customerPassword, setCustomerPassword] = useState("");
 
   const [captchaToken, setCaptchaToken] = useState(null);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
 
   const isCustomer = iAmA === "customer";
   const isAdmin = iAmA === "admin";
   // agent/dispatcher always join an existing org via invite code;
   // admin always creates a brand new one.
   const isJoiningOrg = iAmA === "agent" || iAmA === "dispatcher";
+
+  async function handleGoogleSignUp() {
+    setError("");
+    if (isCustomer) {
+      setIsGoogleLoading(true);
+      try {
+        const url = await getCustomerGoogleOAuthLoginUrl();
+        window.location.href = url;
+      } catch (err) {
+        setError(err.message);
+        setIsGoogleLoading(false);
+      }
+      return;
+    }
+    if (isAdmin && !orgName.trim()) {
+      setError("Enter an organization name first.");
+      return;
+    }
+    if (isJoiningOrg && !inviteCode.trim()) {
+      setError("Enter an invite code first.");
+      return;
+    }
+    setIsGoogleLoading(true);
+    try {
+      const url = await getGoogleOAuthLoginUrl({
+        orgName: isAdmin ? orgName.trim() : undefined,
+        inviteCode: isJoiningOrg ? inviteCode.trim() : undefined,
+        role: iAmA,
+      });
+      window.location.href = url;
+    } catch (err) {
+      setError(err.message);
+      setIsGoogleLoading(false);
+    }
+  }
 
   async function handleStaffSubmit(e) {
     e.preventDefault();
@@ -121,7 +160,7 @@ export default function SignupPage({ onSwitchToLogin, initialAccountType }) {
               </div>
               <div className="auth-field">
                 <label>Password</label>
-                <input type="password" value={customerPassword} onChange={(e) => setCustomerPassword(e.target.value)} required />
+                <PasswordInput value={customerPassword} onChange={(e) => setCustomerPassword(e.target.value)} required />
               </div>
 
               <Captcha onVerify={setCaptchaToken} />
@@ -151,7 +190,7 @@ export default function SignupPage({ onSwitchToLogin, initialAccountType }) {
             </div>
             <div className="auth-field">
               <label>Password</label>
-              <input type="password" value={staffPassword} onChange={(e) => setStaffPassword(e.target.value)} required />
+              <PasswordInput value={staffPassword} onChange={(e) => setStaffPassword(e.target.value)} required />
             </div>
 
             {isAdmin && (
@@ -177,6 +216,17 @@ export default function SignupPage({ onSwitchToLogin, initialAccountType }) {
             </button>
           </form>
         )}
+
+        <div className="auth-divider"><span>or</span></div>
+        <button
+          type="button"
+          className="auth-google-btn"
+          onClick={handleGoogleSignUp}
+          disabled={isGoogleLoading}
+        >
+          <GoogleIcon />
+          {isGoogleLoading ? "Redirecting..." : "Sign up with Google"}
+        </button>
 
         <p className="auth-switch-text">
           Already have an account?{" "}

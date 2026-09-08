@@ -10,6 +10,7 @@ import {
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
+import PasswordInput from "./PasswordInput";
 
 /**
  * Admin panel: view every user in the admin's own organization, and
@@ -199,8 +200,7 @@ export default function AdminPanel() {
               with {users.find((u) => u.id === resetTargetId)?.display_name} yourself.
             </p>
             <form onSubmit={handleResetPassword}>
-              <input
-                type="password"
+              <PasswordInput
                 className="input"
                 placeholder="New password (min. 6 characters)"
                 value={newPassword}

@@ -9,6 +9,7 @@ import {
   enableEmailTwoFactor,
   disableTwoFactor,
 } from "../services/api";
+import PasswordInput from "./PasswordInput";
 
 /**
  * Lets a staff user (agent/dispatcher/admin) turn two-factor
@@ -171,8 +172,7 @@ export default function TwoFactorSettings() {
           <form onSubmit={handleDisable}>
             <div className="auth-field">
               <label>Confirm your password to turn it off</label>
-              <input
-                type="password"
+              <PasswordInput
                 className="input"
                 value={disablePassword}
                 onChange={(e) => setDisablePassword(e.target.value)}

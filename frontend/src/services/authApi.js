@@ -30,6 +30,33 @@ export async function loginRequest({ username, password }) {
   return data; // { access_token, refresh_token, user } OR { requires_2fa: true, challenge_token }
 }
 
+export async function getGoogleOAuthLoginUrl({ orgName, inviteCode, role } = {}) {
+  const params = new URLSearchParams();
+  if (orgName) params.set("org_name", orgName);
+  if (inviteCode) params.set("invite_code", inviteCode);
+  if (role) params.set("role", role);
+  const qs = params.toString();
+  const response = await fetch(`${API_BASE_URL}/auth/oauth/google/login${qs ? `?${qs}` : ""}`);
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Google sign-in isn't available right now.");
+  }
+  return data.authorization_url;
+}
+
+export async function exchangeOAuthLoginCode(code) {
+  const response = await fetch(`${API_BASE_URL}/auth/oauth/exchange`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Google sign-in failed.");
+  }
+  return data; // { access_token, refresh_token, user }
+}
+
 export async function verifyTwoFactorLoginRequest(challengeToken, code) {
   const response = await fetch(`${API_BASE_URL}/auth/2fa/verify-login`, {
     method: "POST",
@@ -185,4 +212,26 @@ export async function customerResetPasswordRequest(token, newPassword) {
     throw new Error(data.detail || "Reset failed.");
   }
   return data; // { message }
+}
+
+export async function getCustomerGoogleOAuthLoginUrl() {
+  const response = await fetch(`${API_BASE_URL}/customer/oauth/google/login`);
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Google sign-in isn't available right now.");
+  }
+  return data.authorization_url;
+}
+
+export async function exchangeCustomerOAuthLoginCode(code) {
+  const response = await fetch(`${API_BASE_URL}/customer/oauth/exchange`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Google sign-in failed.");
+  }
+  return data; // { access_token, refresh_token, customer }
 }

@@ -5,6 +5,7 @@ import {
 } from "../services/api";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
+import PasswordInput from "./PasswordInput";
 
 const EVENT_LABELS = {
   login_success: "Successful login", login_failed: "Failed login attempt", suspicious_login: "Login from a new location",
@@ -92,7 +93,7 @@ export default function SecurityDashboard() {
             <button className="btn-info-outline" onClick={() => setShowRegenForm(true)}>Regenerate Codes</button>
           ) : (
             <form onSubmit={handleRegenerateCodes} style={{ display: "flex", gap: "8px" }}>
-              <input type="password" className="input" placeholder="Confirm your password" required value={regenPassword} onChange={(e) => setRegenPassword(e.target.value)} />
+              <PasswordInput className="input" placeholder="Confirm your password" required value={regenPassword} onChange={(e) => setRegenPassword(e.target.value)} />
               <button type="submit" className="btn btn-primary">Confirm</button>
             </form>
           )}

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { resetPasswordRequest, customerResetPasswordRequest } from "../services/authApi";
 import { useTheme } from "../context/ThemeContext";
+import PasswordInput from "./PasswordInput";
 import "../styles/auth.css";
 
 /**
@@ -54,8 +55,7 @@ export default function ResetPasswordPage({ token, onDone, accountType = "staff"
           <form onSubmit={handleSubmit}>
             <div className="auth-field">
               <label>New Password</label>
-              <input
-                type="password"
+              <PasswordInput
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 required
@@ -64,8 +64,7 @@ export default function ResetPasswordPage({ token, onDone, accountType = "staff"
             </div>
             <div className="auth-field">
               <label>Confirm New Password</label>
-              <input
-                type="password"
+              <PasswordInput
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required

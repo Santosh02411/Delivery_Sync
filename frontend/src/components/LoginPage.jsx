@@ -3,6 +3,9 @@ import { useAuth } from "../context/AuthContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { resendTwoFactorLoginCode } from "../services/api";
+import { getGoogleOAuthLoginUrl, getCustomerGoogleOAuthLoginUrl } from "../services/authApi";
+import PasswordInput from "./PasswordInput";
+import GoogleIcon from "./GoogleIcon";
 import "../styles/auth.css";
 
 export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
@@ -25,6 +28,19 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
   const [twoFactorCode, setTwoFactorCode] = useState("");
   const [isResending, setIsResending] = useState(false);
   const [resendMessage, setResendMessage] = useState("");
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+
+  async function handleGoogleSignIn() {
+    setError("");
+    setIsGoogleLoading(true);
+    try {
+      const url = accountType === "staff" ? await getGoogleOAuthLoginUrl() : await getCustomerGoogleOAuthLoginUrl();
+      window.location.href = url;
+    } catch (err) {
+      setError(err.message);
+      setIsGoogleLoading(false);
+    }
+  }
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -176,8 +192,7 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
           </div>
           <div className="auth-field">
             <label>Password</label>
-            <input
-              type="password"
+            <PasswordInput
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -190,6 +205,17 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
             {isSubmitting ? "Logging in..." : "Log in"}
           </button>
         </form>
+
+        <div className="auth-divider"><span>or</span></div>
+        <button
+          type="button"
+          className="auth-google-btn"
+          onClick={handleGoogleSignIn}
+          disabled={isGoogleLoading}
+        >
+          <GoogleIcon />
+          {isGoogleLoading ? "Redirecting..." : "Sign in with Google"}
+        </button>
 
         <p className="auth-switch-text">
           <button className="auth-switch-link" onClick={() => onForgotPassword(accountType)}>

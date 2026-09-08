@@ -661,6 +661,16 @@ export async function assignAgentToDelivery(token, deliveryId, agentId) {
   return data;
 }
 
+export async function returnDeliveryToPool(token, deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/return-to-pool`, {
+    method: "PATCH",
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to return delivery to pool");
+  return data;
+}
+
 export async function bulkUpdateDeliveryStatus(token, deliveryIds, status) {
   const response = await fetch(`${API_BASE_URL}/deliveries/bulk-status`, {
     method: "PATCH",
@@ -778,6 +788,17 @@ export async function changeMyCustomerPassword(token, currentPassword, newPasswo
   return data;
 }
 
+export async function setMyCustomerPassword(token, newPassword) {
+  const response = await fetch(`${API_BASE_URL}/customer/me/set-password`, {
+    method: "POST",
+    headers: customerAuthHeaders(token),
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to set a password");
+  return data;
+}
+
 // ---------- Staff self-service account settings (mirrors the customer equivalents above) ----------
 
 export async function fetchMyStaffProfile(token) {
@@ -808,6 +829,17 @@ export async function changeMyStaffPassword(token, currentPassword, newPassword)
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Failed to change your password");
+  return data;
+}
+
+export async function setMyStaffPassword(token, newPassword) {
+  const response = await fetch(`${API_BASE_URL}/auth/me/set-password`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ new_password: newPassword }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to set a password");
   return data;
 }
 

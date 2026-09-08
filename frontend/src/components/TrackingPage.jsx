@@ -61,7 +61,7 @@ export default function TrackingPage({ deliveryId }) {
         </button>
       </div>
 
-      <div className="card" style={{ maxWidth: "480px", margin: "0 auto" }}>
+      <div className="card" style={{ maxWidth: "480px", margin: "0 auto", animation: "fadeSlideUp 0.35s ease" }}>
         {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
 
         {!error && !data && <p style={{ color: "var(--text-secondary)" }}>Loading...</p>}
@@ -117,7 +117,11 @@ export default function TrackingPage({ deliveryId }) {
               <p style={{ fontSize: "12.5px", color: "var(--text-muted)" }}>No updates yet.</p>
             )}
             {data.history.map((entry, i) => (
-              <div key={i} style={{ borderLeft: "3px solid var(--accent)", paddingLeft: "10px", marginBottom: "10px" }}>
+              <div
+                key={i}
+                className="timeline-entry"
+                style={{ borderLeft: "3px solid var(--accent)", paddingLeft: "10px", marginBottom: "10px", animationDelay: `${i * 0.05}s` }}
+              >
                 <div style={{ fontSize: "13px", fontWeight: 600 }}>
                   {entry.old_status
                     ? `${STATUS_LABELS[entry.old_status] || entry.old_status} → ${STATUS_LABELS[entry.new_status] || entry.new_status}`

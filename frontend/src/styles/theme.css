@@ -513,6 +513,13 @@ h1, h2, h3, h4 {
   min-width: 130px;
   border-top: 3px solid var(--accent);
   box-shadow: var(--shadow-sm);
+  animation: fadeSlideUp 0.3s ease both;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.stat-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
 }
 
 .stat-card-value {
@@ -586,6 +593,96 @@ h1, h2, h3, h4 {
   color: var(--info);
   font-size: 12px;
   padding: 4px 10px;
+}
+
+.btn-sm {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+/* ---------- Password field with show/hide toggle ---------- */
+
+.password-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-input-wrap input {
+  width: 100%;
+  padding-right: 38px !important;
+}
+
+.password-toggle-btn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.password-toggle-btn:hover {
+  color: var(--accent);
+  background-color: var(--accent-glow);
+}
+
+.password-toggle-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.password-toggle-btn svg {
+  display: block;
+}
+
+/* ---------- Micro-interactions & motion ---------- */
+
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.card {
+  transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+}
+
+.data-table tbody tr {
+  transition: background-color 0.12s ease;
+}
+
+.data-table tbody tr.row-animate {
+  animation: fadeIn 0.25s ease;
+}
+
+.timeline-entry {
+  animation: fadeSlideUp 0.3s ease both;
+}
+
+.data-table tbody tr:hover {
+  background-color: var(--bg-surface-elevated);
+}
+
+a, button, .btn, select, input {
+  transition: color 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
 }
 
 .mono {
@@ -760,12 +857,14 @@ h1, h2, h3, h4 {
   padding: 14px 16px;
   margin-bottom: 12px;
   box-shadow: var(--shadow-sm);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+  animation: fadeSlideUp 0.3s ease;
 }
 
 .delivery-card:hover {
   border-color: var(--border-color-light);
   box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
 }
 
 .delivery-card-order-id {

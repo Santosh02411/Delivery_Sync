@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { updateMyStaffProfile, changeMyStaffPassword } from "../services/api";
+import { updateMyStaffProfile, changeMyStaffPassword, setMyStaffPassword } from "../services/api";
+import PasswordInput from "./PasswordInput";
 
 /**
  * Self-service "my account" settings for a logged-in staff user
@@ -31,6 +32,11 @@ export default function AccountSettings() {
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [passwordError, setPasswordError] = useState(null);
   const [passwordSuccess, setPasswordSuccess] = useState(null);
+
+  const [newPasswordToSet, setNewPasswordToSet] = useState("");
+  const [isSettingPassword, setIsSettingPassword] = useState(false);
+  const [setPasswordFormError, setSetPasswordFormError] = useState(null);
+  const [setPasswordFormSuccess, setSetPasswordFormSuccess] = useState(null);
 
   async function handleSaveProfile(e) {
     e.preventDefault();
@@ -65,6 +71,23 @@ export default function AccountSettings() {
       setPasswordError(err.message);
     } finally {
       setIsChangingPassword(false);
+    }
+  }
+
+  async function handleSetPassword(e) {
+    e.preventDefault();
+    setSetPasswordFormError(null);
+    setSetPasswordFormSuccess(null);
+    setIsSettingPassword(true);
+    try {
+      await setMyStaffPassword(token, newPasswordToSet);
+      setSetPasswordFormSuccess("Password set. You can now log in with it, in addition to Google Sign-In.");
+      setNewPasswordToSet("");
+      updateUser({ has_usable_password: true });
+    } catch (err) {
+      setSetPasswordFormError(err.message);
+    } finally {
+      setIsSettingPassword(false);
     }
   }
 
@@ -107,37 +130,62 @@ export default function AccountSettings() {
           </form>
         </div>
 
-        <div className="card">
-          <strong style={{ fontSize: "13.5px" }}>Change Password</strong>
-          <form onSubmit={handleChangePassword} style={{ marginTop: "12px" }}>
-            <div className="auth-field">
-              <label>Current Password</label>
-              <input
-                className="input"
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                required
-              />
-            </div>
-            <div className="auth-field">
-              <label>New Password</label>
-              <input
-                className="input"
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-                minLength={6}
-              />
-            </div>
-            {passwordError && <p style={{ color: "var(--danger)", fontSize: "12px" }}>{passwordError}</p>}
-            {passwordSuccess && <p style={{ color: "var(--status-delivered)", fontSize: "12px" }}>{passwordSuccess}</p>}
-            <button type="submit" className="btn btn-primary" disabled={isChangingPassword}>
-              {isChangingPassword ? "Changing..." : "Change Password"}
-            </button>
-          </form>
-        </div>
+        {user.has_usable_password === false ? (
+          <div className="card">
+            <strong style={{ fontSize: "13.5px" }}>Set a Password</strong>
+            <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "4px", marginBottom: "12px" }}>
+              Your account currently only logs in via Google Sign-In. Add a password so you still
+              have a way in if Google Sign-In is ever unavailable.
+            </p>
+            <form onSubmit={handleSetPassword}>
+              <div className="auth-field">
+                <label>New Password</label>
+                <PasswordInput
+                  className="input"
+                  value={newPasswordToSet}
+                  onChange={(e) => setNewPasswordToSet(e.target.value)}
+                  required
+                  minLength={6}
+                />
+              </div>
+              {setPasswordFormError && <p style={{ color: "var(--danger)", fontSize: "12px" }}>{setPasswordFormError}</p>}
+              {setPasswordFormSuccess && <p style={{ color: "var(--status-delivered)", fontSize: "12px" }}>{setPasswordFormSuccess}</p>}
+              <button type="submit" className="btn btn-primary" disabled={isSettingPassword}>
+                {isSettingPassword ? "Setting..." : "Set Password"}
+              </button>
+            </form>
+          </div>
+        ) : (
+          <div className="card">
+            <strong style={{ fontSize: "13.5px" }}>Change Password</strong>
+            <form onSubmit={handleChangePassword} style={{ marginTop: "12px" }}>
+              <div className="auth-field">
+                <label>Current Password</label>
+                <PasswordInput
+                  className="input"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="auth-field">
+                <label>New Password</label>
+                <PasswordInput
+                  className="input"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  required
+                  minLength={6}
+                />
+              </div>
+              {passwordError && <p style={{ color: "var(--danger)", fontSize: "12px" }}>{passwordError}</p>}
+              {passwordSuccess && <p style={{ color: "var(--status-delivered)", fontSize: "12px" }}>{passwordSuccess}</p>}
+              <button type="submit" className="btn btn-primary" disabled={isChangingPassword}>
+                {isChangingPassword ? "Changing..." : "Change Password"}
+              </button>
+            </form>
+          </div>
+        )}
       </div>
     </div>
   );
