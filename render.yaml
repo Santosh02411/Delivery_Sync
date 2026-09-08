@@ -1,0 +1,74 @@
+# Render Blueprint — deploys this whole app (backend API, frontend
+# static site, managed Postgres) from one file. On render.com:
+# New -> Blueprint -> point at this repo -> Render reads this file
+# and provisions everything below automatically.
+#
+# This mirrors docker-compose.yml's local setup (same three services,
+# same environment variables) but on Render's free tier instead of
+# your own machine — see docker-compose.yml's own comments for what
+# ENVIRONMENT=production actually changes in the backend.
+#
+# After the first deploy, go to the backend service's Environment tab
+# and fill in whichever optional integrations you want live (SMTP,
+# Twilio, Razorpay, GOOGLE_CLIENT_ID/SECRET, VAPID keys, etc.) — every
+# one of them already works with no config at all (console-logged /
+# honestly no-op instead), so this step is optional, not required to
+# get a working deploy.
+#
+# Free-tier honesty: Render's free web services spin down after 15
+# minutes of inactivity and take ~30-60s to wake back up on the next
+# request — fine for a portfolio piece someone clicks into
+# occasionally, not something to rely on for an always-on demo. The
+# free Postgres instance also expires after 90 days. Both are Render
+# platform limits, not anything about this app.
+
+databases:
+  - name: delivery-sync-db
+    plan: free
+    databaseName: delivery_sync
+    user: delivery_sync
+
+services:
+  - type: web
+    name: delivery-sync-backend
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: delivery-sync-db
+          property: connectionString
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        # Render assigns the frontend's URL once it's first created;
+        # update this to the actual https://delivery-sync-frontend...
+        # .onrender.com URL after that first deploy, then redeploy the
+        # backend — see README.md's Deploying section for the exact
+        # steps. Left as a placeholder here rather than guessed, since
+        # a wrong value here means a real, visible CORS failure rather
+        # than a silent one — better to hit that once and fix it than
+        # have this file quietly claim a URL that isn't real yet.
+        value: https://CHANGE-ME-after-first-deploy.onrender.com
+      - key: FRONTEND_URL
+        value: https://CHANGE-ME-after-first-deploy.onrender.com
+
+  - type: web
+    name: delivery-sync-frontend
+    runtime: docker
+    dockerfilePath: ./frontend/Dockerfile
+    dockerContext: ./frontend
+    dockerBuildArgs:
+      # Same placeholder-then-fix-it story as ALLOWED_ORIGINS above,
+      # in the other direction — the frontend needs the BACKEND's
+      # real URL, which also only exists after that service's first
+      # deploy. Vite bakes this in at build time (see frontend/
+      # Dockerfile's own comment on why), so fixing this means a
+      # rebuild, not just an env var change.
+      VITE_API_BASE_URL: https://CHANGE-ME-after-first-deploy.onrender.com
+    plan: free

@@ -1,19 +1,25 @@
 name: CI
 
-# Runs on every push and every pull request, against ANY branch — not
-# just main — so a broken PR is caught before it merges, not after.
+# Runs on every push and pull request — three independent jobs so a
+# frontend-only change doesn't wait on the (slower) backend test suite,
+# and a failure in one is easy to spot without digging through a single
+# combined log. All three must pass for a PR to be mergeable if branch
+# protection is turned on for this repo.
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
 
 jobs:
   backend-tests:
-    name: Backend tests (pytest)
+    name: Backend tests + coverage
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: backend
     steps:
-      - name: Check out code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -22,31 +28,33 @@ jobs:
           cache: "pip"
           cache-dependency-path: backend/requirements.txt
 
-      - name: Install backend dependencies
-        working-directory: backend
+      - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run pytest
-        working-directory: backend
-        # TESTING=1 here too (not just in conftest.py) so it's also set
-        # before conftest.py itself runs its own `import main` at
-        # collection time — belt-and-braces with the same guard inside
-        # conftest.py, in case pytest's own startup ever runs anything
-        # module-level ahead of it. JWT_SECRET_KEY is a throwaway value
-        # that only needs to exist for this ephemeral CI run.
+      - name: Run test suite with coverage
+        # TESTING=1 is what backend/app/services/backup_scheduler.py and
+        # rate_limiter.py check to disable themselves for tests — see
+        # tests/conftest.py, which already sets this for every local run;
+        # set explicitly here too since this step doesn't go through
+        # conftest until pytest itself starts.
         env:
           TESTING: "1"
-          ENVIRONMENT: development
-          JWT_SECRET_KEY: ci-only-throwaway-secret-not-for-real-use
-        run: pytest -v
+        run: pytest -v --cov=app --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage.xml
 
   frontend-build:
     name: Frontend build
     runs-on: ubuntu-latest
-
+    defaults:
+      run:
+        working-directory: frontend
     steps:
-      - name: Check out code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -55,32 +63,54 @@ jobs:
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install frontend dependencies
-        working-directory: frontend
+      - name: Install dependencies
         run: npm ci
 
-      - name: Build frontend
-        working-directory: frontend
-        # Confirms the whole React app compiles cleanly (esbuild via
-        # Vite) — the same check this project has been manually
-        # verified against ("esbuild-clean") after every feature batch,
-        # now enforced automatically instead of by hand.
+      - name: Build
         run: npm run build
 
   docker-build:
-    name: Docker images build
+    name: Docker image build check
     runs-on: ubuntu-latest
-    # Only on pushes, not every PR — this job is slower (two full image
-    # builds) and its main value is catching a broken Dockerfile before
-    # it reaches main, not blocking every in-progress PR.
-    if: github.event_name == 'push'
-
+    # Doesn't depend on the two jobs above — a Docker build failure is a
+    # different kind of problem (Dockerfile/dependency issue) from a
+    # test or build failure, and there's no reason to wait on either to
+    # find out about it. Only BUILDS the images (proves the Dockerfiles
+    # still work end to end); doesn't push them anywhere, since this
+    # project has no container registry configured.
     steps:
-      - name: Check out code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Build backend image
         run: docker build -t delivery-sync-backend:ci ./backend
 
       - name: Build frontend image
-        run: docker build -t delivery-sync-frontend:ci ./frontend --build-arg VITE_API_BASE_URL=http://localhost:8000
+        run: docker build -t delivery-sync-frontend:ci --build-arg VITE_API_BASE_URL=http://localhost:8000 ./frontend
+
+  mobile-config-check:
+    name: Mobile app config check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    # Doesn't run a full EAS build (that needs a paid/free Expo account
+    # and credentials this repo doesn't have configured as CI secrets)
+    # — just proves the dependency graph resolves and app.json is valid
+    # Expo config, catching the two most common ways this subproject
+    # could silently rot (a version bump breaking the dependency graph,
+    # or an app.json edit with a typo) without needing real build infra.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Validate Expo config
+        run: npx expo config --type public
