@@ -2930,6 +2930,520 @@ clean.
 
 ---
 
+## Password visibility toggle, dispatcher "return to pool", and design/motion polish
+
+**What was missing:**
+Every password field in the app (login, signup, forgot/reset password,
+account settings, change-password forms, 2FA/account-delete
+confirmations) was a plain masked `<input type="password">` with no
+way to check what you'd typed before submitting — a common source of
+failed logins from typos. Separately, once a dispatcher assigned a
+customer order to an agent there was no way to undo just that one
+assignment and drop it back into the unassigned queue — a dispatcher
+could bulk-reassign it to a *different* agent (via the multi-select
+checkbox bar), but there was no single-click "take this back" action,
+and no way to simply unassign it without immediately picking a
+replacement agent. The UI also had almost no motion — no transitions
+on hover/focus, no entrance animation on the auth cards or table rows.
+
+**Why it was needed:**
+Requested directly, plus makes sense on its own: password visibility
+is a baseline UX expectation on any modern auth form, and dispatchers
+handling real fleets need a fast way to pull a delivery back (agent
+called in sick, wrong agent picked, order needs re-triage) without
+being forced into the multi-select bulk-action flow for a single
+delivery.
+
+**What it does:**
+1. **Password show/hide** — new reusable `PasswordInput` component
+   (`components/PasswordInput.jsx`): a plain-CSS eye/eye-off SVG toggle
+   button absolutely positioned inside the input, purely visual state
+   (never touches the actual value), forwards all other input props
+   unchanged. Swapped in everywhere a password field existed:
+   `LoginPage`, `SignupPage` (customer + staff), `ResetPasswordPage`
+   (both fields), `AccountSettings`, `CustomerDashboard` (change
+   password + delete-account confirm), `SecurityDashboard` (recovery
+   code regen confirm), `AdminPanel` (admin-set-password modal),
+   `TwoFactorSettings` (disable-2FA confirm).
+2. **Dispatcher "reassign" / "return to pool" per row** — new backend
+   endpoint `PATCH /deliveries/{id}/return-to-pool` (dispatcher/
+   admin-only, org-scoped): clears `agent_id` and resets status back to
+   `pending` for a customer-placed order still in the just-assigned
+   `picked_up` state (mirrors `assign_agent_to_delivery`'s own
+   "customer order only" restriction — a manually created delivery has
+   no pool to return to), logs a history entry naming who it was
+   returned by and who it was previously assigned to, and broadcasts a
+   `queue_changed` event so the Unassigned Orders panel picks it up
+   live. Rejects out_for_delivery/delivered/cancelled orders and
+   manually created (non-customer) deliveries with a clear 400. On the
+   frontend, `DispatcherTable` gained a new "Reassign" column: a
+   per-row agent-picker dropdown (reuses the existing tested
+   `PATCH /deliveries/bulk-assign-agent` endpoint with a single-item
+   array — no new bulk-swap backend logic needed) plus a "↩ Return"
+   button that only appears for orders eligible for return-to-pool.
+3. **Design/animation polish** — new `.password-input-wrap`/
+   `.password-toggle-btn` styles matching the existing input theming;
+   subtle `fadeSlideUp`/`fadeIn` entrance animations on the auth card
+   and wordmark; a `.row-animate` fade-in on table rows; hover/active
+   micro-transitions added to `.btn`/`.auth-submit-btn` (glow shadow on
+   hover, slight press-down on click); a global transition rule on
+   buttons/inputs/links so color/border/shadow changes ease instead of
+   snapping.
+
+**6 new backend tests** (`test_return_to_pool.py`: return succeeds and
+reappears in the unassigned list with a history note, rejects a
+manually created delivery, rejects out_for_delivery, rejects
+delivered, requires dispatcher/admin role, org isolation) plus the
+existing 8 bulk-delivery-action tests reconfirmed alongside them — **14
+passed**. Full backend suite re-run in three batches after these
+changes: **373/373 passing** (367 previously + 6 new). Frontend:
+`npm run build` clean.
+
+---
+
+## Follow-up polish: modal-level reassign, agent notified on return-to-pool, wider animation coverage
+
+**What was missing:**
+The previous session's dispatcher return/reassign controls only lived
+in the table row — opening the delivery detail modal (the natural
+place to review an order before acting on it) gave no way to
+reassign or return it without closing the modal first. Returning a
+delivery to the pool also had no signal at all for the agent who lost
+it — it would just silently disappear from their list next refresh.
+And the new entrance/hover animations from the previous session only
+touched the auth pages and the dispatcher table, leaving the agent's
+own delivery list, the public customer tracking page, and stat cards
+used across multiple dashboards still static.
+
+**Why it was needed:**
+Requested directly, as natural extensions of the previous session's
+work.
+
+**What it does:**
+1. **Reassign/return inside the delivery detail modal** —
+   `DeliveryDetailModal` now accepts optional `agents`, `onReassign`,
+   `onReturnToPool` (+ loading-state) props. When passed (only by
+   `DispatcherTable`; `AgentDeliveryList`'s own use of the same modal
+   is unaffected since it doesn't pass them), a "Dispatcher actions"
+   row appears with the same reassign dropdown and return-to-pool
+   button as the table row, using the exact same handlers — so both
+   entry points share one source of truth and one set of tested
+   backend calls.
+2. **Agent notified when a delivery is returned to the pool** — new
+   `notify_agent_of_unassignment()` in `services/notifications.py`,
+   the mirror image of the existing `notify_agent_of_new_assignment`
+   (same Web Push mechanism, same best-effort silently-no-op-if-no-
+   subscription semantics). Wired into `return_delivery_to_pool()`:
+   fires to the *old* agent (captured before `agent_id` is cleared)
+   whenever a return actually had an agent to notify.
+3. **Animation coverage widened** — agent's own `.delivery-card` list
+   now fade-in on load and lift slightly on hover (previously hover-
+   only, no entrance, no lift); the shared `.stat-card` (used across
+   dispatcher/agent/admin dashboards) got the same fade-in + hover
+   lift; the public customer tracking page's main card now fades/
+   slides in on load, and its order-timeline entries stagger in one
+   by one (50ms delay per entry) instead of appearing all at once.
+
+**1 new backend test** (`test_return_to_pool_notifies_the_old_agent`,
+monkeypatching the notification call to assert it fires with the
+correct delivery/order/agent — since a real push send is a no-op in
+tests with no registered subscription and isn't itself worth
+asserting on) — **7 passed** in that file. Full backend suite re-run
+in three batches: **374/374 passing** (373 previously + 1 new).
+Frontend: `npm run build` clean.
+
+---
+
+## Closing the three remaining honest limitations: OAuth/SSO, code splitting, Postgres backups
+
+**What was missing:**
+Three previously-flagged, previously-honest limitations: (1) no
+"Sign in with Google" option — staff had to use a password even if
+their org already used Google Workspace; (2) the frontend's main JS
+bundle exceeded Vite's 500kB warning threshold (730kB), meaning every
+visitor downloaded admin/manager pages they might never open; (3)
+Postgres backup was documented as "use pg_dump yourself" rather than
+something the app's own backup button could do.
+
+**Why it was needed:**
+Requested directly — the person asked for exactly these three,
+previously self-identified as gaps rather than newly discovered ones.
+
+**What it does:**
+1. **Google OAuth/SSO (staff only, same scoping precedent as 2FA)** —
+   new `services/oauth.py`: builds the Google authorization URL and
+   exchanges an auth code for a verified profile via plain HTTP calls
+   (no new dependency — reuses `requests`), honestly no-op (clear 400,
+   not a broken redirect) if `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`
+   aren't set — same pattern as this project's Razorpay/CAPTCHA
+   integrations. New `UserDB.oauth_provider`/`oauth_subject_id`
+   columns (nullable, auto-migrated). Three new routes in
+   `routes/auth.py`: `GET /oauth/google/login` (returns the
+   authorization URL, with org context — new org name or an existing
+   invite code — carried through as a signed short-lived JWT `state`
+   param, so no server-side session table is needed and the callback
+   can trust it wasn't tampered with); `GET /oauth/google/callback`
+   (Google's own redirect target — creates a new org/user, links to an
+   existing password account by verified email, or logs into an
+   already-linked account, then redirects to the frontend with a
+   one-time `?oauth_code=` rather than real tokens directly in the
+   URL); `POST /oauth/exchange` (trades that one-time code for a real
+   access/refresh token pair, mirroring the existing 2FA
+   challenge-token pattern exactly). An OAuth-only account still gets
+   a securely-random `hashed_password` (the column is `NOT NULL`) that
+   is never shared or usable to log in by password — documented
+   honestly as a limitation (no "add a password later" self-service
+   flow exists yet). Frontend: `GoogleIcon.jsx`, a "Sign in with
+   Google"/"Sign up with Google" button on `LoginPage`/`SignupPage`
+   (staff only), and `App.jsx`'s `RootRouter` now handles
+   `?oauth_code=`/`?oauth_error=` landing params via `AuthContext`'s
+   new `completeOAuthLogin`.
+2. **Code splitting** — 27 admin/manager/settings pages (everything
+   reached only via a specific Sidebar click, never needed for first
+   paint) converted from static imports to `React.lazy()` in `App.jsx`,
+   wrapped in one `<Suspense>` boundary; `vite.config.js` got
+   `manualChunks` splitting `react`/`react-dom` into a `vendor` chunk
+   and `leaflet` into its own (both change far less often than app
+   code, so the browser can keep caching them across deploys). Result:
+   main entry chunk 730kB → 272.5kB, no more >500kB build warning, and
+   27 on-demand chunks (2–18kB each) fetched only on first navigation
+   to that page.
+3. **PostgreSQL backups** — `services/backup.py` now runs a real
+   `pg_dump` subprocess when the app is configured against Postgres
+   (previously: an honest "not applicable, use pg_dump yourself"
+   message and nothing else). Still honest where it has to be: if
+   `pg_dump` isn't installed/on PATH, `create_backup()` says so plainly
+   rather than pretending to succeed — the client-tools package is a
+   separate install from the `psycopg2` driver this project already
+   depends on. `verify_backup()` now branches by file type: SQLite
+   `.db` backups are opened as real SQLite databases (unchanged
+   behavior); Postgres `.sql` dumps are confirmed non-empty and
+   checked for pg_dump's own standard header comment (a true
+   restore-test needs a real Postgres server to restore into, which
+   this process doesn't have — documented as a periodic manual/CI task
+   instead, same as `docs/DISASTER_RECOVERY.md` already recommends).
+   `list_backups()` now returns both file types with an `engine` field.
+
+**20 new backend tests**: `test_oauth.py` (15 — configuration gating,
+new-org signup, join-via-invite-code with the same anti-privilege-
+escalation role downgrade as ordinary signup, rejecting a bad invite
+code, rejecting missing org context, repeat login via an already-
+linked account, linking Google to an existing password account by
+verified email, tampered/garbage state and login-code rejection,
+surfacing a Google-side exchange failure) plus 4 new Postgres-backup
+tests in `test_monitoring.py` (missing-pg_dump reporting, a full
+mocked `pg_dump` success/verify/list round-trip, a `pg_dump` failure
+being surfaced, and rejecting a non-dump file at verify time) — all
+via `monkeypatch`, since this project's test suite runs against
+SQLite and never talks to a real Google account or Postgres server
+(see each test file's module docstring for that seam).
+
+Full backend suite re-run in three batches: **393/393 passing** (374
+previously + 15 OAuth + 4 Postgres-backup). One batching artifact was
+caught and diagnosed along the way, not a real regression — see
+PROJECT_WORKFLOW.md. Frontend `npm run build` clean, confirmed
+warning-free.
+
+---
+
+## Closing the three follow-up suggestions: password fallback, automated backups, customer OAuth
+
+**What was missing:**
+Three things flagged as honest limitations right after the previous
+session's OAuth/code-splitting/Postgres-backup work: (1) an OAuth-only
+account had no way to log in at all if Google sign-in were later
+disabled — no password, no fallback; (2) Postgres/SQLite backup was
+still a manual "click the button" action, no schedule, no retention,
+so disk usage would grow unbounded if anyone did rely on it regularly;
+(3) OAuth/SSO only covered staff — a customer still had to use a
+password even if they'd rather use their Google account.
+
+**Why it was needed:**
+Requested directly, as the natural continuation of the previous
+session's own "what's still not done" list.
+
+**What it does:**
+1. **Self-service "add a password"** — new `UserDB.has_usable_password`
+   / `CustomerDB.has_usable_password` columns (default `True` via
+   migrate.py's scalar-default handling, so every existing/password
+   account gets it for free; explicitly `False` only at OAuth-account-
+   creation time). New `POST /auth/me/set-password` and
+   `POST /customer/me/set-password` — deliberately a separate endpoint
+   from change-password rather than making `current_password`
+   optional on that one, since an OAuth-only account has no current
+   password to prove knowledge of. `AccountSettings.jsx` and
+   `CustomerDashboard.jsx`'s profile panel now show a "Set a Password"
+   card instead of "Change Password" for an OAuth-only account, and
+   flip over automatically once one is set.
+2. **Automated backups + retention** — new
+   `services/backup.py::apply_retention_policy()` (prunes oldest-first
+   by the timestamp already embedded in every backup filename, so no
+   dependence on filesystem mtime surviving a copy/restore) and new
+   `services/backup_scheduler.py`, mirroring this project's existing
+   scheduler shape (reminders/SLA/webhooks) — a real backup every
+   `BACKUP_INTERVAL_HOURS` (default 24), pruned to `BACKUP_RETENTION_COUNT`
+   (default 7) right after. Deliberately **not** started while
+   `TESTING=1` — confirmed by running 90+ tests and checking
+   `backend/backups/` stayed at exactly the one file an actual test
+   endpoint call created, not hundreds from the scheduler ticking on
+   every one of this project's 300+ TestClient-triggered app startups.
+   `docs/DISASTER_RECOVERY.md` rewritten to describe both the SQLite
+   and Postgres restore procedures (Postgres restore was previously
+   undocumented) and the new automated behavior, still honestly
+   scoped: same-disk backup, no offsite copy, no true point-in-time
+   recovery — a managed provider's own backups are still the right
+   call for anything running in real production.
+3. **Customer-facing Google OAuth** — `CustomerDB` gained the same
+   `oauth_provider`/`oauth_subject_id` columns as `UserDB`, and
+   `routes/customer_auth.py` gained the same three-route shape
+   (`/oauth/google/login`, `/oauth/google/callback`, `/oauth/exchange`)
+   as the staff flow — notably simpler, since a customer account needs
+   no org context at all to sign up. New-customer OAuth signup also
+   retroactively links any past deliveries placed under that email
+   before the account existed, the same behavior `/customer/signup`
+   already had. `services/oauth.py` is shared, unchanged in its core
+   logic, between both flows.
+
+   **Caught and fixed a real bug before it shipped**, not after:
+   `services/oauth.py` originally hardcoded one module-level
+   `GOOGLE_REDIRECT_URI` used by both `build_authorization_url()` and
+   `exchange_code_for_profile()`. Since the customer callback lives at
+   a different path (`/customer/oauth/google/callback` vs
+   `/auth/oauth/google/callback`), reusing the staff redirect URI for
+   customer sign-in would have sent Google's redirect to the wrong
+   callback route in a real deployment — the state token's claim
+   shape wouldn't match, and the whole flow would fail. This didn't
+   surface in the first round of tests because they call the callback
+   function directly rather than doing a real browser round-trip
+   through Google's own redirect_uri validation. Fixed by
+   parameterizing `redirect_uri` on both functions (new
+   `GOOGLE_CUSTOMER_REDIRECT_URI`, derived from the staff one rather
+   than a second env var, so there's nothing new to keep in sync by
+   hand), and added a regression test
+   (`test_customer_oauth_uses_a_different_redirect_uri_than_staff`)
+   asserting the two URLs actually differ.
+
+**32 new backend tests**: 7 in `test_oauth.py` (set-password flow,
+has_usable_password correctness, login actually works after setting
+one), 7 in `test_monitoring.py` (retention keeps-newest-N/no-op/
+ignores-non-backup-files, scheduled-tick success prunes vs. failure
+doesn't, env-var configuration, the TESTING-guard precondition), and
+18 in the new `test_customer_oauth.py` (new signup, repeat login,
+linking to an existing password account by verified email,
+retroactive delivery linking, set-password flow, error handling, and
+the redirect-uri regression test). Full backend suite re-run in three
+batches after each round of changes: **425/425 passing** (393
+previously + 32 new). Frontend `npm run build` clean throughout,
+confirmed still no bundle-size warning after every change.
+
+---
+
+---
+
+## Portfolio presentation pass: real CI, real coverage numbers, hosted deployment
+
+**What was missing:**
+The README claimed a GitHub Actions workflow at `.github/workflows/
+ci.yml` that didn't actually exist in the repo — a real, pre-existing
+documentation/reality gap, not something introduced this session, but
+one that would look bad to exactly the audience (recruiters checking
+the repo) this project is built for. The README also still said "26
+tests" from an early phase, with no mention of OAuth, backups,
+dispatcher reassign, or any of the last several sessions' features.
+There was no way to actually see this project live at a URL — only
+`docker compose up` locally.
+
+**Why it was needed:**
+Requested as presentation/portfolio polish rather than an application
+feature — "is there a bug" and "does this look credible to someone
+skimming the repo cold" are different questions, and this session
+answered the second one.
+
+**What it does:**
+1. **A real CI workflow** — `.github/workflows/ci.yml` now actually
+   exists: three independent jobs (backend tests + coverage, frontend
+   build, Docker image build check for both services) so a
+   frontend-only change doesn't wait on the slower backend suite. Runs
+   the full suite as one plain `pytest -v` invocation (CI runners have
+   no wall-clock ceiling on a single command the way this development
+   sandbox does), with `TESTING=1` set explicitly rather than relying
+   on conftest.py's own guard. Coverage report uploaded as a
+   downloadable build artifact.
+2. **Real, verified numbers instead of stale ones** — README rewritten
+   throughout: badges and text now say 425 passing tests (not 26), and
+   an actual measured 82% statement coverage (`pytest --cov=app`,
+   combined across all three local test batches via
+   `--cov-append` — not an estimate). Every session's features since
+   the original 18 phases (Google OAuth, dispatcher reassign/return-to-
+   pool, automated backups, code splitting) are now reflected in the
+   feature list, walkthrough, and tech stack table.
+3. **A path to an actual hosted deployment** — new `render.yaml`
+   Blueprint (backend + frontend + managed Postgres, all three
+   services declared in one file, free tier). README's new "Deploying
+   It For Real" section walks through the one real gotcha honestly:
+   each service's own URL only exists after its first deploy, so
+   wiring `ALLOWED_ORIGINS`/`FRONTEND_URL`/`VITE_API_BASE_URL` together
+   is unavoidably a two-step "deploy once, then fill in the real URLs"
+   process — plus plain statements of Render's free-tier limits (cold
+   starts after 15 min idle, 90-day Postgres expiry) rather than
+   glossing over them. Railway/Fly.io mentioned as alternatives that
+   need no new config file at all, since both auto-detect the
+   Dockerfiles already in this repo.
+
+**Honest gap in this session's own verification**: this sandbox has no
+Docker installed, so the new `render.yaml`/`ci.yml`'s Docker-build-check
+job references the existing Dockerfiles but was never actually run
+end-to-end here — only YAML-syntax-validated. The Dockerfiles
+themselves are unchanged from the previous session (not newly written
+this session), which lowers the risk, but "the YAML parses" and "the
+Docker build actually succeeds" are different claims, and only the
+first one was verified here.
+
+Full backend suite re-run in three batches after these changes (only
+`requirements.txt` gained `pytest-cov`, an already-test-only addition):
+**425/425 passing**, unchanged from before this session — this was a
+docs/CI/deployment-config session, not an application-code one, so no
+new application tests were needed. Frontend `npm run build` confirmed
+clean and unaffected.
+
+---
+
+---
+
+## Product Tour section: illustrative mockups in place of a real demo video/GIF
+
+**What was missing:**
+No visual "product tour" existed anywhere in the README — someone
+skimming the repo cold had to either run it themselves or take the
+feature list on faith.
+
+**Why it was needed:**
+Requested as the closest feasible version of a demo video/GIF: this
+development environment has no browser to actually render the app in
+and capture a real screen recording or screenshot from, so a genuine
+video/GIF isn't something that could be honestly produced here.
+
+**What it does:**
+Four hand-built SVG mockups (`docs/screenshots/*.svg`) illustrating the
+login page (staff/customer toggle, Google sign-in), the dispatcher
+dashboard (stat cards, the reassign/return-to-pool table controls), the
+agent's mobile delivery list (including the offline-sync queued-updates
+banner), and the public customer tracking page (live status timeline).
+Colors, fonts, and layout are drawn from the real `theme.css` variables
+so they're a reasonably accurate representation of the actual dark
+"fleet ops console" UI, not a generic placeholder. Embedded in a new
+"Product Tour" section in README.md, with an explicit, prominent
+disclaimer at the top of that section stating plainly that these are
+illustrative mockups, not real screenshots, and why — every feature
+they depict is real and working, but the images themselves are drawn,
+not captured. This distinction is stated up front rather than left for
+someone to discover was misleading after the fact.
+
+No test coverage applies to this change (static documentation assets
+only); all four SVGs were validated as well-formed XML. No application
+code touched — 425/425 backend tests and the frontend build are
+unaffected and were not re-run for this documentation-only change.
+
+---
+
+---
+
+## Native mobile app with real background GPS tracking (mobile/)
+
+**What was missing:**
+Everything client-side was PWA/responsive web — no actual React
+Native/Flutter app. Related, and the more substantive gap: the web
+app's "share my location" feature (an agent's browser reporting
+position via `navigator.geolocation.watchPosition`) only works while
+that browser tab is open and in the foreground — every mobile browser
+stops firing location updates the moment a tab is backgrounded or the
+phone locks, a deliberate platform-level restriction on both iOS
+Safari and Android Chrome, not a bug or a missing library. A
+customer's "live" tracking map was, in practice, only actually live
+while the agent's phone was unlocked with that tab in the foreground.
+
+**Why it was needed:**
+Requested directly, as the two together: a native mobile app is what
+makes genuine background location tracking possible at all — a PWA
+fundamentally cannot get OS-level background location permission the
+way a native/Expo app can (a real foreground service on Android;
+"Always" location + a background mode on iOS).
+
+**What it does:**
+New `mobile/` — a real Expo (React Native) app for delivery agents,
+built as a second, fully independent CLIENT of the existing backend
+API. **Zero backend code was written or changed** to support it: every
+endpoint it calls (`POST /auth/login` + 2FA, `GET /auth/me`, `GET
+/deliveries/mine`, `GET`/`PATCH /deliveries/{id}`, `PUT
+/users/me/location`) already existed and was already tested before
+this app was written — the location endpoint in particular was already
+generic (any authenticated agent client), it simply never had a client
+able to call it from the background before.
+
+- **Screens**: Login (with 2FA challenge support), delivery list
+  (sorted active-first, pull-to-refresh), delivery detail (advance
+  status through the happy path: picked up → out for delivery →
+  delivered), Settings (background location toggle, logout).
+- **`src/locationTask.js`**: the actual feature. Uses
+  `expo-location` + `expo-task-manager` to register a real background
+  task that keeps reporting position (60s interval, 50m minimum
+  distance — a deliberate battery-life trade-off every real
+  fleet-tracking app makes) to the same `PUT /users/me/location`
+  endpoint, regardless of whether the app is on screen or the phone is
+  locked. Requests foreground permission first (required before
+  Android will even show the background prompt), then background
+  permission, and degrades gracefully to foreground-only if an agent
+  declines the second prompt rather than failing outright.
+- Colors/theme (`src/theme.js`) hand-matched to the web app's
+  `theme.css` dark palette so it doesn't look like a visually unrelated
+  product.
+- `app.json` configured with the real iOS `Info.plist`
+  (`NSLocationAlwaysAndWhenInUseUsageDescription`,
+  `UIBackgroundModes: ["location"]`) and Android manifest permissions
+  (`ACCESS_BACKGROUND_LOCATION`, `FOREGROUND_SERVICE_LOCATION`) this
+  actually requires — not placeholder config.
+- New CI job (`mobile-config-check` in `.github/workflows/ci.yml`):
+  installs dependencies and validates `app.json` via `npx expo config`
+  on every push — catches a broken dependency graph or a config typo
+  without needing a full paid/authenticated EAS build in CI.
+
+**Honest, stated-up-front limitations** (also in `mobile/README.md`'s
+own "Not Yet Built" section): login-only (create the agent account on
+the web app first — no signup/password-reset flow here yet); **no
+offline queue** — the single biggest gap versus the web agent app,
+which has a full IndexedDB-backed offline sync engine this app doesn't
+replicate yet; no proof-of-delivery capture, partial-delivery flag, or
+failed-attempt reason codes (its "Mark Delivered" is a simple one-tap
+status change); no barcode/QR scanning; no push notifications; no
+dispatcher↔agent messaging. None of these are silently missing — they're
+named plainly as the natural next additions, not discovered later.
+
+**What was and wasn't verified in this environment**: this sandbox has
+no Xcode, no Android Studio, and no physical device or simulator — so
+no compiled `.apk`/`.ipa` was produced, and the app was never actually
+launched/run. What WAS verified for real: `npm install` resolved all
+1147 transitive dependencies cleanly (no version conflicts); `npx expo
+config --type public` — Expo's own config resolver — parsed `app.json`
+successfully end to end, including the location plugin config and
+iOS/Android permission blocks; all 10 JavaScript/JSX source files
+compile cleanly through the project's actual configured Babel preset
+(`babel-preset-expo`), checked via a script that invokes `@babel/core`
+directly rather than a wrong CLI tool (an early attempt at this
+accidentally resolved to an unrelated, decade-old npm package named
+`babel` and produced misleading errors — caught and fixed before
+treating any of those results as real). `npx expo-doctor` passed 14/17
+checks; the 3 failures were this sandbox's network egress restrictions
+blocking Expo's own API host (`exp.host`), not a project problem — the
+same checks would run cleanly with normal internet access (e.g. in the
+new CI job, or on a developer's own machine).
+
+No changes to `backend/` or `frontend/` beyond documentation (this
+session's README/CI updates) — the existing 425 backend tests and the
+frontend build are both unaffected and were not re-run, since no
+application code in either was touched.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

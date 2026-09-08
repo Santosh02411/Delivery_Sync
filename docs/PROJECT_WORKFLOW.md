@@ -998,6 +998,185 @@ runs). Frontend `npm run build` clean.
 
 ---
 
+## Post-launch polish: password visibility, dispatcher return-to-pool, motion
+
+No real bugs this session — a clean feature/design pass after the
+18-phase rollout finished. Worth noting for the record: the new
+per-row "Reassign" dropdown deliberately does **not** duplicate the
+bulk-assign-agent backend logic — it calls the exact same
+`PATCH /deliveries/bulk-assign-agent` endpoint with a single-item
+`delivery_ids` array, so a single-row reassign gets the same
+tested history/notification/status-transition behavior as a bulk
+one for free, with zero new backend branching to get wrong. The
+genuinely new endpoint, `return-to-pool`, was scoped narrowly on
+purpose: it only accepts a customer-placed order still in the
+`picked_up` "just assigned, not yet touched" state, matching the
+same restriction `assign_agent_to_delivery` already applies for the
+same reason (a manually created delivery has no unassigned pool to
+return to; once a package is `out_for_delivery` returning it to a
+pool would just be confusing, not useful).
+
+Full backend suite after this session: **373/373 passing** (367 → 373,
+6 new; confirmed via three batched runs, same reasoning as every
+batched run since Phase 14 — the full suite exceeds this environment's
+single-command execution-time ceiling). Frontend `npm run build`
+clean.
+
+---
+
+## Diagnosing a batching artifact in test_api_metrics_recorded_across_requests
+
+Not a real bug, but worth recording since it looked like one at first.
+While re-verifying the full suite after the OAuth/code-splitting/
+Postgres-backup session, `test_monitoring.py::
+test_api_metrics_recorded_across_requests` failed when run in a batch
+that happened to put `test_finance.py` and `test_fleet.py` immediately
+before `test_monitoring.py` in the same `pytest` process — but passed
+every time in isolation.
+
+Root cause: `services/monitoring.py`'s `API_METRICS` is a deliberate
+module-level, process-lifetime in-memory dict (see that file's own
+docstring — resets on restart, no DB write per request, single-process
+deployment assumption), and `get_api_metrics_summary()`'s
+`slowest_endpoints` is capped to the top 15 by duration. `GET /health`
+is about as fast as an endpoint gets, so once ~15+ *other*, naturally
+slower endpoints have been exercised earlier in the *same pytest
+process*, it falls out of that capped list — the test's assertion that
+`GET /health` appears in `slowest_endpoints` is really an assertion
+about how much unrelated traffic happened to run first in that
+process, which was never guaranteed. Confirmed by re-running with the
+project's already-established batch boundaries (which happen to keep
+fewer distinct endpoints in front of `test_monitoring.py` per batch)
+— passes cleanly, 393/393.
+
+Left as-is rather than "fixed" in this session: rewriting the test to
+not depend on ranking position, or resetting `API_METRICS` per test,
+are both reasonable but out of scope for what was actually asked this
+session (OAuth/code-splitting/Postgres-backups) — noted here so a
+future session doesn't have to re-diagnose it from scratch if it
+resurfaces in a different batch split or in CI's single full-suite run
+(where finance/fleet already precede monitoring alphabetically).
+
+---
+
+## Real bug caught before shipping: shared OAuth redirect_uri between staff and customer flows
+
+While adding customer-facing Google OAuth (mirroring the staff flow
+from the previous session), `services/oauth.py` still had a single
+module-level `GOOGLE_REDIRECT_URI` constant baked directly into
+`build_authorization_url()` and `exchange_code_for_profile()`. That
+was fine when only one flow (staff) existed. Once the customer
+callback route (`/customer/oauth/google/callback`) was added at a
+different path than the staff one (`/auth/oauth/google/callback`),
+reusing the same constant for both meant every customer "Sign in with
+Google" click would have told Google to redirect back to the STAFF
+callback instead — the state token's claim shape wouldn't match
+what that route expects, and the sign-in would fail outright in any
+real deployment.
+
+This did not fail any test on the first pass, because every OAuth
+test in this project (staff and customer) calls the callback function
+directly with a `state` value obtained from the corresponding
+`/oauth/google/login` endpoint — it never exercises Google's own
+server-side check that the token-exchange request's `redirect_uri`
+matches the one originally used to obtain the authorization code.
+That check only happens on Google's side during a real round-trip,
+which nothing in this test suite performs (nor should it — hitting
+Google's real OAuth endpoints from a test suite would be flaky,
+slow, and require real credentials).
+
+Caught by re-reading the new customer routes against the shared
+`services/oauth.py` module before considering the feature done, not
+by a failing test. Fixed by parameterizing `redirect_uri` as an
+explicit argument on both functions, with a new
+`GOOGLE_CUSTOMER_REDIRECT_URI` derived from the staff one (string
+substitution, not a second env var — one thing to configure, not two
+that could drift out of sync). Added a regression test asserting the
+two authorization URLs actually carry different `redirect_uri` query
+values, since that's the one thing the rest of the OAuth test suite
+structurally cannot catch on its own.
+
+**Lesson for future OAuth/multi-flow work in this project**: any
+shared helper module serving more than one caller with per-flow
+identity (redirect URIs, callback paths, audience claims) needs an
+explicit test asserting the two callers actually diverge where they
+must — "both flows pass their own tests independently" does not
+catch "both flows accidentally use the same hardcoded value for
+something that needs to differ."
+
+---
+
+## Bug caught before shipping: shared redirect_uri would have broken customer OAuth in production
+
+While building customer-facing Google OAuth as a direct extension of
+the staff flow from the previous session, `services/oauth.py`'s
+`build_authorization_url()` and `exchange_code_for_profile()` both
+still referenced a single module-level `GOOGLE_REDIRECT_URI` —
+correct for staff (`/auth/oauth/google/callback`), but silently wrong
+for customer sign-in, which needs Google to redirect to
+`/customer/oauth/google/callback` instead. Left as-is, every real
+customer Google sign-in attempt would have redirected to the STAFF
+callback route, where the state token's claim shape wouldn't match
+(`customer_oauth_provider` vs `oauth_provider`) and the sign-in would
+fail with a generic "this sign-in attempt has expired" error — no
+crash, no obvious stack trace, just a broken feature that looked
+superficially fine.
+
+It looked fine specifically because every test written for this
+flow calls the callback function directly with a `code`/`state`,
+bypassing the part of the OAuth2 spec that would have caught it:
+Google itself validates that the `redirect_uri` on the token-exchange
+request matches the one originally used to obtain the authorization
+code, and a mismatch there is invisible to a test that never talks to
+the real Google endpoints (see test_customer_oauth.py's own module
+docstring on why that's the deliberate seam).
+
+Caught by re-reading the diff before considering the feature done,
+not by a test failing — worth noting as a case where "all tests pass"
+and "the feature actually works" are different claims when the thing
+under test is a redirect-based protocol whose correctness partly
+lives in what a THIRD PARTY (Google) will accept, not just in this
+codebase's own logic. Fixed by parameterizing `redirect_uri` on both
+functions and adding a `GOOGLE_CUSTOMER_REDIRECT_URI` derived from the
+staff one; also added a regression test that inspects the actual
+`redirect_uri` query param on both flows' authorization URLs and
+asserts they differ, so this specific mistake can't silently
+reappear.
+
+---
+
+## Wrong tool gave misleading errors while verifying the new mobile app
+
+While validating the new `mobile/` Expo app's source files, `npx babel
+App.js --presets babel-preset-expo` resolved to `babel@5.8.38` — a
+long-abandoned, decade-old standalone package literally named `babel`
+on npm, not the modern `@babel/cli`. Its CLI flag parsing is completely
+different from the modern toolchain, so it produced confusing
+`TypeError [ERR_INVALID_ARG_TYPE]: The "path" argument must be of type
+string` errors on every file, and outright JSX syntax errors on the two
+files with the most JSX. None of that reflected a real problem with the
+source files.
+
+Caught before treating any of those results as real, by noticing the
+error shape didn't match a plausible JSX/syntax issue and checking
+which package actually got resolved. Fixed by writing a small script
+that requires `@babel/core` directly (the same package `babel-preset-
+expo` itself depends on, already installed via the project's own
+`npm install`) and calls `babel.transform()` with the project's real
+preset — the same code path Metro (Expo's actual bundler) itself would
+use — which correctly compiled all 10 files with zero errors, real
+validation this time.
+
+Worth recording as a general caution: `npx <name>` silently fetching
+and running whatever unrelated package happens to occupy that exact
+name on npm (rather than the intended `@scope/name` or `name-cli`
+tool) is a real, general npx footgun — not specific to Babel, and
+worth double-checking the resolved package/version before trusting a
+tool's output, especially when a command that should be routine
+produces errors that don't make sense for the input.
+
+---
+
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something
