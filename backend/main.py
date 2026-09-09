@@ -43,6 +43,7 @@ from app.services.reminder_scheduler import start_reminder_scheduler
 from app.services import monitoring as monitoring_svc
 from app.services.webhook_scheduler import start_webhook_scheduler
 from app.services.backup_scheduler import start_backup_scheduler
+from app.services.demo_reset_scheduler import start_demo_reset_scheduler
 # Create all database tables on startup (if they don't already exist),
 # then catch up any EXISTING table to the model's current columns — see
 # app/db/migrate.py's module docstring for why both steps are needed:
@@ -259,6 +260,19 @@ async def _launch_backup_scheduler():
     if os.environ.get("TESTING") == "1":
         return
     app.state.backup_scheduler_task = start_backup_scheduler(SessionLocal)
+
+
+@app.on_event("startup")
+async def _launch_demo_reset_scheduler():
+    # Same reasoning and same guard as _launch_backup_scheduler above —
+    # a real reset does real, somewhat expensive database writes
+    # (recreating ~46 deliveries and their full history), and this
+    # project's 400+ tests each spin up a fresh app instance via
+    # TestClient's lifespan handling. See
+    # services/demo_reset_scheduler.py's own module docstring.
+    if os.environ.get("TESTING") == "1":
+        return
+    app.state.demo_reset_scheduler_task = start_demo_reset_scheduler(SessionLocal)
 
 
 @app.get("/")
