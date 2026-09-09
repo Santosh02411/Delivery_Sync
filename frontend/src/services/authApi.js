@@ -30,6 +30,15 @@ export async function loginRequest({ username, password }) {
   return data; // { access_token, refresh_token, user } OR { requires_2fa: true, challenge_token }
 }
 
+export async function demoLoginRequest() {
+  const response = await fetch(`${API_BASE_URL}/auth/demo-login`, { method: "POST" });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "The demo isn't available right now. Please try again shortly.");
+  }
+  return data; // { access_token, refresh_token, user }
+}
+
 export async function getGoogleOAuthLoginUrl({ orgName, inviteCode, role } = {}) {
   const params = new URLSearchParams();
   if (orgName) params.set("org_name", orgName);

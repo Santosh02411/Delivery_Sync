@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
-import { signupRequest, loginRequest, verifyTwoFactorLoginRequest, refreshTokenRequest, logoutRequest, exchangeOAuthLoginCode } from "../services/authApi";
+import { signupRequest, loginRequest, verifyTwoFactorLoginRequest, refreshTokenRequest, logoutRequest, exchangeOAuthLoginCode, demoLoginRequest } from "../services/authApi";
 
 const AuthContext = createContext(null);
 
@@ -115,6 +115,12 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
+  async function demoLogin() {
+    const data = await demoLoginRequest();
+    persistSession(data.access_token, data.refresh_token, data.user);
+    return data.user;
+  }
+
   async function signup({ username, email, password, role, display_name, org_name, invite_code, captcha_token }) {
     const data = await signupRequest({ username, email, password, role, display_name, org_name, invite_code, captcha_token });
     persistSession(data.access_token, data.refresh_token, data.user);
@@ -145,7 +151,7 @@ export function AuthProvider({ children }) {
     });
   }
 
-  const value = { user, token, isLoading, login, completeTwoFactorLogin, completeOAuthLogin, signup, logout, updateUser };
+  const value = { user, token, isLoading, login, completeTwoFactorLogin, completeOAuthLogin, demoLogin, signup, logout, updateUser };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

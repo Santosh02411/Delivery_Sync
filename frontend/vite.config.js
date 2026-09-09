@@ -24,4 +24,20 @@ export default defineConfig({
       },
     },
   },
+  test: {
+    // Vitest reuses this same Vite config (same JSX transform, same
+    // resolve/alias setup) rather than needing a second, separately
+    // maintained Jest config that could quietly drift out of sync with
+    // how the app is actually built — this is the main practical
+    // reason to pick Vitest over Jest for a Vite project specifically.
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/setupTests.js'],
+    css: false,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'html'],
+      exclude: ['node_modules/', 'src/setupTests.js'],
+    },
+  },
 })
