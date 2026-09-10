@@ -78,23 +78,6 @@ Log in with any existing **agent** account from the web app (staff
 signup happens on the web app — this app is intentionally login-only,
 see [Not Yet Built](#not-yet-built) below).
 
-## Running Tests
-
-```bash
-cd mobile
-npm test
-```
-
-22 tests (Jest + jest-expo) covering the offline queue's actual logic —
-`offlineStore.js`'s AsyncStorage-backed cache (per-user scoping, not
-clobbering a pending edit with stale server data, pending-count
-tracking) and `offlineSync.js`'s retry/backoff behavior and
-foreground/connectivity-triggered sync, using real fake timers the
-same way the web app's own `syncEngine.test.js` does. Screen
-components (Login, DeliveryList, etc.) don't have tests yet — the
-logic layer was prioritized since it's where an offline-sync bug would
-actually cost real data.
-
 ## Testing Background Location
 
 1. Log in, go to **Settings**, toggle **Share my location** on.
@@ -133,51 +116,6 @@ eas build --platform android   # or ios
 See [Expo's build docs](https://docs.expo.dev/build/introduction/) for
 the full process — this requires a free Expo account.
 
-## Offline Support
-
-This app now has a real offline queue, closing what was previously its
-single biggest gap versus the web agent app — mirroring
-`frontend/src/services/syncEngine.js`'s architecture closely (same
-retry constants, same conflict-description wording, same overall
-control flow), adapted to React Native's actual APIs:
-
-- **`src/services/offlineStore.js`** — an AsyncStorage-based local
-  cache (the mobile equivalent of the web app's IndexedDB wrapper),
-  scoped per logged-in user the same way. Every successful delivery
-  fetch is cached; a status update is applied to the local cache
-  immediately whenever the network request for it fails.
-- **`src/services/offlineSync.js`** — sends queued updates to the
-  backend's existing, already-tested `POST /sync` endpoint (the exact
-  same one the web app's offline queue already uses — no new backend
-  code was needed) with the same 3-retry logic as the web app, and
-  reconciles the server's resolved version back into the local cache.
-  Since React Native has no `navigator.onLine`/browser `"online"`
-  event, connectivity is instead checked via `expo-network` and a
-  sync is re-attempted whenever the app is foregrounded
-  (`AppState` "active") or every 15 seconds while foregrounded.
-- **Session restore also tolerates being offline** — opening the app
-  with no connectivity at all (a real scenario: an agent starting
-  their shift with no signal) restores the session from a locally
-  cached profile instead of being treated the same as an
-  expired/invalid token and logging the agent out, which would have
-  defeated the entire point of offline support.
-- Both the delivery list and delivery detail screens show a clear
-  "Working offline" banner and a "queued to sync" badge on any
-  not-yet-synced record, and Settings shows a live pending-update
-  count with a manual "Sync Now" button — nothing about an offline
-  edit is silent or hidden.
-
-**What this offline queue does NOT do**, stated plainly: it only
-applies to a delivery **already fetched at least once** (there's
-nothing to safely merge an offline status change into otherwise); it
-queues by writing straight to local storage rather than the web app's
-richer background-sync-registration approach (see
-`frontend/src/services/backgroundSync.js`) that can wake a service
-worker even after every tab is closed — a native background task
-would need `expo-task-manager` wired the same way `../locationTask.js`
-already is, and hasn't been built for sync specifically (only for
-location).
-
 ## Not Yet Built
 
 Stated plainly rather than discovered the hard way:
@@ -185,6 +123,14 @@ Stated plainly rather than discovered the hard way:
 - **Signup / password reset** — login only. Create the agent account
   on the web app first, then log into this app with the same
   credentials.
+- **Offline support** — the web agent app has a full IndexedDB-backed
+  offline queue with conflict resolution; this app does not (yet) — an
+  action taken with no signal simply fails with an error, it isn't
+  queued for later. This is the single biggest feature gap versus the
+  web app, and the most natural next addition (`@react-native-async-
+  storage/async-storage` + the same retry-queue shape the web app's
+  `frontend/src/services/syncEngine.js` already uses would be the
+  starting point).
 - **Proof of delivery capture** (signature/photo), **partial
   delivery**, and **failed-attempt reason codes** — the web app
   supports all three when marking a delivery; this app's "Mark
@@ -197,7 +143,7 @@ Stated plainly rather than discovered the hard way:
 - **Dispatcher ↔ agent messaging** — exists on the web app, not here.
 
 None of these are silently missing — an agent using only this app
-today gets a real, working, genuinely background-location-capable,
-now genuinely offline-capable experience for the core loop (see
-assigned deliveries, advance status even with no signal, share live
-location), just a narrower one than the full web agent app.
+today gets a real, working, genuinely background-location-capable
+experience for the core loop (see assigned deliveries, advance
+status, share live location), just a narrower one than the full web
+agent app.

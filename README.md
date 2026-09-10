@@ -1,22 +1,14 @@
 # Delivery Sync
 
-![Backend tests](https://img.shields.io/badge/backend%20tests-435%20passing-brightgreen)
+![Backend tests](https://img.shields.io/badge/backend%20tests-425%20passing-brightgreen)
 ![Coverage](https://img.shields.io/badge/backend%20coverage-82%25-brightgreen)
-![Frontend tests](https://img.shields.io/badge/frontend%20tests-69%20passing-brightgreen)
 ![Frontend build](https://img.shields.io/badge/frontend%20build-passing-brightgreen)
-![Stack](https://img.shields.io/badge/stack-FastAPI%20%2B%20React%20%2B%20React%20Native-blue)
+![Stack](https://img.shields.io/badge/stack-FastAPI%20%2B%20React-blue)
 
 A complete, multi-tenant delivery tracking platform: offline-first status
 updates for delivery agents, a full dispatcher/admin operations console,
 and a genuine customer-facing portal — order tracking, live notifications,
 and feedback, with no backend or terminal access required to use it.
-
-> **Fastest way to actually see it**: run the app locally (see
-> [How to Run Locally](#how-to-run-locally) below) and click **"Try the
-> Demo"** on the login page — no signup, no credentials, straight into a
-> real dispatcher account with two weeks of realistic sample deliveries
-> already populated. See [Key Features](#key-features) for what that
-> button actually does.
 
 > The badges above reflect a real, locally-verified run of this exact
 > codebase (`pytest -v --cov=app`, `npm run build`) — not live CI status
@@ -56,9 +48,6 @@ directly from that same page — see [Key Features](#key-features).
 - **Staff or customer, login or signup:** just open the app — you land
   directly on the login page, pick your account type from the dropdown,
   and go.
-- **Instant demo, no account at all:** click **"Try the Demo"** at the
-  top of the login page — logs straight into a real, pre-populated
-  dispatcher account.
 - **Public order tracking (no account at all):** `?track=<delivery-id>` —
   shareable with anyone, works with zero login.
 - Staff and customer sessions are stored completely separately in the
@@ -145,29 +134,27 @@ same environment variables `render.yaml` lists (`DATABASE_URL`,
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push
 and pull request once this repo is on GitHub: the full backend test suite
-with a coverage report, the frontend unit test suite followed by a
-production build, a Docker image build check for both services, and a
-config/dependency check for the mobile app — four independent jobs, so a
+with a coverage report, a frontend production build, and a Docker image
+build check for both services — three independent jobs, so a
 frontend-only change doesn't wait on the (slower) backend suite. Coverage
 is uploaded as a downloadable build artifact on every run rather than a
 separate paid coverage service.
 
 ## Running the Test Suite
 
-**Backend:**
 ```bash
 cd backend
 pip install -r requirements.txt
 pytest -v
 ```
 
-**435 tests** across 38 test files, covering staff auth (password + Google
+**425 tests** across 37 test files, covering staff auth (password + Google
 OAuth), customer auth (password + Google OAuth), the public tracking
 page, dispatcher operations (assign/reassign/return-to-pool/bulk
 actions), fleet, finance, support, RBAC, security (login history,
 lockout, 2FA, session management), monitoring, automated + manual
-backups, the demo sandbox, and every other Phase in `docs/FEATURE_LOG.md`
-— **82% statement coverage** across the whole backend (`pytest --cov=app
+backups, and every other Phase in `docs/FEATURE_LOG.md` — **82%
+statement coverage** across the whole backend (`pytest --cov=app
 --cov-report=term-missing`, see exact per-file numbers in that output).
 Each test runs against its own isolated temp SQLite database, never the
 real `database.db`.
@@ -177,24 +164,6 @@ real `database.db`.
 > on a single command — `.github/workflows/ci.yml` runs it as one
 > `pytest -v` invocation with no such limit, so this doesn't affect a
 > real CI run or local development at all.
-
-**Frontend:**
-```bash
-cd frontend
-npm install
-npm test
-```
-
-**69 tests** across 7 files (Vitest + React Testing Library) — a real
-start, stated honestly as exactly that rather than inflated: full
-coverage on the specific files tested (the hand-rolled CSV parser used
-for bulk import, the zone-grouping/nearest-neighbor route optimizer, the
-offline sync engine's retry logic and conflict-description formatting,
-and a handful of components including the full `LoginPage` form/2FA/
-demo-login flow), but most of the ~63 other components have no tests yet
-— this is a foundation to build on, not comprehensive frontend coverage
-the way the backend's 82% is. `npm run test:coverage` generates the full
-per-file breakdown.
 
 ## Product Tour
 
@@ -253,23 +222,13 @@ while an agent's phone is locked in a cupholder. This is a real,
 substantive gap the web app's PWA/browser-based location sharing
 cannot close — every mobile browser stops firing location updates the
 moment a tab is backgrounded, a platform-level restriction, not
-something fixable with more web code. It also now has a genuine
-**offline queue** (AsyncStorage-backed, syncing through the same
-`POST /sync` endpoint the web app's own offline mode already uses) —
-an agent can advance a delivery's status with no signal at all, and it
-syncs automatically the moment connectivity returns, with 22 tests
-covering the retry/backoff and sync-trigger logic. See
+something fixable with more web code. See
 [`mobile/README.md`](mobile/README.md) for the full explanation, setup
 instructions, and an honest list of what this app does and doesn't
 (yet) do relative to the full web agent app.
 
 ## Key Features
 
-- **"Try the Demo" one-click sandbox** — no signup, no credentials;
-  logs straight into a real, pre-populated dispatcher account with two
-  weeks of realistic sample deliveries, a full fleet, and a live SLA
-  policy already in place — a shared demo org, reset back to this same
-  state automatically every few hours
 - **Offline-first agent app** — IndexedDB-backed local storage with a
   conflict-resolving sync engine; works with zero connectivity
 - **Multi-tenant** — organizations, invite-code onboarding, full data
@@ -308,7 +267,6 @@ instructions, and an honest list of what this app does and doesn't
 | Database | SQLite (dev/default) or PostgreSQL (production) |
 | Auth | JWT + Google OAuth 2.0, separate token types for staff vs. customers |
 | Rate Limiting | slowapi (in-memory, Redis-ready) |
-| Testing | pytest + pytest-cov (backend), Vitest + React Testing Library (frontend) |
 | CI/CD | GitHub Actions (tests + coverage, frontend build, Docker build check) |
 | Deployment | Docker Compose (local) or Render Blueprint (hosted) |
 
@@ -339,28 +297,12 @@ intentionally:
   in Account Settings
 - Automated backups live on the same disk as the database they back up —
   no offsite/geo-redundant copy; see `docs/DISASTER_RECOVERY.md`
-- The mobile app (`mobile/`) now has a real offline queue (see its
-  README's "Offline Support" section) and is login-only (create the
-  agent account on the web app first); no compiled `.apk`/`.ipa` was
-  produced — this sandbox has no Xcode/Android Studio/device to build
-  or test one on; see `mobile/README.md`'s "Not Yet Built" section for
-  the remaining honest list (proof-of-delivery capture, barcode
-  scanning, push notifications, messaging)
-- Frontend test coverage is a real start (69 tests), not comprehensive —
-  4 of ~19 service files and 4 of ~63 components are actually tested;
-  writing those tests found and fixed one real accessibility bug
-  (`LoginPage.jsx`'s labels weren't programmatically linked to their
-  inputs), which is a reasonable signal the same pattern likely recurs
-  elsewhere — a full accessibility audit across the frontend hasn't been
-  done; see `docs/PROJECT_WORKFLOW.md`'s entry on how this was found
-- The demo (`POST /auth/demo-login`) is one SHARED sandbox organization,
-  not a private one per visitor — every concurrent demo user sees (and
-  can edit) the same data, reset back to its known-good seeded state
-  automatically every few hours (`DEMO_RESET_INTERVAL_HOURS`); it also
-  only seeds the delivery-operations side of the product (staff, zones,
-  fleet, deliveries, SLA) — the e-commerce/marketplace/invoicing
-  subsystems aren't pre-populated with sample data, see
-  `services/demo_seed.py`'s own module docstring for the full scope
+- The mobile app (`mobile/`) is login-only (create the agent account on
+  the web app first), has no offline queue yet (the web app's biggest
+  advantage over it today), and no compiled `.apk`/`.ipa` was produced —
+  this sandbox has no Xcode/Android Studio/device to build or test one
+  on; see `mobile/README.md`'s "Not Yet Built" section for the full,
+  honest list
 
 ## Author
 

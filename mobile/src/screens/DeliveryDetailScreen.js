@@ -29,14 +29,11 @@ export default function DeliveryDetailScreen({ route }) {
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
   const [error, setError] = useState("");
-  const [isOffline, setIsOffline] = useState(false);
-  const [queuedNotice, setQueuedNotice] = useState("");
 
   const load = useCallback(async () => {
     setError("");
     try {
-      const { fromCache, delivery: data } = await getDelivery(deliveryId);
-      setIsOffline(fromCache);
+      const data = await getDelivery(deliveryId);
       setDelivery(data);
     } catch (err) {
       setError(err.message);
@@ -55,15 +52,9 @@ export default function DeliveryDetailScreen({ route }) {
     const nextStatus = NEXT_STATUS[delivery.status];
     if (!nextStatus) return;
     setIsUpdating(true);
-    setQueuedNotice("");
     try {
-      const result = await updateDeliveryStatus(delivery, nextStatus);
-      setDelivery(result.delivery);
-      if (result.queued) {
-        setQueuedNotice(
-          "No connection right now — saved on this device and will sync automatically once you're back online."
-        );
-      }
+      const updated = await updateDeliveryStatus(deliveryId, nextStatus);
+      setDelivery(updated);
     } catch (err) {
       Alert.alert("Couldn't update delivery", err.message);
     } finally {
@@ -91,21 +82,6 @@ export default function DeliveryDetailScreen({ route }) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 20 }}>
-      {isOffline && (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineBannerText}>Working offline — showing the last synced copy of this delivery</Text>
-        </View>
-      )}
-      {delivery.sync_status === "pending" && (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineBannerText}>⏳ This update is saved on this device and waiting to sync</Text>
-        </View>
-      )}
-      {queuedNotice ? (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineBannerText}>{queuedNotice}</Text>
-        </View>
-      ) : null}
       <Text style={styles.orderId}>{delivery.order_id}</Text>
       <View style={[styles.badge, { backgroundColor: `${statusColors[delivery.status]}26`, alignSelf: "flex-start" }]}>
         <Text style={[styles.badgeText, { color: statusColors[delivery.status] }]}>
@@ -162,6 +138,4 @@ const styles = StyleSheet.create({
   button: { backgroundColor: colors.accent, borderRadius: 8, padding: 16, alignItems: "center", marginTop: 20 },
   buttonText: { color: colors.accentTextOn, fontWeight: "700", fontSize: 15 },
   error: { color: colors.danger, fontSize: 14, textAlign: "center", padding: 20 },
-  offlineBanner: { backgroundColor: `${colors.accent}1A`, borderWidth: 1, borderColor: colors.accent, borderStyle: "dashed", borderRadius: 8, padding: 10, marginBottom: 14 },
-  offlineBannerText: { color: colors.accent, fontSize: 12, fontWeight: "600", textAlign: "center" },
 });
