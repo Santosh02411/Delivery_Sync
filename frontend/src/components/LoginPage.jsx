@@ -9,7 +9,7 @@ import GoogleIcon from "./GoogleIcon";
 import "../styles/auth.css";
 
 export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
-  const { login: staffLogin, completeTwoFactorLogin, demoLogin } = useAuth();
+  const { login: staffLogin, completeTwoFactorLogin } = useAuth();
   const { login: customerLogin } = useCustomerAuth();
   const { theme, toggleTheme } = useTheme();
 
@@ -18,7 +18,6 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isDemoLoading, setIsDemoLoading] = useState(false);
 
   // Set once staffLogin() comes back saying this account needs a 2FA
   // code — switches the form into a second step instead of navigating
@@ -30,18 +29,6 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
   const [isResending, setIsResending] = useState(false);
   const [resendMessage, setResendMessage] = useState("");
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-
-  async function handleTryDemo() {
-    setError("");
-    setIsDemoLoading(true);
-    try {
-      await demoLogin();
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsDemoLoading(false);
-    }
-  }
 
   async function handleGoogleSignIn() {
     setError("");
@@ -124,9 +111,8 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
           )}
           <form onSubmit={handleTwoFactorSubmit}>
             <div className="auth-field">
-              <label htmlFor="login-2fa-code">6-digit code</label>
+              <label>6-digit code</label>
               <input
-                id="login-2fa-code"
                 type="text"
                 inputMode="numeric"
                 autoComplete="one-time-code"
@@ -185,22 +171,9 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
       <div className="auth-card">
         <h2>Log in</h2>
 
-        <button
-          type="button"
-          className="auth-demo-btn"
-          onClick={handleTryDemo}
-          disabled={isDemoLoading}
-        >
-          {isDemoLoading ? "Loading demo..." : "▶ Try the Demo — No Signup Required"}
-        </button>
-        <p className="auth-demo-hint">
-          Explore a fully populated dispatcher dashboard with real sample data — instantly.
-        </p>
-        <div className="auth-divider"><span>or log in</span></div>
-
         <div className="auth-field">
-          <label htmlFor="login-account-type">I am a...</label>
-          <select id="login-account-type" value={accountType} onChange={(e) => { setAccountType(e.target.value); setIdentifier(""); }}>
+          <label>I am a...</label>
+          <select value={accountType} onChange={(e) => { setAccountType(e.target.value); setIdentifier(""); }}>
             <option value="staff">Delivery Agent / Dispatcher / Admin</option>
             <option value="customer">Customer (Track My Orders)</option>
           </select>
@@ -208,9 +181,8 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
 
         <form onSubmit={handleSubmit}>
           <div className="auth-field">
-            <label htmlFor="login-identifier">{accountType === "staff" ? "Username" : "Email"}</label>
+            <label>{accountType === "staff" ? "Username" : "Email"}</label>
             <input
-              id="login-identifier"
               type={accountType === "staff" ? "text" : "email"}
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
@@ -219,9 +191,8 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
             />
           </div>
           <div className="auth-field">
-            <label htmlFor="login-password">Password</label>
+            <label>Password</label>
             <PasswordInput
-              id="login-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
