@@ -1,9 +1,11 @@
-import React from "react";
+import React, { useEffect } from "react";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
 import LoginScreen from "./src/screens/LoginScreen";
 import AppNavigator from "./src/AppNavigator";
 import { colors } from "./src/theme";
+import { startAutoSync } from "./src/services/offlineSync";
+import { registerForPushNotifications } from "./src/services/pushNotifications";
 
 // Registers the background location task (see src/locationTask.js) as
 // a side effect of import — TaskManager.defineTask() must run once at
@@ -13,6 +15,26 @@ import "./src/locationTask";
 
 function Root() {
   const { user, isLoading } = useAuth();
+
+  // Only runs once a real, logged-in user is known — the sync engine
+  // has nothing to authenticate as before that, and (more importantly)
+  // offlineStore's setActiveUser(profile.id) must have already run
+  // (see AuthContext.js's applyUser) before any pending-queue read is
+  // safe to attempt.
+  useEffect(() => {
+    if (!user) return undefined;
+    const stopAutoSync = startAutoSync();
+    return stopAutoSync;
+  }, [user?.id]);
+
+  // Same "only once a real user is known" reasoning as above — the
+  // registered token needs to be attributed to somebody. Fire-and-
+  // forget: registerForPushNotifications() never throws (see its own
+  // docstring), so there's nothing to await or handle here.
+  useEffect(() => {
+    if (!user) return;
+    registerForPushNotifications();
+  }, [user?.id]);
 
   if (isLoading) {
     return (

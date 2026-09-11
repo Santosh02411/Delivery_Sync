@@ -16,6 +16,8 @@
  */
 
 import * as SecureStore from "expo-secure-store";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { cacheDeliveries, getCachedDeliveries, getCachedDelivery, queueStatusUpdate } from "./offlineStore";
 
 // Change this to your deployed backend's URL for a real device build —
 // 10.0.2.2 is the special alias the Android emulator uses to reach
@@ -47,6 +49,28 @@ export async function clearTokens() {
   await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);
 }
 
+// Cached alongside the tokens (AsyncStorage, not SecureStore — a
+// profile isn't sensitive the way a token is) so a session can be
+// restored while OFFLINE at app launch. Without this, opening the
+// app with no connectivity would look identical to an expired/invalid
+// token and log the agent out — exactly the scenario an agent
+// starting their shift with no signal would actually hit, undermining
+// the whole point of this app's offline support.
+const CACHED_PROFILE_KEY = "delivery_sync_cached_profile";
+
+async function cacheProfile(profile) {
+  await AsyncStorage.setItem(CACHED_PROFILE_KEY, JSON.stringify(profile));
+}
+
+export async function getCachedProfile() {
+  const raw = await AsyncStorage.getItem(CACHED_PROFILE_KEY);
+  return raw ? JSON.parse(raw) : null;
+}
+
+export async function clearCachedProfile() {
+  await AsyncStorage.removeItem(CACHED_PROFILE_KEY);
+}
+
 async function authHeaders() {
   const token = await getAccessToken();
   return {
@@ -73,6 +97,7 @@ export async function login(username, password) {
   if (!response.ok) {
     throw new Error(data.detail || "Login failed.");
   }
+  if (data.user) await cacheProfile(data.user);
   return data; // { access_token, refresh_token, user } OR { requires_2fa: true, challenge_token }
 }
 
@@ -86,47 +111,101 @@ export async function verifyTwoFactorLogin(challengeToken, code) {
   if (!response.ok) {
     throw new Error(data.detail || "Verification failed.");
   }
-  return data;
-}
-
-export async function fetchMyDeliveries() {
-  const response = await fetch(`${API_BASE_URL}/deliveries/mine`, {
-    headers: await authHeaders(),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "Failed to load deliveries.");
-  return data;
-}
-
-export async function getDelivery(deliveryId) {
-  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}`, {
-    headers: await authHeaders(),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "Failed to load delivery.");
+  if (data.user) await cacheProfile(data.user);
   return data;
 }
 
 /**
- * Same PATCH /deliveries/{id} the web app's offline sync engine
- * eventually calls — `updated_at` is required by the backend (see
+ * True for the specific case React Native's fetch throws when there's
+ * genuinely no network path to the server at all (airplane mode, no
+ * signal, wrong LAN IP) — as opposed to the server itself responding
+ * with an error (bad request, permission denied, validation failure),
+ * which comes back as a normal Response with response.ok === false
+ * and should NOT be treated as "retry later", since retrying an
+ * actual rejection changes nothing. React Native's underlying fetch
+ * polyfill throws a TypeError with this exact message for the
+ * network-unreachable case — matched by message rather than an error
+ * code because neither the Fetch spec nor React Native expose a more
+ * structured way to distinguish it.
+ */
+export function isNetworkError(error) {
+  return error instanceof TypeError && /network request failed/i.test(error.message);
+}
+
+export async function fetchMyDeliveries() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/deliveries/mine`, {
+      headers: await authHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Failed to load deliveries.");
+    await cacheDeliveries(data);
+    return { fromCache: false, deliveries: data };
+  } catch (error) {
+    if (!isNetworkError(error)) throw error;
+    // Offline — fall back to whatever was last successfully fetched
+    // (or already-queued locally), rather than a blank error screen.
+    return { fromCache: true, deliveries: await getCachedDeliveries() };
+  }
+}
+
+export async function getDelivery(deliveryId) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}`, {
+      headers: await authHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Failed to load delivery.");
+    await cacheDeliveries([data]);
+    return { fromCache: false, delivery: data };
+  } catch (error) {
+    if (!isNetworkError(error)) throw error;
+    const cached = await getCachedDelivery(deliveryId);
+    if (!cached) throw new Error("This delivery hasn't been loaded yet and you're offline.");
+    return { fromCache: true, delivery: cached };
+  }
+}
+
+/**
+ * Same PATCH /deliveries/{id} the web app's own online-mode calls
+ * hit — `updated_at` is required by the backend (see
  * DeliveryRecordUpdate in backend/app/models/delivery.py) as the
  * client-supplied timestamp its conflict-resolution logic compares
- * against, exactly like the web app's own sync engine already sends.
+ * against.
+ *
+ * The genuinely new behavior versus the web app's direct PATCH call:
+ * if this fails specifically because there's no network path to the
+ * server at all, the change is applied to the local cache and queued
+ * for ../offlineSync.js to actually send (via POST /sync, the same
+ * endpoint the web app's own offline queue already uses) the next
+ * time connectivity is available — instead of just failing with an
+ * error and losing the agent's update. A genuine server-side
+ * rejection (validation failure, permission denied) is NOT queued —
+ * see isNetworkError's own docstring for why that distinction matters.
+ *
+ * `delivery` is the full current delivery object (from a prior fetch),
+ * not just its id — a complete record is required to build a valid
+ * POST /sync payload later (agent_id, org_id, created_at, zone, etc. —
+ * see backend/app/routes/sync.py's SyncRecordIn), not just the one
+ * changed field.
  */
-export async function updateDeliveryStatus(deliveryId, status, extra = {}) {
-  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}`, {
-    method: "PATCH",
-    headers: await authHeaders(),
-    body: JSON.stringify({
-      status,
-      updated_at: new Date().toISOString(),
-      ...extra,
-    }),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "Failed to update delivery.");
-  return data;
+export async function updateDeliveryStatus(delivery, status, extra = {}) {
+  const patch = { status, updated_at: new Date().toISOString(), ...extra };
+  try {
+    const response = await fetch(`${API_BASE_URL}/deliveries/${delivery.id}`, {
+      method: "PATCH",
+      headers: await authHeaders(),
+      body: JSON.stringify(patch),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Failed to update delivery.");
+    await cacheDeliveries([data]);
+    return { queued: false, delivery: data };
+  } catch (error) {
+    if (!isNetworkError(error)) throw error;
+    const queuedRecord = await queueStatusUpdate(delivery.id, patch);
+    return { queued: true, delivery: queuedRecord };
+  }
 }
 
 /**
@@ -146,11 +225,38 @@ export async function pushMyLocation(latitude, longitude) {
   return response.json();
 }
 
+export async function registerExpoPushToken(token) {
+  const response = await fetch(`${API_BASE_URL}/users/me/expo-push-token`, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || "Failed to register for push notifications.");
+  }
+  return response.json();
+}
+
+export async function unregisterExpoPushToken(token) {
+  const response = await fetch(`${API_BASE_URL}/users/me/expo-push-token`, {
+    method: "DELETE",
+    headers: await authHeaders(),
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || "Failed to unregister from push notifications.");
+  }
+  return response.json();
+}
+
 export async function fetchMyProfile() {
   const response = await fetch(`${API_BASE_URL}/auth/me`, {
     headers: await authHeaders(),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Failed to load profile.");
+  await cacheProfile(data);
   return data;
 }
