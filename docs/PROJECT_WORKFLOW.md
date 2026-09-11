@@ -1177,6 +1177,192 @@ produces errors that don't make sense for the input.
 
 ---
 
+## Real accessibility bug found by writing a test, not by an audit
+
+While writing `LoginPage.test.jsx` (see `docs/FEATURE_LOG.md`'s entry
+for the new frontend test suite), `screen.getByLabelText(/username/i)`
+failed to find the username input at all — despite the label
+"Username" being right there, visibly, immediately above the field in
+the rendered page.
+
+The cause: `LoginPage.jsx`'s labels were plain `<label>Username</label>`
+elements with no `htmlFor`, and the inputs had no matching `id` — so
+there was no actual programmatic association between them, only
+visual proximity. A sighted user reading the page has no way to tell
+the difference; a screen reader does, since `getByLabelText` uses the
+exact same accessibility-tree lookup a screen reader relies on to
+announce which label goes with which field. This is precisely the
+class of bug an accessibility audit exists to catch, found instead as
+a side effect of writing an ordinary component test — worth noting as
+a real, concrete reason "add tests" and "add an accessibility pass"
+aren't as separate as they might sound; a test written the way React
+Testing Library encourages (query by role/label, not by CSS selector
+or test-id) inherently exercises some of the same accessibility tree
+a screen reader does.
+
+Fixed by adding `id`/`htmlFor` pairs to every label/input pair in
+`LoginPage.jsx` (the account-type select, the username/email field,
+the password field, the 2FA code field) rather than loosening the
+test to `document.querySelector` its way around the gap — the fix
+belongs in the component, since the underlying accessibility problem
+is real regardless of whether a test happens to be looking for it.
+
+This was found in exactly one component (`LoginPage.jsx`) because
+that's the one component with a test written against it this session —
+it's a reasonable bet the same `<label>` (no `htmlFor`)/`<input>` (no
+`id`) pattern recurs in some of the other ~62 components that still
+have no tests, not something to assume is isolated to this one file.
+A genuine accessibility audit across the whole frontend (keyboard
+navigation, ARIA roles, color contrast, screen-reader announcements —
+not just label association) remains a real, separate, not-yet-done
+piece of work — noted here rather than implied to be covered by this
+session's test suite.
+
+---
+
+## Two real snags while adding the mobile offline queue's test suite
+
+**Peer dependency conflict on first install.** Adding
+`@testing-library/react-native` to `mobile/package.json` for component
+tests failed `npm install` outright: the latest version pulled a
+transitive `react-test-renderer@19.2.8` expecting React 19, while this
+project pins `react@18.2.0` (matching the Expo SDK 51 / React Native
+0.74 versions everything else here is built against). Rather than
+forcing it through with `--legacy-peer-deps` (which would silently
+paper over a real version mismatch that could bite later), reconsidered
+what was actually needed: the planned tests were for
+`offlineStore.js`/`offlineSync.js` — pure logic and AsyncStorage/
+network mocking, not component rendering — so `@testing-library/
+react-native` wasn't actually required for this session's tests at
+all. Dropped it; `jest` + `jest-expo` alone installed cleanly and were
+sufficient. Left as a clearly-named gap for later (mobile screen
+components have no tests yet — see `mobile/README.md`'s "Running
+Tests" section) rather than forced through with a mismatched
+dependency tree just to have something installed.
+
+**A timer-contamination bug in a test I wrote, not in the app.** An
+early version of `offlineSync.test.js`'s "does not trigger a sync when
+the app goes to background" test called
+`jest.runOnlyPendingTimersAsync()` after simulating the background
+AppState event — which also let the independent 15-second periodic-
+sync `setInterval` fire, since it counts as "pending" too. The test
+failed, and it initially looked like a real bug (the periodic sync
+firing when it shouldn't) before checking more carefully: the periodic
+sync running on its own schedule regardless of foreground/background
+state is neither a bug nor was it a bug I was even testing for — this
+test cared specifically about whether backgrounding, by itself,
+triggers an extra sync. Fixed by flushing only microtasks
+(`await Promise.resolve()` twice) for that one assertion instead of
+running pending timers, isolating exactly the thing being tested.
+
+---
+
+## A generated-data bug caught by looking at the output, not just the exit code
+
+While building the demo seed script (`services/demo_seed.py`), the
+first working version ran without any exception and produced the
+right row counts — every table populated, every delivery status
+represented, looked done. It wasn't: printing the actual SLA-status
+distribution for a sanity check showed `Counter({'missed': 24,
+'breached': 10, 'not_applicable': 7, 'on_track': 3, 'met': 2})` — a
+demo where the vast majority of completed deliveries appear to have
+missed their deadline, which is both an unrealistic story for a
+"here's a well-run operation" demo and, more importantly, a sign
+something was actually wrong rather than just unlucky random data.
+
+The cause: `_compute_sla_status()`'s `delivered` branch compared the
+delivery's `expected_by` deadline against `now` (the current
+wall-clock time, captured once when the whole seed script starts) to
+decide "met" vs "missed" — but the right comparison for a delivery
+that's ALREADY DELIVERED is against WHEN IT WAS ACTUALLY DELIVERED,
+not against whatever moment the seed script happens to run. Since the
+seeded deliveries span up to 13 days in the past, `expected_by` was
+almost always earlier than "right now" regardless of how promptly the
+delivery was actually completed — so nearly everything read as
+"missed" by construction, independent of the (separately, correctly
+randomized) actual on-time/late split the code was trying to
+represent.
+
+Fixed by passing the delivery's own `updated_at` (its completion
+timestamp) into the comparison instead of `now`, and adding a
+regression test (`test_delivered_orders_mostly_meet_their_sla_not_
+mostly_miss_it` in `tests/test_demo_login.py`) asserting a healthy
+majority of seeded deliveries show "met" — a test that would have
+caught this bug immediately, and now guards against it recurring.
+Worth recording as a general pattern: a script that creates its own
+test data can pass every structural check (right row counts, no
+exceptions, every enum value represented) while still being
+substantively wrong in a way only inspecting the actual generated
+values — not just whether generation completed — would catch.
+
+---
+
+## Web Push had been silently broken this project's entire history — found while adding Expo push
+
+While building `services/expo_push.py` (the mobile app's push
+notification channel), the plan was to reuse `services/push.py`'s Web
+Push as a reference implementation to mirror. Reading it closely
+before writing anything new turned up something worth checking: its
+`send_web_push()` function referenced `monitoring_svc` in both its
+success and failure branches, but the file never imported it anywhere.
+
+Confirmed by actually calling the function directly (not just reading
+the code) that this was real, not a false alarm: every call raised a
+bare `NameError`. Checked why this had never been caught by the
+existing 425+ backend tests — `send_web_push` is only ever reached
+once a genuine `PushSubscriptionDB` row exists for the target user or
+customer (see `_push_to_user_ids`/`_push_to_customer` in
+`services/notifications.py`), and nothing in the test suite had ever
+created one before this session. **Every real Web Push send in this
+project's history would have crashed at this line, silently** (the
+crash happens inside a bare function call with no test or endpoint
+depending on its return value failing loudly) — a customer or agent
+who enabled push notifications would simply never have received one,
+with no error visible anywhere in the product itself.
+
+Fixed the import, then re-ran the same direct call to confirm the fix
+— and hit a SECOND, unrelated `ValueError` immediately, from deep
+inside the `cryptography` library, before the fix could even be
+verified. Traced it rather than assuming it was a new problem caused
+by the import fix: the checked-in default VAPID private key is a full
+PEM string (`-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE
+KEY-----`), and `pywebpush`'s `vapid_private_key` parameter — when
+given a plain string rather than a `Vapid` object — hands it to
+`py_vapid.Vapid.from_string()`, which does `private_key.encode().
+replace(b"\n", b"")` and treats the ENTIRE remaining string (headers
+included) as base64 to decode. It does not strip PEM armor. Confirmed
+by loading the same PEM directly via `cryptography.hazmat.primitives.
+serialization.load_pem_private_key()` (works fine — the key itself was
+never invalid) and separately via `py_vapid.Vapid01.from_pem()` (which
+DOES strip the header/footer lines before decoding, and also worked)
+— isolating the bug to "wrong py_vapid entry point for this input
+shape," not "bad key" or "bad library version." **This means Web Push
+had actually never worked in this project at all, at any point** — the
+import bug alone would have been enough to break it, and this VAPID
+format bug was a second, independent way it was already broken
+underneath that.
+
+Fixed by constructing a real `Vapid01` object once at module load via
+`Vapid01.from_pem()` and passing that object (not the raw PEM string)
+to `webpush()` — the code path `pywebpush`'s own `isinstance(vapid_
+private_key, Vapid01)` check exists to support. Verified via the same
+direct call one more time: it got past both prior failures and made
+an actual HTTP POST attempt to the (deliberately fake, unreachable)
+test endpoint — which surfaced a THIRD gap on the same call: a
+`requests.exceptions.ConnectionError` from the real network attempt
+wasn't caught by the original `except WebPushException` clause,
+violating the function's own documented "never raises" promise.
+Broadened to catch generally, and confirmed clean on a fourth attempt.
+
+Three real bugs, each one hidden behind the previous one, each only
+found by actually calling the function end-to-end and reading what it
+literally did next rather than stopping once the first fix seemed to
+resolve the visible symptom. Locked in with 4 regression tests in the
+new `tests/test_web_push.py` — see `docs/FEATURE_LOG.md`'s entry for
+the full list.
+
+---
+
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something

@@ -3444,6 +3444,367 @@ application code in either was touched.
 
 ---
 
+---
+
+## Frontend test suite (Vitest + React Testing Library)
+
+**What was missing:**
+Zero automated tests existed for the frontend — the README prominently
+advertised "425 tests, 82% coverage," which was entirely a backend
+number. For a project this thorough about backend testing, that was a
+real, visible asymmetry: someone could reasonably assume "425 tests"
+meant the whole application, when it meant one half of it.
+
+**Why it was needed:**
+Requested directly as the most valuable remaining gap, after weighing
+it against several other real options (native-app follow-ups,
+real-time chat, i18n, SaaS billing) — chosen because it was both
+genuinely missing and something actually buildable and verifiable in
+this environment, unlike a live hosted deployment needing real
+platform credentials.
+
+**What it does:**
+New toolchain: Vitest + React Testing Library + jest-dom +
+user-event, configured inside the EXISTING `vite.config.js` (a `test`
+block) rather than a second, separately maintained Jest config that
+could quietly drift from how the app is actually built — the practical
+reason to pick Vitest specifically for a Vite project. New `npm test`
+/ `npm run test:watch` / `npm run test:coverage` scripts.
+
+**66 new tests across 7 files**, chosen for real value over padding —
+pure logic and meaningfully complex components, not trivial
+snapshot-style tests of every file:
+- `csvParser.test.js` (13) — the hand-rolled RFC4180 CSV parser used
+  for bulk delivery import: quoted fields with embedded commas,
+  escaped quotes, embedded newlines, CRLF/CR normalization, short
+  rows, empty input, trailing blank lines.
+- `routeOptimizer.test.js` (17) — the Haversine distance formula
+  checked against a real known city-pair distance (not just internal
+  self-consistency), zone grouping, alphabetical zone sorting,
+  nearest-neighbor ordering verified against a hand-constructed
+  near/medium/far case, and every no-coordinates fallback path.
+- `syncEngine.test.js` (11) — `describeConflict`'s plain-English
+  formatting (both with and without a `kept_by` name),
+  `runSync`'s 3-retry logic exercised for real using Vitest's fake
+  timers (not `setTimeout` mocked away — the actual delay is
+  advanced and the second attempt genuinely runs), and
+  `startAutoSync`'s online/offline gating and cleanup.
+- `PasswordInput.test.jsx` (7), `StatusBadge.test.jsx` (8),
+  `GoogleIcon.test.jsx` (3) — component behavior via React Testing
+  Library, querying by role/label the way a real user or screen
+  reader would rather than by implementation detail.
+- `LoginPage.test.jsx` (7) — the full staff login flow, the 2FA
+  challenge step, error display, the staff/customer account-type
+  switch, and the forgot-password callback, with `AuthContext`/
+  `CustomerAuthContext`/`ThemeContext`/the API modules all mocked.
+
+**A real accessibility bug caught and fixed along the way**, not
+worked around: writing the `LoginPage` test with
+`screen.getByLabelText()` failed — not because the test was wrong, but
+because `LoginPage.jsx`'s `<label>` elements were never actually
+associated with their inputs (no `htmlFor`/`id`), a genuine
+screen-reader gap despite looking fine visually (label sitting right
+next to the input in the DOM is enough for a sighted user, not for
+assistive tech). Fixed in the component itself — added `id`/`htmlFor`
+pairs for the account-type select, the username/email field, the
+password field, and the 2FA code field — rather than loosening the
+test to tolerate the gap.
+
+**Stated honestly, not rounded up**: this is 66 tests covering 4
+service files and 4 components out of roughly 19 services and 63
+components — 100% coverage on the specific files tested, but only
+about 3% of the entire frontend codebase by an `--cov`-equivalent
+measure (`npx vitest run --coverage`). This is a real foundation, not
+comprehensive frontend coverage the way the backend's 82% is — the
+README's own wording and the new `Frontend tests` badge (a test
+*count*, deliberately not a coverage percentage) both reflect that
+distinction rather than implying more than what's actually there.
+
+New CI step: the existing `frontend-build` job (renamed `frontend
+tests + build`) now runs `npm test` before `npm run build`, so a
+frontend regression is caught the same way a backend one already was.
+
+Verified: `npm ci` (matching exactly what CI runs, not just `npm
+install`) resolves cleanly; `npm test` — 66/66 passing; `npm run
+build` — clean, no bundle-size warning, unaffected by the
+`LoginPage.jsx` accessibility fix. No backend code was touched this
+session; the existing 425 backend tests were not re-run since nothing
+in `backend/` changed.
+
+---
+
+---
+
+## Mobile app offline queue — the biggest named gap, closed
+
+**What was missing:**
+`mobile/README.md`'s own "Not Yet Built" section named this as "the
+single biggest feature gap versus the web app": an agent updating a
+delivery's status with no signal simply got an error and lost the
+change — nothing was queued for later the way the web app's
+IndexedDB-backed sync engine already handles.
+
+**Why it was needed:**
+Requested directly, as the natural next step after finishing the
+frontend test suite — genuinely the most substantial remaining gap on
+the mobile app specifically, and one that mattered for real (a
+delivery agent losing an update because of a dead zone is a real
+failure mode, not a cosmetic one).
+
+**What it does:**
+Deliberately mirrors `frontend/src/services/syncEngine.js`'s
+architecture closely rather than inventing a different approach —
+same `MAX_RETRIES`/`RETRY_DELAY_MS` constants, same
+`describeConflict()` wording, same overall `runSync()` control flow —
+adapted to React Native's actual primitives in place of the browser's:
+
+- **`mobile/src/services/offlineStore.js`** — an AsyncStorage-based
+  local cache, the mobile equivalent of the web app's IndexedDB
+  wrapper, scoped per logged-in user the same way (so two agents
+  sharing a device never see each other's cached/pending data).
+  Caches every successful delivery fetch; never lets a background
+  refetch of stale server data clobber an already-queued local edit
+  for the same id.
+- **`mobile/src/services/offlineSync.js`** — sends queued updates to
+  the backend's existing, already-tested `POST /sync` endpoint (see
+  `backend/app/routes/sync.py` — deliberately unauthenticated, since
+  each queued record already carries its own `agent_id`/`org_id` from
+  when it was cached; **zero backend changes were needed**, this is
+  the exact same endpoint the web app's own offline queue already
+  uses). Same 3-retry logic as the web app. Since React Native has no
+  `navigator.onLine`/`"online"` event, connectivity is checked via
+  `expo-network` and sync is re-attempted on app foreground
+  (`AppState` "active") plus every 15 seconds while foregrounded.
+- **`api.js`'s `updateDeliveryStatus`** now distinguishes a genuine
+  network failure (queue it, don't lose it) from a real server-side
+  rejection like a validation error (surface it — retrying a rejection
+  changes nothing) by matching React Native fetch's specific
+  `TypeError: Network request failed` — not by guessing, this is the
+  documented, deliberate shape that failure takes.
+- **Session restore now tolerates being offline** — a real bug that
+  would have undermined the whole feature otherwise: opening the app
+  with no connectivity at all previously looked identical to an
+  expired/invalid token and logged the agent out. Now a cached profile
+  (saved on every successful login/profile fetch) restores the session
+  instead, so an agent starting a shift with no signal can still see
+  their cached deliveries and queue updates.
+- Delivery list, delivery detail, and Settings screens all show clear
+  "Working offline" / "queued to sync" indicators and a live
+  pending-count with a manual "Sync Now" button — nothing about an
+  offline edit is silent.
+
+**22 new tests** (Jest + jest-expo, since Vitest doesn't handle React
+Native's native-module mocking as well as it does the web frontend):
+`offlineStore.test.js` (9 — per-user scoping, not clobbering a pending
+edit, pending-count tracking, sync reconciliation) and
+`offlineSync.test.js` (13 — conflict-description wording, the actual
+`/sync` POST shape with no Authorization header, retry/backoff via
+real fake timers, foreground-vs-background AppState triggers). Needed
+the official `@react-native-async-storage/async-storage` Jest mock
+wired in explicitly (`mobile/jest.setup.js`) — not automatic, that's
+AsyncStorage's own documented setup requirement. One test-design flaw
+caught and fixed during writing: an early version of the
+"background doesn't trigger sync" test used
+`runOnlyPendingTimersAsync()`, which also let the independent 15-second
+periodic-sync interval fire and contaminate the assertion — fixed by
+flushing only microtasks for that specific check.
+
+Verified: `npm install` resolved 1152 packages cleanly (one real peer
+conflict hit and resolved along the way — see
+`docs/PROJECT_WORKFLOW.md`); `npx expo config` still validates cleanly;
+all 12 source files (4 new: `offlineStore.js`, `offlineSync.js`, plus
+the updated `api.js`/`AuthContext.js`/three screens/`App.js`) compile
+through the real Babel/Expo preset; `npm test` — 22/22 passing. New CI
+step (`npm test` added to the existing `mobile-config-check` job). No
+backend or web-frontend code changed this session.
+
+---
+
+---
+
+## "Try the Demo" — a real, populated sandbox with zero signup
+
+**What was missing:**
+Evaluating this project required signing up first — a real piece of
+friction. Someone giving the project 90 seconds would bounce before
+ever seeing the dispatcher dashboard, the fleet view, the SLA
+tracking, or any of the depth the rest of this log describes, because
+none of it is visible until an account exists.
+
+**Why it was needed:**
+Identified directly as the single highest-leverage remaining
+improvement — not a missing application feature so much as a missing
+"door in": everything else in this project is invisible until someone
+can actually look at it.
+
+**What it does:**
+New `POST /auth/demo-login` — no request body, no credentials — logs
+straight into a real, fully-populated dispatcher account. Behind it:
+
+- **`services/demo_seed.py`**: generates one deliberately SHARED demo
+  organization (not a private sandbox per visitor — see that file's
+  own module docstring for the full reasoning: this reuses the
+  project's already-battle-tested multi-tenant isolation rather than
+  inventing a second, parallel per-visitor sandboxing system on top of
+  it). Seeds 6 staff accounts (1 admin, 1 dispatcher, 4 agents), 4
+  customer accounts, 3 zones, 4 fleet vehicles, an SLA policy, 3
+  failed-delivery reason codes, and ~46 deliveries spanning 2 weeks
+  with a full spread of statuses (pending/picked_up/out_for_delivery/
+  delivered/failed_attempt/cancelled) and realistic per-delivery
+  history entries — not a single flat "everything is fine" dataset,
+  but a mix an admin/dispatcher could plausibly be looking at on a
+  real Tuesday, including a believable minority of overdue and
+  SLA-breached deliveries for the alerting UI to have something real
+  to show.
+- **Idempotent and self-healing**: seeded lazily on the very first
+  ever call (so a fresh `docker compose up` with an empty database
+  just works, no separate manual seed step), then reset back to this
+  same known-good state automatically every `DEMO_RESET_INTERVAL_HOURS`
+  (default 6 — see new `services/demo_reset_scheduler.py`, mirroring
+  the existing backup scheduler's shape and same TESTING-guarded
+  startup) — so a visitor can genuinely explore hands-on (reassign
+  deliveries, mark things delivered, poke at settings) without needing
+  read-only restrictions that would defeat the point of a real demo,
+  and the next visitor doesn't inherit whatever mess was left behind.
+- Demo accounts have no real password (same `has_usable_password=False`
+  pattern as an OAuth-only account — there's nothing to guess since
+  login never checks a password for this endpoint at all).
+- Rate-limited tighter than a normal login (10/hour per IP, vs 10/min
+  elsewhere) — the one auth endpoint here needing no credentials at
+  all, so the one most worth capping against casual abuse.
+- Frontend: a prominent "▶ Try the Demo — No Signup Required" button
+  at the top of the login card (`LoginPage.jsx`), above the actual
+  login form — the first thing anyone sees on that page now.
+
+**A real bug caught and fixed while tuning the generated data**, not
+just while writing the happy-path code: the SLA-status calculation for
+a DELIVERED order compared its deadline against the CURRENT wall-clock
+time rather than against WHEN IT WAS ACTUALLY DELIVERED — which made
+nearly every historical delivery read as "missed" regardless of
+whether it was genuinely on time, since a deadline from days ago is
+almost always "in the past by now" no matter what. Caught by actually
+inspecting the generated status distribution (Counter({'missed': 24,
+'breached': 10, ...})) rather than just checking the seed script ran
+without an exception, fixed by comparing against the delivery's own
+completion timestamp instead, and locked in with a regression test
+(`test_delivered_orders_mostly_meet_their_sla_not_mostly_miss_it`).
+
+**10 new backend tests**: the login endpoint returning a real, usable
+session; the token actually working against a real authenticated
+endpoint; lazy first-call seeding vs. reuse on subsequent calls;
+requiring no credentials at all; the seed's realistic variety (every
+delivery status represented, all the expected staff/customer/zone/
+vehicle/SLA counts); full idempotent replacement on a second seed
+call; and — the two tests worth calling out specifically — a real
+signed-up admin's organization and a real customer's account both
+proven to survive repeated demo resets completely untouched. Plus 3
+new frontend tests for the button itself (calls `demoLogin` without
+touching the staff login path, surfaces a backend error message,
+disables itself mid-request).
+
+Full backend suite re-run in three batches: **435/435 passing** (425
+previously + 10 new). Frontend: **69/69 passing** (66 + 3 new),
+`npm run build` clean, no bundle-size warning.
+
+---
+
+---
+
+## Mobile push notifications — and two real pre-existing Web Push bugs found along the way
+
+**What was missing:**
+`mobile/README.md`'s own "Not Yet Built" list named this directly: the
+web app has real Web Push for agents; the mobile app didn't yet
+request or register for Expo push notifications, so an agent using
+only the mobile app had no way to be notified of a new assignment
+without having the app open.
+
+**Why it was needed:**
+Requested directly as the next mobile feature after the offline
+queue — genuinely missing, and named as such in this project's own
+docs already.
+
+**What it does:**
+- **`services/expo_push.py`**: sends a real push notification via
+  Expo's free push gateway (no paid account, no API key — same "zero
+  required configuration" story as every other notification channel
+  here), with the exact same "never raises, a notification failure
+  must never break the flow that triggered it" contract as
+  `services/push.py`'s Web Push. Recorded under its own `expo_push`
+  monitoring channel, separate from Web Push's `push` channel.
+- **`models/expo_push_token.py`** + `POST`/`DELETE
+  /users/me/expo-push-token`: register/unregister a device's Expo push
+  token, mirroring the existing Web Push subscription endpoints.
+- **The actual integration point**: `services/notifications.py`'s
+  shared `_push_to_user_ids()` fan-out — the single function every
+  staff notification in this codebase already goes through (agent
+  assignment, unassignment, etc.) — now sends to both Web Push
+  subscriptions AND registered Expo tokens for the same user id set.
+  This means **every existing staff notification call site
+  automatically gained mobile push support with zero changes to any
+  of them** — the same reason `_push_to_user_ids` existed as one
+  shared function in the first place.
+- Mobile: `src/services/pushNotifications.js` requests permission,
+  gets a real Expo push token, and registers it with the backend
+  (called once after login in `App.js`); unregisters on logout.
+  Genuinely honest about its own setup requirement — unlike Web
+  Push's checked-in default VAPID keypair, there is no working
+  default for Expo push (a token is inherently tied to a specific
+  registered app identity), so a real deployment needs a one-time
+  `npx eas init`; without it, registration quietly no-ops rather than
+  crashing, and every other mobile feature keeps working normally.
+
+**Two real, pre-existing bugs in Web Push found and fixed while
+building this** — not new code, code that had been sitting broken
+since some earlier session, only now actually exercised:
+1. `services/push.py` used `monitoring_svc` without ever importing it
+   — every single call to `send_web_push` (success or failure) raised
+   a bare `NameError`. Never caught before because that function is
+   only reached once a real `PushSubscriptionDB` row exists, which
+   nothing in the test suite ever created before this session.
+2. Once fixed, testing immediately surfaced a second, deeper bug: the
+   checked-in default VAPID private key was passed to `pywebpush` as a
+   full PEM string (with `-----BEGIN PRIVATE KEY-----` header/footer
+   lines) — but `py_vapid`'s `Vapid.from_string()` does not strip PEM
+   armor before base64-decoding, so every call raised a `ValueError`
+   from inside the `cryptography` library before the HTTP request was
+   ever made. **Every previous Web Push send in this project's history
+   would have crashed, silently, this whole time.** Fixed by building
+   a real `Vapid01` object once via `Vapid01.from_pem()` (which does
+   strip the armor correctly) and passing that object, not the raw
+   string, to `webpush()`. A third, smaller gap surfaced testing the
+   fix itself: the original `except WebPushException` clause didn't
+   catch the `requests.exceptions.ConnectionError` a real network
+   failure raises from inside `pywebpush`, violating this function's
+   own documented "never raises" contract — broadened to catch
+   generally. See `docs/PROJECT_WORKFLOW.md` for the full diagnosis
+   of both.
+
+**18 new backend tests**: 4 for the Web Push regression fixes
+(`test_web_push.py` — never raises on a malformed key or an
+unreachable endpoint, the module-level Vapid object builds cleanly,
+the public key is genuinely present) and 8 for Expo push
+(`test_expo_push.py` — token registration, re-registration reassigns
+rather than duplicates, ownership-scoped unregistration, and the
+extended fan-out actually calling Expo push for a registered token,
+not calling it with none registered, and one channel's failure never
+breaking the other). Plus **8 new mobile tests**
+(`pushNotifications.test.js` — permission denied, already-granted
+skips re-prompting, missing EAS project id no-ops, successful
+registration, a failed token fetch never throwing, and the
+unregister-on-logout path) — one edge case (no physical device) is
+explicitly left untested with an honest comment explaining why: a
+genuine Jest/Babel module-mocking limitation for a plain-object
+boolean export, not an oversight, and not worth a more elaborate
+workaround for one simple guard clause.
+
+Full backend suite re-run in three batches: **447/447 passing** (435
+previously + 12 new — 8 Expo + 4 Web Push regression). Full mobile
+suite: **30/30 passing** (22 previously + 8 new). Frontend untouched
+this session.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
