@@ -105,6 +105,15 @@ class OrganizationDB(Base):
     suspended_at = Column(DateTime, nullable=True)
     suspended_reason = Column(String, nullable=True)
 
+    # A single, well-known, shared sandbox org used by POST
+    # /auth/demo-login (see services/demo_seed.py) — never set by any
+    # normal signup path, only ever created/reset by that seeding
+    # service. Lets the app find "the" demo org without hardcoding its
+    # id, and lets any future admin-facing code plainly recognize and
+    # special-case it if needed (e.g. excluding it from real platform
+    # analytics) without guessing based on its name.
+    is_demo = Column(Boolean, nullable=False, default=False)
+
 
 class OrganizationOut(BaseModel):
     id: str

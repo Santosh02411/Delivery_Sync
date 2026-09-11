@@ -23,7 +23,10 @@ mobile app's push notifications.
 import json
 import os
 
-from pywebpush import webpush, WebPushException
+from pywebpush import webpush
+from py_vapid import Vapid01
+
+from app.services import monitoring as monitoring_svc
 
 # Working default keypair, generated for this project. Safe for local
 # dev/demo use; generate your own (see docstring above) before any real
@@ -52,6 +55,24 @@ VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL") or "mailto:admin@deliver
 # `or` correctly treats blank-but-present the same as absent for every
 # one of these three.
 
+# pywebpush's own vapid_private_key parameter (when given a string, not
+# a Vapid instance) is documented as either a raw base64 DER string or
+# a FILE PATH — passed the full "-----BEGIN PRIVATE KEY-----\n...\n
+# -----END PRIVATE KEY-----" PEM text directly, py_vapid's own
+# from_string() does NOT strip those header/footer lines before
+# base64-decoding, so it fails with a ValueError from deep inside the
+# cryptography library on every single call (a real bug this project
+# had — every previous push send silently crashed before this fix, but
+# the test suite never exercised the code path since it only runs once
+# a genuine PushSubscriptionDB row exists, which nothing before this
+# session created). Building a real Vapid01 object once via
+# Vapid01.from_pem() — which DOES correctly strip the PEM armor before
+# decoding — and passing that object (not the raw string) to webpush()
+# is what pywebpush's own isinstance(vapid_private_key, Vapid01) check
+# exists to support; see docs/PROJECT_WORKFLOW.md for the full
+# diagnosis.
+_VAPID = Vapid01.from_pem(VAPID_PRIVATE_KEY_PEM.encode())
+
 
 def send_web_push(subscription_info: dict, title: str, body: str, url: str = "/") -> bool:
     """
@@ -59,17 +80,27 @@ def send_web_push(subscription_info: dict, title: str, body: str, url: str = "/"
     Returns True on success, False on failure (invalid/expired
     subscription, network error, etc.) — never raises, since a push
     failure must never break the status-update flow that triggered it.
+
+    Catches broadly (not just WebPushException) on purpose: the actual
+    HTTP POST to the browser's push service is a real network call
+    (via `requests`, underneath pywebpush), so a transient DNS/
+    connection failure raises `requests.exceptions.RequestException`,
+    not `WebPushException` — narrowing the except clause to only the
+    latter would violate this function's own "never raises" promise
+    for that failure mode. Caught this gap while testing the VAPID-key
+    fix below with a deliberately unreachable endpoint; see
+    docs/PROJECT_WORKFLOW.md for the full diagnosis.
     """
     try:
         webpush(
             subscription_info=subscription_info,
             data=json.dumps({"title": title, "body": body, "url": url}),
-            vapid_private_key=VAPID_PRIVATE_KEY_PEM,
+            vapid_private_key=_VAPID,
             vapid_claims={"sub": VAPID_CLAIM_EMAIL},
         )
         monitoring_svc.record_notification_sent("push", success=True)
         return True
-    except WebPushException as e:
-        print(f"Web push failed (subscription likely expired): {e}")
+    except Exception as e:
+        print(f"Web push failed (subscription likely expired, or a network error): {e}")
         monitoring_svc.record_notification_sent("push", success=False)
         return False

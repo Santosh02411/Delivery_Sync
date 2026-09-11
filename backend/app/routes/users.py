@@ -16,6 +16,7 @@ from app.models.agent_location import AgentLocationDB, AgentLocationUpdate, Agen
 from app.models.location_history import AgentLocationHistoryDB
 from app.models.delivery import DeliveryRecordDB, DeliveryStatus
 from app.models.push_subscription import PushSubscriptionDB, PushSubscriptionCreate
+from app.models.expo_push_token import ExpoPushTokenDB, ExpoPushTokenRegister
 from app.routes.deliveries import require_dispatcher
 from app.routes.auth import get_current_user
 from app.services.push import VAPID_PUBLIC_KEY
@@ -302,3 +303,53 @@ def subscribe_staff_to_push(
         ))
     db.commit()
     return {"message": "Subscribed to push notifications."}
+
+
+@router.post("/me/expo-push-token")
+def register_expo_push_token(
+    payload: ExpoPushTokenRegister,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """
+    Mobile equivalent of subscribe_staff_to_push() above — registers
+    the mobile agent app's (mobile/) Expo push token instead of a
+    browser's Web Push subscription, so an agent gets a real OS-level
+    notification on their phone (even with the app fully closed) the
+    moment they're assigned/unassigned a delivery. Called by the
+    mobile app once notification permission is granted (see
+    mobile/src/services/pushNotifications.js). See
+    services/expo_push.py's own module docstring for why this needs no
+    third-party account or API key to actually work.
+    """
+    existing = db.query(ExpoPushTokenDB).filter(ExpoPushTokenDB.token == payload.token).first()
+    if existing:
+        existing.user_id = current_user.id
+    else:
+        db.add(ExpoPushTokenDB(user_id=current_user.id, token=payload.token, created_at=datetime.utcnow()))
+    db.commit()
+    return {"message": "Registered for push notifications."}
+
+
+@router.delete("/me/expo-push-token")
+def unregister_expo_push_token(
+    payload: ExpoPushTokenRegister,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """
+    Called on logout (see mobile/src/context/AuthContext.js) so a
+    device that's no longer signed in stops receiving push
+    notifications meant for whichever agent it belonged to — the same
+    hygiene reason a Web Push subscription would get cleaned up on
+    logout, just there's no equivalent web-side endpoint yet since the
+    web app's own logout doesn't currently do this either (a real,
+    pre-existing gap on the web side, not something this endpoint
+    needs to solve).
+    """
+    db.query(ExpoPushTokenDB).filter(
+        ExpoPushTokenDB.token == payload.token,
+        ExpoPushTokenDB.user_id == current_user.id,
+    ).delete()
+    db.commit()
+    return {"message": "Unregistered from push notifications."}

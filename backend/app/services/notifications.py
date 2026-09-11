@@ -43,8 +43,10 @@ from sqlalchemy.orm import Session
 from app.services.email import send_status_notification_email
 from app.services.sms import send_status_notification_sms, send_status_notification_whatsapp
 from app.services.push import send_web_push
+from app.services.expo_push import send_expo_push
 from app.models.customer_notification import CustomerNotificationDB
 from app.models.push_subscription import PushSubscriptionDB
+from app.models.expo_push_token import ExpoPushTokenDB
 from app.models.user import UserDB, UserRole
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
@@ -176,7 +178,20 @@ def notify_customer_of_subscription_order_ready(db: Session, customer_id: str, o
 
 
 def _push_to_user_ids(db: Session, user_ids: list[str], title: str, body: str, url: str) -> None:
-    """Shared low-level fan-out: send one Web Push to every subscribed device for a set of staff user IDs."""
+    """
+    Shared low-level fan-out: sends one Web Push to every subscribed
+    browser AND one Expo push to every registered mobile device, for a
+    set of staff user IDs — every call site in this file (agent
+    assignment/unassignment, dispatcher SLA alerts, etc.) automatically
+    reaches the mobile agent app too, with no per-call-site change
+    needed, the same way adding a new PushSubscriptionDB row already
+    made Web Push "just work" for whichever staff member subscribed.
+    `url` is passed through to Web Push as the click-through link (a
+    web page); Expo push has no equivalent single field, since the
+    mobile app itself already knows which screen to open, so it's
+    simply omitted from the Expo call rather than forced into a
+    `data` payload nothing in the app currently reads.
+    """
     if not user_ids:
         return
     try:
@@ -195,6 +210,15 @@ def _push_to_user_ids(db: Session, user_ids: list[str], title: str, body: str, u
             )
     except Exception as error:  # noqa: BLE001
         print(f"Staff web push notification failed: {error}")
+
+    try:
+        expo_tokens = db.query(ExpoPushTokenDB).filter(
+            ExpoPushTokenDB.user_id.in_(user_ids)
+        ).all()
+        for token_row in expo_tokens:
+            send_expo_push(token_row.token, title=title, body=body)
+    except Exception as error:  # noqa: BLE001
+        print(f"Staff Expo push notification failed: {error}")
 
 
 def notify_agent_of_new_assignment(db: Session, delivery_id: str, order_id: str, agent_id: str) -> None:

@@ -56,6 +56,7 @@ from app.services.captcha import verify_captcha, IS_CONFIGURED as CAPTCHA_CONFIG
 from app.services import security as security_svc
 from app.services.email import send_security_alert_email
 from app.services import oauth as oauth_svc
+from app.services import demo_seed as demo_seed_svc
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from datetime import datetime, timedelta
@@ -474,6 +475,44 @@ def exchange_oauth_login_code(request: Request, payload: OAuthExchangeRequest, d
     token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
     refresh_token = _issue_refresh_token(db, user.id, device_info=device_info, ip_address=ip_address)
     return {"access_token": token, "refresh_token": refresh_token, "user": user, "org_invite_code": None}
+
+
+@router.post("/demo-login", response_model=TokenResponse)
+@limiter.limit("10/hour")
+def demo_login(request: Request, db: Session = Depends(get_db)):
+    """
+    "Try the Demo" — logs straight into a real, fully-populated
+    dispatcher account with zero signup, zero password, zero typing.
+    See services/demo_seed.py's own module docstring for the full
+    design rationale (why this is one shared sandbox org rather than a
+    private one per visitor, what it does and doesn't seed, and how
+    it's kept from staying broken after visitors poke at it).
+
+    Rate-limited tighter than a normal login (10/hour per IP, vs the
+    usual 10/minute elsewhere in this file) — this endpoint needs no
+    credentials at all, so it's the one auth endpoint here an
+    automated script could hit relentlessly for no cost; a generous
+    but bounded hourly cap stops that without getting in the way of a
+    real visitor trying the demo a few times.
+
+    Seeds the demo org on first-ever call if it doesn't exist yet
+    (e.g. a fresh local `docker compose up` with an empty database) so
+    this works out of the box with no separate manual seeding step —
+    on every call after that, it just logs into the existing seeded
+    org rather than re-seeding on every click (see
+    services/demo_reset_scheduler.py for what keeps it fresh instead).
+    """
+    admin = demo_seed_svc.get_demo_admin(db)
+    if not admin:
+        org = demo_seed_svc.seed_demo_org(db)
+        admin = demo_seed_svc.get_demo_admin(db)
+
+    if not admin or not admin.is_active:
+        raise HTTPException(status_code=503, detail="The demo isn't available right now. Please try again shortly.")
+
+    token = create_access_token({"sub": admin.id, "role": admin.role.value, "org_id": admin.org_id})
+    refresh_token = _issue_refresh_token(db, admin.id, device_info="demo", ip_address=security_svc.client_ip(request))
+    return {"access_token": token, "refresh_token": refresh_token, "user": admin, "org_invite_code": None}
 
 
 @router.post("/2fa/resend-code")
