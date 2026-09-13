@@ -71,21 +71,25 @@ directly from that same page — see [Key Features](#key-features).
 Two servers, two terminals — both must run at the same time.
 
 **Backend:**
+
 ```bash
 cd backend
 pip install -r requirements.txt
 uvicorn main:app --reload
 ```
+
 Runs at `http://127.0.0.1:8000` — visit `/docs` for the interactive API
 reference.
 
 **Frontend** (separate terminal):
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-Runs at `http://localhost:3000`.
+
+Runs at `http://localhost:3500`.
 
 > **If you're pulling a fresh copy of this project after previously
 > running an older version:** delete `backend/database.db` before
@@ -96,10 +100,12 @@ Runs at `http://localhost:3000`.
 Prefer a single command, or want the "real deployment shape" (Postgres
 instead of SQLite, the frontend served as static files behind nginx,
 `ENVIRONMENT=production` locked down)?
+
 ```bash
 docker compose up --build
 ```
-then visit `http://localhost:3000` — see `docker-compose.yml`'s own
+
+then visit `http://localhost:3500` — see `docker-compose.yml`'s own
 comments for exactly what changes in production mode.
 
 ## Deploying It For Real
@@ -121,7 +127,7 @@ frontend, and a managed Postgres database from one file:
    "deploy once, then wire the two real URLs together" dance is
    unavoidable — each service's real address only exists after its own
    first deploy — `render.yaml` has a comment at each spot that needs it.
-4. *(Optional)* Add real credentials for SMTP, Twilio, Razorpay, Google
+4. _(Optional)_ Add real credentials for SMTP, Twilio, Razorpay, Google
    OAuth, or push notifications in the backend service's Environment
    tab — every one of these already works with zero config (console-
    logged / honestly disabled instead), so this step turns features on,
@@ -155,6 +161,7 @@ separate paid coverage service.
 ## Running the Test Suite
 
 **Backend:**
+
 ```bash
 cd backend
 pip install -r requirements.txt
@@ -180,6 +187,7 @@ real `database.db`.
 > real CI run or local development at all.
 
 **Frontend:**
+
 ```bash
 cd frontend
 npm install
@@ -231,7 +239,7 @@ per-file breakdown.
    delivery to that agent — optionally fill in a customer email so it
    links to a real customer account later.
 4. Open a separate tab/session, choose **Track My Orders (Customer)**,
-   sign up using the *same* email you entered above — the order
+   sign up using the _same_ email you entered above — the order
    auto-links to their account immediately (even retroactively, if they
    sign up after the order already existed, and works the same way for
    a Google sign-up too).
@@ -304,23 +312,24 @@ instructions, and an honest list of what this app does and doesn't
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| Frontend | React + Vite (code-split, PWA) |
-| Mobile | React Native (Expo) — see `mobile/` |
-| Offline Storage | IndexedDB (per-user scoped, web) |
-| Backend | FastAPI |
-| Database | SQLite (dev/default) or PostgreSQL (production) |
-| Auth | JWT + Google OAuth 2.0, separate token types for staff vs. customers |
-| Rate Limiting | slowapi (in-memory, Redis-ready) |
-| Testing | pytest + pytest-cov (backend), Vitest + React Testing Library (frontend) |
-| CI/CD | GitHub Actions (tests + coverage, frontend build, Docker build check) |
-| Deployment | Docker Compose (local) or Render Blueprint (hosted) |
+| Layer           | Technology                                                               |
+| --------------- | ------------------------------------------------------------------------ |
+| Frontend        | React + Vite (code-split, PWA)                                           |
+| Mobile          | React Native (Expo) — see `mobile/`                                      |
+| Offline Storage | IndexedDB (per-user scoped, web)                                         |
+| Backend         | FastAPI                                                                  |
+| Database        | SQLite (dev/default) or PostgreSQL (production)                          |
+| Auth            | JWT + Google OAuth 2.0, separate token types for staff vs. customers     |
+| Rate Limiting   | slowapi (in-memory, Redis-ready)                                         |
+| Testing         | pytest + pytest-cov (backend), Vitest + React Testing Library (frontend) |
+| CI/CD           | GitHub Actions (tests + coverage, frontend build, Docker build check)    |
+| Deployment      | Docker Compose (local) or Render Blueprint (hosted)                      |
 
 ## Full Documentation
 
 The `docs/` folder is more thorough than most student projects
 intentionally:
+
 - [`TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md) — architecture and data model
 - [`SECURITY_AND_ACCESS.md`](docs/SECURITY_AND_ACCESS.md) — auth model, known limitations
 - [`FEATURE_LOG.md`](docs/FEATURE_LOG.md) — every feature: what was missing, why it was built, what it does
