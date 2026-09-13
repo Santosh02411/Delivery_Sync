@@ -24,7 +24,7 @@ describe("describeConflict", () => {
       kept_by: "Rahul K.",
     });
     expect(message).toBe(
-      'Order ORD-1: your change to "picked_up" was overridden — Rahul K. already updated it to "delivered" more recently, so that\'s what was kept.'
+      'Order ORD-1: your change to "picked_up" was overridden — Rahul K. already updated it to "delivered" more recently, so that\'s what was kept.',
     );
   });
 
@@ -56,7 +56,10 @@ describe("runSync", () => {
     const pending = [{ id: "1" }, { id: "2" }];
     getPendingDeliveries.mockResolvedValue(pending);
     syncPendingDeliveries.mockResolvedValue({
-      resolved_records: [{ id: "1", status: "delivered" }, { id: "2", status: "picked_up" }],
+      resolved_records: [
+        { id: "1", status: "delivered" },
+        { id: "2", status: "picked_up" },
+      ],
       errors: [],
       conflicts: [],
     });
@@ -65,9 +68,19 @@ describe("runSync", () => {
 
     expect(syncPendingDeliveries).toHaveBeenCalledWith(pending);
     expect(markAsSynced).toHaveBeenCalledTimes(2);
-    expect(markAsSynced).toHaveBeenCalledWith("1", { id: "1", status: "delivered" });
-    expect(markAsSynced).toHaveBeenCalledWith("2", { id: "2", status: "picked_up" });
-    expect(result).toMatchObject({ success: true, syncedCount: 2, errorCount: 0 });
+    expect(markAsSynced).toHaveBeenCalledWith("1", {
+      id: "1",
+      status: "delivered",
+    });
+    expect(markAsSynced).toHaveBeenCalledWith("2", {
+      id: "2",
+      status: "picked_up",
+    });
+    expect(result).toMatchObject({
+      success: true,
+      syncedCount: 2,
+      errorCount: 0,
+    });
   });
 
   it("surfaces conflicts and errors returned by the backend without treating them as failure", async () => {
@@ -75,7 +88,9 @@ describe("runSync", () => {
     syncPendingDeliveries.mockResolvedValue({
       resolved_records: [{ id: "1" }],
       errors: [{ id: "1", message: "validation failed" }],
-      conflicts: [{ order_id: "ORD-1", your_status: "a", kept_status: "b", kept_by: "X" }],
+      conflicts: [
+        { order_id: "ORD-1", your_status: "a", kept_status: "b", kept_by: "X" },
+      ],
     });
 
     const result = await runSync();
@@ -90,12 +105,16 @@ describe("runSync", () => {
     getPendingDeliveries.mockResolvedValue([{ id: "1" }]);
     syncPendingDeliveries
       .mockRejectedValueOnce(new Error("network down"))
-      .mockResolvedValueOnce({ resolved_records: [{ id: "1" }], errors: [], conflicts: [] });
+      .mockResolvedValueOnce({
+        resolved_records: [{ id: "1" }],
+        errors: [],
+        conflicts: [],
+      });
 
     const resultPromise = runSync();
     // Let the first attempt's rejection be handled, then fast-forward
     // past the fixed retry delay so the second attempt actually runs.
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(3500);
     const result = await resultPromise;
 
     expect(syncPendingDeliveries).toHaveBeenCalledTimes(2);
@@ -109,12 +128,16 @@ describe("runSync", () => {
     syncPendingDeliveries.mockRejectedValue(new Error("still down"));
 
     const resultPromise = runSync();
-    await vi.advanceTimersByTimeAsync(3000);
-    await vi.advanceTimersByTimeAsync(3000);
+    await vi.advanceTimersByTimeAsync(3500);
+    await vi.advanceTimersByTimeAsync(3500);
     const result = await resultPromise;
 
     expect(syncPendingDeliveries).toHaveBeenCalledTimes(3);
-    expect(result).toEqual({ success: false, syncedCount: 0, error: "still down" });
+    expect(result).toEqual({
+      success: false,
+      syncedCount: 0,
+      error: "still down",
+    });
     vi.useRealTimers();
   });
 });
@@ -130,7 +153,10 @@ describe("startAutoSync", () => {
   });
 
   it("triggers a sync immediately on startup while online", async () => {
-    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+    Object.defineProperty(navigator, "onLine", {
+      value: true,
+      configurable: true,
+    });
     getPendingDeliveries.mockResolvedValue([]);
 
     const stop = startAutoSync();
@@ -141,7 +167,10 @@ describe("startAutoSync", () => {
   });
 
   it("does not sync on startup while offline", async () => {
-    Object.defineProperty(navigator, "onLine", { value: false, configurable: true });
+    Object.defineProperty(navigator, "onLine", {
+      value: false,
+      configurable: true,
+    });
 
     const stop = startAutoSync();
     await vi.runOnlyPendingTimersAsync();
@@ -151,19 +180,28 @@ describe("startAutoSync", () => {
   });
 
   it("calls onSyncComplete with the sync result", async () => {
-    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+    Object.defineProperty(navigator, "onLine", {
+      value: true,
+      configurable: true,
+    });
     getPendingDeliveries.mockResolvedValue([]);
     const onSyncComplete = vi.fn();
 
     const stop = startAutoSync(onSyncComplete);
     await vi.runOnlyPendingTimersAsync();
 
-    expect(onSyncComplete).toHaveBeenCalledWith({ success: true, syncedCount: 0 });
+    expect(onSyncComplete).toHaveBeenCalledWith({
+      success: true,
+      syncedCount: 0,
+    });
     stop();
   });
 
   it("returns a cleanup function that removes the online listener and stops the interval", () => {
-    Object.defineProperty(navigator, "onLine", { value: true, configurable: true });
+    Object.defineProperty(navigator, "onLine", {
+      value: true,
+      configurable: true,
+    });
     getPendingDeliveries.mockResolvedValue([]);
     const removeSpy = vi.spyOn(window, "removeEventListener");
 

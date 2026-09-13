@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { fetchCustomerDeliveryAgentLocation, fetchPublicTrackingAgentLocation } from "../services/api";
+import {
+  fetchCustomerDeliveryAgentLocation,
+  fetchPublicTrackingAgentLocation,
+} from "../services/api";
 import { cacheTile, getCachedTile } from "../services/tileCache";
 import { connectWebSocket } from "../services/websocket";
 
@@ -52,7 +55,8 @@ const CachedTileLayer = L.TileLayer.extend({
 
       try {
         const response = await fetch(url);
-        if (!response.ok) throw new Error(`Tile fetch failed: ${response.status}`);
+        if (!response.ok)
+          throw new Error(`Tile fetch failed: ${response.status}`);
         const blob = await response.blob();
         cacheTile(url, blob); // fire-and-forget — don't block rendering on the cache write
         tile.src = URL.createObjectURL(blob);
@@ -116,12 +120,17 @@ export default function LiveTrackingMap({ token, deliveryId }) {
           attributionControl: true,
         }).setView(latLng, 14);
 
-        new CachedTileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          maxZoom: 19,
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-        }).addTo(mapRef.current);
+        new CachedTileLayer(
+          "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+          {
+            maxZoom: 19,
+            attribution:
+              '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          },
+        ).addTo(mapRef.current);
 
-        markerRef.current = L.marker(latLng).addTo(mapRef.current)
+        markerRef.current = L.marker(latLng)
+          .addTo(mapRef.current)
           .bindPopup("Your delivery agent");
       } else if (mapRef.current && markerRef.current) {
         markerRef.current.setLatLng(latLng);
@@ -141,12 +150,13 @@ export default function LiveTrackingMap({ token, deliveryId }) {
         }
         applyLocation(loc.latitude, loc.longitude);
       } catch (err) {
-        if (!cancelled) setStatus((prev) => (prev === "live" ? "live" : "unavailable"));
+        if (!cancelled)
+          setStatus((prev) => (prev === "live" ? "live" : "unavailable"));
       }
     }
 
     poll(); // initial fetch so the map isn't blank while the socket connects
-    intervalId = setInterval(poll, 30000); // safety net — see module docstring
+    intervalId = setInterval(poll, 35000); // safety net — see module docstring
 
     const socket = connectWebSocket(`/ws/tracking/${deliveryId}`, {
       onMessage: (data) => {
@@ -170,8 +180,8 @@ export default function LiveTrackingMap({ token, deliveryId }) {
   if (status === "unavailable") {
     return (
       <p style={{ fontSize: "12px", color: "var(--text-muted)" }}>
-        Live location isn't available for this order yet — it shows up
-        once the agent turns on location sharing.
+        Live location isn't available for this order yet — it shows up once the
+        agent turns on location sharing.
       </p>
     );
   }
@@ -180,10 +190,23 @@ export default function LiveTrackingMap({ token, deliveryId }) {
     <div>
       <div
         ref={mapContainerRef}
-        style={{ height: "220px", width: "100%", borderRadius: "var(--radius-sm)", overflow: "hidden" }}
+        style={{
+          height: "220px",
+          width: "100%",
+          borderRadius: "var(--radius-sm)",
+          overflow: "hidden",
+        }}
       />
       {status === "loading" && (
-        <p style={{ fontSize: "11px", color: "var(--text-muted)", marginTop: "4px" }}>Locating agent...</p>
+        <p
+          style={{
+            fontSize: "11px",
+            color: "var(--text-muted)",
+            marginTop: "4px",
+          }}
+        >
+          Locating agent...
+        </p>
       )}
     </div>
   );
