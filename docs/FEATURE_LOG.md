@@ -3,8 +3,8 @@
 This file tracks every feature built into this project, in the order it
 was added: what was missing before it existed, why it was needed, and
 what it actually does now. This is different from `PROJECT_WORKFLOW.md`
-(which logs bugs and how they were fixed) — this file is about *decisions*
-and *reasoning*, so you can explain not just how something works, but why
+(which logs bugs and how they were fixed) — this file is about _decisions_
+and _reasoning_, so you can explain not just how something works, but why
 it exists at all.
 
 This file is maintained going forward — every new feature gets an entry
@@ -144,7 +144,7 @@ dropdown, and a click-through modal showing a delivery's full details.
 
 ## Status History / Audit Log
 
-**What was missing:** The detail modal showed a delivery's *current*
+**What was missing:** The detail modal showed a delivery's _current_
 state, but nothing about how it got there — no record of who changed
 what, or when.
 
@@ -359,7 +359,7 @@ organizations and confirmed each saw zero of the other's data.
 **A real vulnerability found and fixed while building this:** the offline
 `/sync` endpoint is intentionally unauthenticated (see Rate Limiting
 below for why), which meant a crafted payload could reference an
-existing delivery ID belonging to a *different* organization and
+existing delivery ID belonging to a _different_ organization and
 overwrite it, as long as it paired that ID with one of its own agent
 IDs. Fixed by verifying the existing record's organization matches the
 requesting agent's organization before allowing any update — confirmed
@@ -383,7 +383,7 @@ multi-user product, not an optional extra.
 organization becomes its admin automatically) can view every user in
 their organization, deactivate or reactivate an agent's account
 (deactivation takes effect immediately — even blocking that user's
-*already-issued* login token, not just future login attempts), and reset
+_already-issued_ login token, not just future login attempts), and reset
 a user's password directly. Honest, disclosed limitation: since there's
 no email service, "reset password" means the admin sets a new one and
 shares it with the person themselves — not an emailed reset link, which
@@ -417,7 +417,7 @@ organization's deliveries, optionally filtered to a date range using the
 same From/To fields already used for table filtering. Built with
 Python's built-in `csv` module (not hand-built comma-joined strings), so
 a notes field containing a comma still exports correctly — deliberately
-avoiding the exact category of bug the bulk-import CSV *parser* was
+avoiding the exact category of bug the bulk-import CSV _parser_ was
 built to prevent on the way in, this time on the way out.
 
 ---
@@ -434,6 +434,7 @@ and CORS was wide open to any origin.
 before this could honestly be called ready for any real deployment.
 
 **What it does:**
+
 - Signup and login are rate-limited per IP (5/min and 10/min
   respectively) using `slowapi`, confirmed by actually sending 7 rapid
   signup requests and watching the 6th and 7th get correctly rejected
@@ -882,7 +883,7 @@ those are security credentials, not personal data worth exposing in a
 downloadable file). `DELETE /customer/account` requires the password
 again (not just an active session) and deletes purely personal data
 outright (cart, addresses, notifications, push subscriptions) — but
-*anonymizes* rather than deletes orders/deliveries/reviews, since a
+_anonymizes_ rather than deletes orders/deliveries/reviews, since a
 store has a legitimate business reason to retain its own transaction
 and refund records even after a customer's account is gone, the same
 pattern real e-commerce platforms (Amazon, Shopify) use. New
@@ -981,11 +982,12 @@ rather than a clean error response — which the checkout code's
 real problem. The customer saw "You're offline" while genuinely online.
 
 **The fix, at both ends:**
+
 - `routes/checkout.py` now wraps the Razorpay call in a real
   try/except — an authentication failure returns a clean `502` with an
   actionable message (check `RAZORPAY_KEY_ID`/`SECRET` in `.env`, or
   unset them to use the built-in test-mode path) instead of crashing.
-- `main.py`'s security-headers middleware is now a backstop for *any*
+- `main.py`'s security-headers middleware is now a backstop for _any_
   unhandled exception anywhere in the app — logs it server-side and
   always returns a clean `500 {"detail": "..."}` JSON response, so a
   future bug in a completely different route can never again show up in
@@ -1022,13 +1024,13 @@ and the offline-queued-then-synced confirmation messages.
 ## Config Fix: `FRONTEND_URL` Port Mismatch (Password Reset Links)
 
 **What was wrong:** `frontend/vite.config.js` runs the dev server on
-port **3000**, but `backend/.env.example`'s `FRONTEND_URL` example value
+port **3500**, but `backend/.env.example`'s `FRONTEND_URL` example value
 said **5173** (Vite's own default, not what this project actually
 uses). Copying `.env.example` to `.env` without editing that line means
 every password-reset email links to a port nothing is listening on —
 "this site can't be reached."
 
-**The fix:** `.env.example` now matches the real port (3000) with a
+**The fix:** `.env.example` now matches the real port (3500) with a
 comment explaining why it has to match whatever `npm run dev` actually
 prints, rather than assuming Vite's default.
 
@@ -1130,12 +1132,13 @@ existed at all. Also no way to delete notifications; they only ever
 accumulated.
 
 **What it does:**
+
 - New `GET/PATCH /customer/me` (name/email, with email-uniqueness
   checking) and `POST /customer/me/change-password` (requires the
   current password, same re-auth-to-change-something-sensitive pattern
   used for staff 2FA disable). New "👤 Profile" tab with both forms.
 - New `DELETE /customer/notifications/{id}` (single) and `DELETE
-  /customer/notifications?only_read=true/false` (bulk — defaults to
+/customer/notifications?only_read=true/false` (bulk — defaults to
   only clearing already-read ones, the safer default for a "clean up"
   action, with a full-clear option available). Notification panel
   gained a 🗑 delete button per item and a "Clear read" button.
@@ -1310,17 +1313,19 @@ page already uses.
 
 **What was already there, worth naming:** the app already had a real,
 distinctive design system — "Fleet Ops Console": Space Grotesk (display)
-+ Inter (body) + JetBrains Mono (data/mono) as a deliberate three-font
-pairing, a near-black dispatch-console palette with a warm amber accent
-(`#f2a93b` — chosen specifically to avoid both the acid-green-on-black
-and warm-terracotta-on-cream looks that AI-generated designs default
-to), and a light-theme override sharing every variable name. That
-wasn't templated — it just wasn't being refined, and the customer
-dashboard wasn't using it consistently (fixed in an earlier session).
-This pass builds on that existing identity rather than replacing it.
+
+- Inter (body) + JetBrains Mono (data/mono) as a deliberate three-font
+  pairing, a near-black dispatch-console palette with a warm amber accent
+  (`#f2a93b` — chosen specifically to avoid both the acid-green-on-black
+  and warm-terracotta-on-cream looks that AI-generated designs default
+  to), and a light-theme override sharing every variable name. That
+  wasn't templated — it just wasn't being refined, and the customer
+  dashboard wasn't using it consistently (fixed in an earlier session).
+  This pass builds on that existing identity rather than replacing it.
 
 **What changed, all in `theme.css`/`auth.css` so it applies everywhere
 at once:**
+
 - Real depth: a proper shadow scale (`--shadow-sm/md/lg`, black-based
   for the dark theme since gray shadows look like mistakes on
   near-black, gray-based for light) applied to cards, the sidebar,
@@ -1368,6 +1373,7 @@ and no distinction in app behavior between "someone's laptop" and "a
 real deployment."
 
 **What it does:**
+
 - `app/db/session.py` now reads `DATABASE_URL` — unset (default) still
   means the zero-setup SQLite file; set to a real Postgres URL and the
   exact same models/migrations/queries work against it instead, since
@@ -1388,12 +1394,12 @@ real deployment."
 - `backend/Dockerfile`, `frontend/Dockerfile` (a real two-stage build —
   `npm run build`'s static output served by nginx, no Node in the final
   image), and a root `docker-compose.yml` wiring up Postgres + backend
-  + frontend together, all with `ENVIRONMENT=production` set. New
-  `docs/DOCKER.md` covers running it and what's actually different from
-  local dev. `frontend/src/services/api.js`'s `API_BASE_URL` is now a
-  build-time `VITE_API_BASE_URL`, since a Docker/production build can't
-  assume the backend lives at `127.0.0.1:8000` the way local dev always
-  did.
+  - frontend together, all with `ENVIRONMENT=production` set. New
+    `docs/DOCKER.md` covers running it and what's actually different from
+    local dev. `frontend/src/services/api.js`'s `API_BASE_URL` is now a
+    build-time `VITE_API_BASE_URL`, since a Docker/production build can't
+    assume the backend lives at `127.0.0.1:8000` the way local dev always
+    did.
 - Docker itself isn't available in the environment this was built in,
   so the Dockerfiles/compose file are validated as far as reasonably
   possible without a live daemon: YAML syntax-checked, and every actual
@@ -1479,7 +1485,7 @@ prices/stock (skipping any item that's since sold out or gone
 inactive, applying the org's current delivery fee/tax and re-validating
 any saved coupon fresh each cycle) and fires an in-app + push
 notification — "your recurring order is ready, confirm & pay." The
-customer pays it via the *existing*, unmodified checkout payment
+customer pays it via the _existing_, unmodified checkout payment
 machinery (`routes/subscriptions.py`'s `initiate-payment` endpoint
 mirrors `checkout()`'s Razorpay/COD/test-mode tail, then the frontend
 calls the same `POST /customer/checkout/verify` a normal order uses).
@@ -1577,7 +1583,7 @@ rather than after it becomes a problem.
 
 **What it does:**
 
-*Action log:* a new `ActionLogDB` table (`app/models/action_log.py`) —
+_Action log:_ a new `ActionLogDB` table (`app/models/action_log.py`) —
 separate from `DeliveryHistoryDB`, which already covered its own
 narrower case well — records actor, action (`product.update`,
 `user.deactivate`, `coupon.delete`, `store_settings.update`, etc.),
@@ -1593,7 +1599,7 @@ org-scoped) exposes it. `AuditLogViewer.jsx` now has two tabs —
 both logs live in one place without merging two differently-shaped
 tables into one query.
 
-*Pagination:* `GET /customer/orders` and `GET /customer/notifications`
+_Pagination:_ `GET /customer/orders` and `GET /customer/notifications`
 now default to `limit=20`/`offset`-based paging (bounded `limit<=100`).
 `GET /customer/deliveries` supports the same `limit`/`offset` but
 leaves them optional with no default — that response also seeds the
@@ -1637,7 +1643,7 @@ password had no way to recover the account themselves, only a
 logged-in "change password" option that's useless if you can't log in.
 Second, the dispatcher side already collects and uses live agent GPS
 (for auto-assign suggestions, and for the logged-in customer dashboard's
-tracking map), but the *public*, no-login tracking page — the one
+tracking map), but the _public_, no-login tracking page — the one
 shared via the tracking link, usable without an account — only showed
 status text, never the agent's live position on a map.
 
@@ -1648,7 +1654,7 @@ that's exactly where a live map matters most.
 
 **What it does:**
 
-*Customer password reset:* a new `CustomerPasswordResetTokenDB` table
+_Customer password reset:_ a new `CustomerPasswordResetTokenDB` table
 (`models/customer_password_reset.py`) — kept separate from the staff
 `PasswordResetTokenDB` for the same reason customer auth already lives
 in its own files: `CustomerDB` and `UserDB` are two different identity
@@ -1666,7 +1672,7 @@ for customer login too; `App.jsx` distinguishes a staff reset link
 (`?reset_token=`) from a customer one (`?customer_reset_token=`) so
 both land on the right flow.
 
-*Live agent location on public tracking:* a new
+_Live agent location on public tracking:_ a new
 `GET /track/{delivery_id}/agent-location`, deliberately narrower than
 the existing logged-in customer endpoint since this one has no login
 and no ownership check to fall back on. It only returns a position
@@ -1703,7 +1709,7 @@ build` clean.
 
 **What was missing:** two smaller gaps flagged alongside the earlier
 audit-log/pagination work. First, the dispatcher table had bulk
-*import* (CSV upload of new deliveries) but no bulk *edit* of
+_import_ (CSV upload of new deliveries) but no bulk _edit_ of
 deliveries already in the system — a dispatcher wanting to move 30
 deliveries to "out_for_delivery" at once, or reassign a sick agent's
 whole queue to someone else, had to click into each one individually.
@@ -1716,7 +1722,7 @@ original sessions and never turned into a permanent regression net.
 **Why it was needed:** bulk actions are a basic expectation once a
 dispatcher table is going to have more than a handful of rows in it —
 without bulk edit, "for scale" pagination (the earlier feature) still
-leaves scale-sized *work* just as tedious as it always was. And a test
+leaves scale-sized _work_ just as tedious as it always was. And a test
 suite that only covers the newest quarter of the codebase gives false
 confidence — a change to checkout, cart, or the org-settings model
 could silently break subscriptions or analytics with nothing catching
@@ -1724,7 +1730,7 @@ it.
 
 **What it does:**
 
-*Bulk actions:* two new endpoints, `PATCH /deliveries/bulk-status` and
+_Bulk actions:_ two new endpoints, `PATCH /deliveries/bulk-status` and
 `PATCH /deliveries/bulk-assign-agent`, both dispatcher/admin-only and
 org-scoped. Both return a per-item `{delivery_id, success, error}`
 result list plus success/failure counts — partial success rather than
@@ -1745,7 +1751,7 @@ header checkbox, and an action bar that appears once anything's
 selected — status dropdown + Apply, agent dropdown + Reassign, and a
 result toast summarizing how many succeeded/failed.
 
-*Backfilled tests:* four new test files —
+_Backfilled tests:_ four new test files —
 `test_bulk_delivery_actions.py` (8 tests: multi-delivery status update,
 partial success on an unknown ID, org isolation, pending→picked_up on
 reassign, agent-swap-without-status-change for an in-progress delivery,
@@ -1776,7 +1782,7 @@ from 37). Frontend: `npm run build` clean.
 against the frontend) turned up one genuine asymmetry: customers could
 change their own password and edit their own profile while logged in
 (`/customer/me`, `/customer/me/change-password`); staff (admin/
-dispatcher/agent) had neither — only an admin resetting *someone else's*
+dispatcher/agent) had neither — only an admin resetting _someone else's_
 password, or the forgot-password email flow, which only helps when
 you're already logged out. There was no "my account" page for staff at
 all, just a 2FA settings screen. Separately, a UI bug was reported: the
@@ -1793,7 +1799,7 @@ its own merits.
 
 **What it does:**
 
-*Staff account settings:* `GET/PATCH /auth/me` and
+_Staff account settings:_ `GET/PATCH /auth/me` and
 `POST /auth/me/change-password`, added right next to `get_current_user`
 in `routes/auth.py` and mirroring `routes/customer_auth.py`'s
 `/customer/me` endpoints field-for-field — same current-password
@@ -1810,7 +1816,7 @@ existing "Security" (2FA) link — a separate page from 2FA on purpose,
 since "who am I / what's my password" and "how do I log in" are
 different concerns someone might visit independently.
 
-*Notification dropdown fix:* the notification panel is now `position:
+_Notification dropdown fix:_ the notification panel is now `position:
 fixed`, anchored near the sidebar's Notifications trigger button, with
 a transparent click-outside-to-close backdrop and a close (×) button —
 completely decoupled from the page's document flow, so it always
@@ -1848,7 +1854,7 @@ otherwise thorough feature set.
 
 **What it does:**
 
-*Email verification (staff + customer):* a new `email_verified` column
+_Email verification (staff + customer):_ a new `email_verified` column
 on both `UserDB` and `CustomerDB`, with a verification email sent
 automatically at signup and `POST /auth/verify-email` +
 `POST /auth/resend-verification` (and customer equivalents) to
@@ -1861,7 +1867,7 @@ partially unusable without it configured. What it does give: a real,
 checkable flag, and a dismissible banner with a one-click resend in
 both the staff shell and the customer dashboard.
 
-*CAPTCHA:* `services/captcha.py`, a genuine Google reCAPTCHA v2
+_CAPTCHA:_ `services/captcha.py`, a genuine Google reCAPTCHA v2
 integration modeled deliberately on `services/payment.py`'s existing
 "optional integration, no-ops if unconfigured" pattern — set
 `RECAPTCHA_SECRET_KEY` and it calls Google's siteverify API for real;
@@ -1871,7 +1877,7 @@ Wired into staff + customer signup and forgot-password. The frontend's
 `Captcha.jsx` widget only renders if `VITE_RECAPTCHA_SITE_KEY` is set,
 degrading the same way independently on that side.
 
-*Refresh-token rotation:* access tokens shortened from 24 hours to 30
+_Refresh-token rotation:_ access tokens shortened from 24 hours to 30
 minutes (`services/auth.py`). New `RefreshTokenDB`/
 `CustomerRefreshTokenDB` tables hold long-lived (30-day), SHA-256-hashed
 refresh tokens — hashed with a fast algorithm rather than bcrypt on
@@ -1920,7 +1926,7 @@ Frontend: `npm run build` clean.
 ## Failed-Delivery Reason Codes, Delivery-Attempts Log, Reschedule Workflow, Partial-Delivery Marking, Priority Sorting
 
 **What was missing:** the rest of the delivery lifecycle beyond a
-plain status update — no standardized way to record *why* a delivery
+plain status update — no standardized way to record _why_ a delivery
 failed, no log of how many times a delivery had actually been
 attempted (vs. just its current status), no way to reschedule a
 failed delivery to a new date, no way to record that a delivery was
@@ -1931,12 +1937,13 @@ which deliveries in the queue matter most.
 give a dispatcher or an analytics dashboard anything to group or act
 on — "customer wasn't home" and "not home" and "no one answered" are
 the same event described three ways. Attempt history distinct from
-status history matters because a delivery's *current* status doesn't
+status history matters because a delivery's _current_ status doesn't
 tell you it took three tries to get there. And a flat, unordered
 dispatcher queue means urgent same-day orders get lost in a list
 sorted only by recency.
 
 **What it does:**
+
 - **Reason codes** (`models/failed_delivery_reason.py`,
   `routes/failed_delivery_reasons.py`) — admin-managed, org-scoped
   CRUD at `/admin/failed-delivery-reasons`, with soft-delete via an
@@ -2016,6 +2023,7 @@ needs payroll data, and an agent needs a way to request time off
 without a side channel (a text message, a shrug).
 
 **What it does:**
+
 - **Shifts** (`models/shift.py`) — the roster PLAN: dispatcher/admin
   schedules a staff member for a date + time window
   (`POST /workforce/shifts`), staff see their own
@@ -2940,7 +2948,7 @@ way to check what you'd typed before submitting — a common source of
 failed logins from typos. Separately, once a dispatcher assigned a
 customer order to an agent there was no way to undo just that one
 assignment and drop it back into the unassigned queue — a dispatcher
-could bulk-reassign it to a *different* agent (via the multi-select
+could bulk-reassign it to a _different_ agent (via the multi-select
 checkbox bar), but there was no single-click "take this back" action,
 and no way to simply unassign it without immediately picking a
 replacement agent. The UI also had almost no motion — no transitions
@@ -2955,6 +2963,7 @@ being forced into the multi-select bulk-action flow for a single
 delivery.
 
 **What it does:**
+
 1. **Password show/hide** — new reusable `PasswordInput` component
    (`components/PasswordInput.jsx`): a plain-CSS eye/eye-off SVG toggle
    button absolutely positioned inside the input, purely visual state
@@ -3020,6 +3029,7 @@ Requested directly, as natural extensions of the previous session's
 work.
 
 **What it does:**
+
 1. **Reassign/return inside the delivery detail modal** —
    `DeliveryDetailModal` now accepts optional `agents`, `onReassign`,
    `onReturnToPool` (+ loading-state) props. When passed (only by
@@ -3034,7 +3044,7 @@ work.
    the mirror image of the existing `notify_agent_of_new_assignment`
    (same Web Push mechanism, same best-effort silently-no-op-if-no-
    subscription semantics). Wired into `return_delivery_to_pool()`:
-   fires to the *old* agent (captured before `agent_id` is cleared)
+   fires to the _old_ agent (captured before `agent_id` is cleared)
    whenever a return actually had an agent to notify.
 3. **Animation coverage widened** — agent's own `.delivery-card` list
    now fade-in on load and lift slightly on hover (previously hover-
@@ -3070,6 +3080,7 @@ Requested directly — the person asked for exactly these three,
 previously self-identified as gaps rather than newly discovered ones.
 
 **What it does:**
+
 1. **Google OAuth/SSO (staff only, same scoping precedent as 2FA)** —
    new `services/oauth.py`: builds the Google authorization URL and
    exchanges an auth code for a verified profile via plain HTTP calls
@@ -3163,6 +3174,7 @@ Requested directly, as the natural continuation of the previous
 session's own "what's still not done" list.
 
 **What it does:**
+
 1. **Self-service "add a password"** — new `UserDB.has_usable_password`
    / `CustomerDB.has_usable_password` columns (default `True` via
    migrate.py's scalar-default handling, so every existing/password
@@ -3260,6 +3272,7 @@ skimming the repo cold" are different questions, and this session
 answered the second one.
 
 **What it does:**
+
 1. **A real CI workflow** — `.github/workflows/ci.yml` now actually
    exists: three independent jobs (backend tests + coverage, frontend
    build, Docker image build check for both services) so a
@@ -3474,6 +3487,7 @@ reason to pick Vitest specifically for a Vite project. New `npm test`
 **66 new tests across 7 files**, chosen for real value over padding —
 pure logic and meaningfully complex components, not trivial
 snapshot-style tests of every file:
+
 - `csvParser.test.js` (13) — the hand-rolled RFC4180 CSV parser used
   for bulk delivery import: quoted fields with embedded commas,
   escaped quotes, embedded newlines, CRLF/CR normalization, short
@@ -3517,7 +3531,7 @@ about 3% of the entire frontend codebase by an `--cov`-equivalent
 measure (`npx vitest run --coverage`). This is a real foundation, not
 comprehensive frontend coverage the way the backend's 82% is — the
 README's own wording and the new `Frontend tests` badge (a test
-*count*, deliberately not a coverage percentage) both reflect that
+_count_, deliberately not a coverage percentage) both reflect that
 distinction rather than implying more than what's actually there.
 
 New CI step: the existing `frontend-build` job (renamed `frontend
@@ -3725,6 +3739,7 @@ queue — genuinely missing, and named as such in this project's own
 docs already.
 
 **What it does:**
+
 - **`services/expo_push.py`**: sends a real push notification via
   Expo's free push gateway (no paid account, no API key — same "zero
   required configuration" story as every other notification channel
@@ -3733,7 +3748,7 @@ docs already.
   `services/push.py`'s Web Push. Recorded under its own `expo_push`
   monitoring channel, separate from Web Push's `push` channel.
 - **`models/expo_push_token.py`** + `POST`/`DELETE
-  /users/me/expo-push-token`: register/unregister a device's Expo push
+/users/me/expo-push-token`: register/unregister a device's Expo push
   token, mirroring the existing Web Push subscription endpoints.
 - **The actual integration point**: `services/notifications.py`'s
   shared `_push_to_user_ids()` fan-out — the single function every
@@ -3757,6 +3772,7 @@ docs already.
 **Two real, pre-existing bugs in Web Push found and fixed while
 building this** — not new code, code that had been sitting broken
 since some earlier session, only now actually exercised:
+
 1. `services/push.py` used `monitoring_svc` without ever importing it
    — every single call to `send_web_push` (success or failure) raised
    a bare `NameError`. Never caught before because that function is
