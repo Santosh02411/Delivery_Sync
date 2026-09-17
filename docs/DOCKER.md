@@ -24,11 +24,11 @@ docker compose up --build
 First run will take a few minutes (pulling base images, installing
 dependencies, building the frontend). Once it's up:
 
-- Frontend: http://localhost:3500
+- Frontend: http://localhost:3000
 - Backend API: http://localhost:8000
 - Postgres: exposed inside the Docker network only, not on your host —
   connect to it directly with `docker compose exec db psql -U
-delivery_sync` if you need to inspect it.
+  delivery_sync` if you need to inspect it.
 
 Stop everything with `Ctrl+C`, or `docker compose down` to also remove
 the containers (the `postgres_data` volume — your actual data —
@@ -36,14 +36,14 @@ survives a `down` and is only removed with `docker compose down -v`).
 
 ## What's different from local (non-Docker) development
 
-|                      | Local dev                              | Docker                                    |
-| -------------------- | -------------------------------------- | ----------------------------------------- |
-| Database             | SQLite file                            | Real Postgres                             |
-| Frontend             | Vite dev server, hot reload            | Built static files via nginx              |
-| Backend              | `--reload`, `ENVIRONMENT` unset        | No reload, `ENVIRONMENT=production`       |
-| `/docs` API explorer | On                                     | Off (see main.py)                         |
-| CORS                 | Wide open                              | Locked to `http://localhost:3500`         |
-| JWT signing key      | Insecure dev fallback (with a warning) | Must be set, or the container won't start |
+| | Local dev | Docker |
+|---|---|---|
+| Database | SQLite file | Real Postgres |
+| Frontend | Vite dev server, hot reload | Built static files via nginx |
+| Backend | `--reload`, `ENVIRONMENT` unset | No reload, `ENVIRONMENT=production` |
+| `/docs` API explorer | On | Off (see main.py) |
+| CORS | Wide open | Locked to `http://localhost:3000` |
+| JWT signing key | Insecure dev fallback (with a warning) | Must be set, or the container won't start |
 
 None of this is Docker-specific behavior — it's all driven by the
 `ENVIRONMENT` and `DATABASE_URL` environment variables, which

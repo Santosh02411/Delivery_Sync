@@ -3,7 +3,7 @@
 #
 #   docker compose up --build
 #
-# Then visit http://localhost:3500. This is the "real" production-
+# Then visit http://localhost:3000. This is the "real" production-
 # shaped setup — a real database instead of a SQLite file, the frontend
 # served as static files instead of Vite's dev server, and the backend
 # running in ENVIRONMENT=production (see main.py / services/auth.py for
@@ -49,8 +49,8 @@ services:
       # setup; replace it before deploying anywhere real, the same way
       # you would any other secret.
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-please-change-this-to-a-real-random-secret}
-      ALLOWED_ORIGINS: http://localhost:3500
-      FRONTEND_URL: http://localhost:3500
+      ALLOWED_ORIGINS: http://localhost:3000
+      FRONTEND_URL: http://localhost:3000
       # Every optional integration (SMTP, Twilio, Razorpay, VAPID,
       # Google Maps) still follows the same "real if set, safe
       # fallback otherwise" pattern in Docker as it does locally — set
@@ -72,7 +72,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "3500:80"
+      - "3000:80"
 
 volumes:
   postgres_data:
