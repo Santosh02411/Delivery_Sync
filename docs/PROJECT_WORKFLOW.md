@@ -1363,6 +1363,45 @@ the full list.
 
 ---
 
+## Two design mistakes caught during review, before either shipped
+
+While wiring `ProofOfDeliveryScreen.js` and `FailedAttemptScreen.js` to
+navigate back to `DeliveryDetailScreen.js` after a successful update,
+the first version threaded the just-updated delivery record through
+as an extra navigation param (`justUpdated`) so the detail screen
+could show it immediately without a re-fetch. Re-reading
+`DeliveryDetailScreen.js` before finishing turned up why this was
+unnecessary complexity, not a real optimization: that screen already
+has a `useFocusEffect` that re-fetches the delivery from the server
+(or cache) every time the screen regains focus — which is exactly what
+happens when navigating back to it from either of the two new screens.
+The `justUpdated` param would have been dead weight at best, and a
+source of subtly-stale-UI bugs at worst if React Navigation ever
+reused the existing screen instance in a way that didn't cleanly
+overwrite the param. Removed before ever running it, in favor of just
+letting the existing re-fetch do its job.
+
+Separately, `sendDeliveryMessage(deliveryId, body)` was first written
+sending `{ body: message }` as the request payload — a natural-enough
+field name for "the message's body" that turned out to be wrong: the
+backend's actual `MessageCreate` schema (`backend/app/models/
+delivery_message.py`) expects `{ message: "..." }`. Caught by checking
+the backend model directly instead of assuming the guessed name was
+right, before writing a single test against it — and then a test
+(`api.test.js`'s "sends a message with the correct field name (message,
+not body)") was written specifically to lock in the correct shape,
+since this is exactly the kind of easy-to-get-wrong, easy-to-not-notice
+mistake (the request would still LOOK like it succeeded from a naive
+glance at the code, and would only visibly fail once a real message
+actually needed to reach the backend).
+
+Neither of these was a bug that shipped and got caught later — both
+were caught by re-reading the code and the backend model before
+considering the feature done, which is the cheaper time to catch
+either kind of mistake.
+
+---
+
 ## Why This Log Matters
 
 Every issue logged above is a genuine, realistic bug — not something

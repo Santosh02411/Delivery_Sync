@@ -64,6 +64,13 @@ export function AuthProvider({ children }) {
     return data.user;
   }
 
+  async function signup(fields) {
+    const data = await api.signup(fields);
+    await api.saveTokens(data.access_token, data.refresh_token);
+    applyUser(data.user);
+    return data; // includes org_invite_code when a new org was just created
+  }
+
   async function logout() {
     await unregisterCurrentDeviceFromPushNotifications();
     await stopBackgroundLocationTracking();
@@ -74,7 +81,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, completeTwoFactorLogin, logout }}>
+    <AuthContext.Provider value={{ user, isLoading, login, completeTwoFactorLogin, signup, logout }}>
       {children}
     </AuthContext.Provider>
   );

@@ -247,24 +247,42 @@ per-file breakdown.
 
 Beyond the responsive/PWA web app, `mobile/` is a real React Native
 (Expo) app for delivery agents — built as a second, independent client
-of the same backend API, with **genuine OS-level background GPS
-tracking** (a real foreground service on Android, "Always" location
-permission on iOS) that keeps a customer's live tracking map updating
-while an agent's phone is locked in a cupholder. This is a real,
-substantive gap the web app's PWA/browser-based location sharing
-cannot close — every mobile browser stops firing location updates the
-moment a tab is backgrounded, a platform-level restriction, not
-something fixable with more web code. It also now has a genuine
-**offline queue** (AsyncStorage-backed, syncing through the same
-`POST /sync` endpoint the web app's own offline mode already uses) —
-an agent can advance a delivery's status with no signal at all, and it
-syncs automatically the moment connectivity returns, with 22 tests
-covering the retry/backoff and sync-trigger logic. And **real push
-notifications** via Expo's push service — an agent gets notified of a
+of the same backend API, now genuinely close to full parity with the
+web agent app, all without a single backend code change (every
+endpoint it calls already existed and was already tested — see
+`mobile/README.md`'s own request/endpoint table):
+
+- **Signup and password reset** — join an org via invite code or
+  create a new one; request a reset email (completed on the web app).
+- **Genuine OS-level background GPS tracking** (a real foreground
+  service on Android, "Always" location permission on iOS) that keeps
+  a customer's live tracking map updating while an agent's phone is
+  locked in a cupholder — a real, substantive gap the web app's
+  PWA/browser-based location sharing cannot close, since every mobile
+  browser stops firing location updates the moment a tab is
+  backgrounded.
+- **A genuine offline queue** (AsyncStorage-backed, syncing through
+  the same `POST /sync` endpoint the web app's own offline mode
+  already uses) — an agent can advance a delivery's status with no
+  signal at all, and it syncs automatically the moment connectivity
+  returns.
+- **Real proof-of-delivery capture** — a real camera photo, a
+  hand-drawn signature (an HTML5 canvas inside a WebView, no extra
+  native signature library), and a partial-delivery toggle.
+- **Failed-attempt reason codes** — a real picker over the org's own
+  configured reasons, matching the web app's dispatcher-configured
+  list.
+- **Barcode/QR scanning** via `expo-camera`'s built-in scanning — no
+  separate scanning library.
+- **Dispatcher ↔ agent messaging** — the same per-delivery chat thread
+  the web app uses (polling-based on mobile, not real-time — an
+  honestly-scoped, stated trade-off; see `mobile/README.md`).
+- **Real push notifications** via Expo's push service — an agent gets notified of a
 new/removed assignment even with the app fully closed, sent from the
 exact same backend fan-out function that already sends the web app's
-Web Push for the same events. See
-[`mobile/README.md`](mobile/README.md) for the full explanation, setup
+Web Push for the same events.
+
+See [`mobile/README.md`](mobile/README.md) for the full explanation, setup
 instructions, and an honest list of what this app does and doesn't
 (yet) do relative to the full web agent app.
 
@@ -344,15 +362,16 @@ intentionally:
   in Account Settings
 - Automated backups live on the same disk as the database they back up —
   no offsite/geo-redundant copy; see `docs/DISASTER_RECOVERY.md`
-- The mobile app (`mobile/`) now has a real offline queue (see its
-  README's "Offline Support" section) and real push notifications
-  (requires a one-time `npx eas init` and a physical device — see its
-  README's "Push Notifications" section) and is login-only (create the
-  agent account on the web app first); no compiled `.apk`/`.ipa` was
-  produced — this sandbox has no Xcode/Android Studio/device to build
-  or test one on; see `mobile/README.md`'s "Not Yet Built" section for
-  the remaining honest list (proof-of-delivery capture, barcode
-  scanning, messaging)
+- The mobile app (`mobile/`) now has signup, password-reset requests,
+  a real offline queue, push notifications (requires a one-time
+  `npx eas init` and a physical device), proof-of-delivery capture,
+  failed-attempt reason codes, barcode/QR scanning, and dispatcher ↔
+  agent messaging (polling-based, not real-time) — see its README's
+  own section for each. No compiled `.apk`/`.ipa` was produced — this
+  sandbox has no Xcode/Android Studio/device to build or test one on;
+  see `mobile/README.md`'s "Not Yet Built" section for the remaining
+  honest list (real-time messaging, mobile CAPTCHA, deep-linked
+  password reset)
 - Frontend test coverage is a real start (69 tests), not comprehensive —
   4 of ~19 service files and 4 of ~63 components are actually tested;
   writing those tests found and fixed one real accessibility bug

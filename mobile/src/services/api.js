@@ -101,6 +101,57 @@ export async function login(username, password) {
   return data; // { access_token, refresh_token, user } OR { requires_2fa: true, challenge_token }
 }
 
+/**
+ * Same POST /auth/signup the web app's SignupPage.jsx calls. Provide
+ * exactly one of orgName (create a new org, becoming its admin
+ * automatically) or inviteCode (join an existing one as `role`) — see
+ * UserSignup's own docstring in backend/app/models/user.py. No
+ * captcha_token sent — CAPTCHA is only actually enforced server-side
+ * when RECAPTCHA_SECRET_KEY is configured, so this is a real gap only
+ * for a deployment that has turned that on; see mobile/README.md.
+ */
+export async function signup({ username, email, password, displayName, role, orgName, inviteCode }) {
+  const response = await fetch(`${API_BASE_URL}/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      username, email, password,
+      display_name: displayName,
+      role,
+      org_name: orgName || undefined,
+      invite_code: inviteCode || undefined,
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Signup failed.");
+  }
+  if (data.user) await cacheProfile(data.user);
+  return data; // { access_token, refresh_token, user, org_invite_code }
+}
+
+/**
+ * Same POST /auth/forgot-password the web app's ForgotPasswordPage.jsx
+ * calls. The reset link in that email opens the WEB app (see
+ * FRONTEND_URL in backend/app/routes/auth.py) — this mobile app has no
+ * screen of its own for the second half of the flow (setting the new
+ * password), by design; see mobile/README.md's "Password Reset"
+ * section for why building real deep-linking for that wasn't worth it
+ * for a flow that only happens rarely per account.
+ */
+export async function forgotPassword(email) {
+  const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Request failed.");
+  }
+  return data; // { message }
+}
+
 export async function verifyTwoFactorLogin(challengeToken, code) {
   const response = await fetch(`${API_BASE_URL}/auth/2fa/verify-login`, {
     method: "POST",
@@ -206,6 +257,105 @@ export async function updateDeliveryStatus(delivery, status, extra = {}) {
     const queuedRecord = await queueStatusUpdate(delivery.id, patch);
     return { queued: true, delivery: queuedRecord };
   }
+}
+
+/**
+ * Same GET /deliveries/reason-codes/active the web app's failed-
+ * attempt picker uses — org-scoped, active-only reason codes an agent
+ * can pick from when marking a delivery as a failed attempt (see
+ * backend/app/models/failed_delivery_reason.py).
+ */
+export async function fetchActiveReasonCodes() {
+  const response = await fetch(`${API_BASE_URL}/deliveries/reason-codes/active`, {
+    headers: await authHeaders(),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load reason codes.");
+  return data;
+}
+
+/**
+ * Same POST /deliveries/{id}/pod the web app's proof-of-delivery
+ * capture calls — does NOT itself change the delivery's status; the
+ * subsequent PATCH /deliveries/{id} (via updateDeliveryStatus above,
+ * with status="delivered") is what actually marks it delivered, and
+ * that call will fail with a clear message if the organization
+ * requires POD fields this submission didn't include (see
+ * backend/app/services/pod.py's missing_pod_requirements — this app
+ * doesn't try to predict those requirements client-side, it just
+ * surfaces whatever the backend says is missing).
+ */
+export async function submitProofOfDelivery(deliveryId, { recipientName, signatureDataUrl, photoDataUrl, latitude, longitude, notes } = {}) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/pod`, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: JSON.stringify({
+      recipient_name: recipientName || undefined,
+      signature_data_url: signatureDataUrl || undefined,
+      photo_data_url: photoDataUrl || undefined,
+      latitude: latitude != null ? String(latitude) : undefined,
+      longitude: longitude != null ? String(longitude) : undefined,
+      notes: notes || undefined,
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to submit proof of delivery.");
+  return data;
+}
+
+/**
+ * Same GET/POST /deliveries/{id}/messages the web app's per-delivery
+ * chat thread uses — this IS the "dispatcher ↔ agent messaging"
+ * feature (see backend/app/models/delivery_message.py's own comment:
+ * "the original agent<->dispatcher thread", later extended to include
+ * customers too). No real-time transport on the mobile side yet (no
+ * websocket client) — MessagesScreen polls instead; see that screen's
+ * own comment for why that's an acceptable, honestly-scoped trade-off.
+ */
+export async function fetchDeliveryMessages(deliveryId) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/messages`, {
+    headers: await authHeaders(),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load messages.");
+  return data;
+}
+
+export async function sendDeliveryMessage(deliveryId, message) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/messages`, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: JSON.stringify({ message }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to send message.");
+  return data;
+}
+
+/**
+ * Same GET /scan/{code} the web app's scan flow uses to resolve a
+ * scanned QR code back to a delivery — the code IS the delivery's own
+ * id (see backend/app/models/scan.py's own comment), so this just
+ * confirms it's real and fetches the delivery in one call.
+ */
+export async function resolveScannedCode(code) {
+  const response = await fetch(`${API_BASE_URL}/scan/${encodeURIComponent(code)}`, {
+    headers: await authHeaders(),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "That code doesn't match any delivery.");
+  return data;
+}
+
+export async function recordScan(deliveryId, scanType) {
+  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/scan`, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: JSON.stringify({ scan_type: scanType }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to record scan.");
+  return data;
 }
 
 /**

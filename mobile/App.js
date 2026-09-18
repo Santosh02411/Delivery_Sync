@@ -1,7 +1,9 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
 import LoginScreen from "./src/screens/LoginScreen";
+import SignupScreen from "./src/screens/SignupScreen";
+import ForgotPasswordScreen from "./src/screens/ForgotPasswordScreen";
 import AppNavigator from "./src/AppNavigator";
 import { colors } from "./src/theme";
 import { startAutoSync } from "./src/services/offlineSync";
@@ -15,6 +17,11 @@ import "./src/locationTask";
 
 function Root() {
   const { user, isLoading } = useAuth();
+  // Which unauthenticated screen is showing — only meaningful while
+  // `user` is null; reset to "login" the moment a real session starts,
+  // so signing out and back in another way doesn't reopen on whatever
+  // screen was last showing.
+  const [authScreen, setAuthScreen] = useState("login"); // "login" | "signup" | "forgotPassword"
 
   // Only runs once a real, logged-in user is known — the sync engine
   // has nothing to authenticate as before that, and (more importantly)
@@ -23,6 +30,7 @@ function Root() {
   // safe to attempt.
   useEffect(() => {
     if (!user) return undefined;
+    setAuthScreen("login");
     const stopAutoSync = startAutoSync();
     return stopAutoSync;
   }, [user?.id]);
@@ -44,7 +52,20 @@ function Root() {
     );
   }
 
-  return user ? <AppNavigator /> : <LoginScreen />;
+  if (user) return <AppNavigator />;
+
+  if (authScreen === "signup") {
+    return <SignupScreen onDone={() => setAuthScreen("login")} onSwitchToLogin={() => setAuthScreen("login")} />;
+  }
+  if (authScreen === "forgotPassword") {
+    return <ForgotPasswordScreen onBackToLogin={() => setAuthScreen("login")} />;
+  }
+  return (
+    <LoginScreen
+      onSwitchToSignup={() => setAuthScreen("signup")}
+      onForgotPassword={() => setAuthScreen("forgotPassword")}
+    />
+  );
 }
 
 export default function App() {

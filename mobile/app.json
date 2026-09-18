@@ -17,7 +17,9 @@
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Delivery Sync shares your location with dispatch while you have an active delivery, so customers can see your live position on their tracking page.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Delivery Sync shares your location with dispatch even while the app is in the background, so a customer's live tracking map keeps working while you're driving with the phone locked.",
-        "UIBackgroundModes": ["location"]
+        "UIBackgroundModes": ["location"],
+        "NSCameraUsageDescription": "Delivery Sync uses the camera to scan package QR codes and to take a delivery photo as proof of delivery.",
+        "NSPhotoLibraryUsageDescription": "Delivery Sync lets you choose an existing photo as proof of delivery."
       }
     },
     "android": {
@@ -27,7 +29,8 @@
         "ACCESS_COARSE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION"
+        "FOREGROUND_SERVICE_LOCATION",
+        "CAMERA"
       ]
     },
     "plugins": [
@@ -44,6 +47,18 @@
         {
           "icon": "./assets/icon.png",
           "color": "#f2a93b"
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Delivery Sync uses the camera to scan package QR codes and to take a delivery photo as proof of delivery."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Delivery Sync lets you choose an existing photo as proof of delivery."
         }
       ]
     ]

@@ -4,7 +4,7 @@ import { StatusBar } from "expo-status-bar";
 import { useAuth } from "../context/AuthContext";
 import { colors } from "../theme";
 
-export default function LoginScreen() {
+export default function LoginScreen({ onSwitchToSignup, onForgotPassword }) {
   const { login, completeTwoFactorLogin } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -72,6 +72,9 @@ export default function LoginScreen() {
             <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={isSubmitting}>
               {isSubmitting ? <ActivityIndicator color={colors.accentTextOn} /> : <Text style={styles.buttonText}>Log In</Text>}
             </TouchableOpacity>
+            <TouchableOpacity onPress={onForgotPassword} style={{ marginTop: 16 }}>
+              <Text style={styles.linkText}>Forgot password?</Text>
+            </TouchableOpacity>
           </>
         ) : (
           <>
@@ -96,6 +99,11 @@ export default function LoginScreen() {
       <Text style={styles.footnote}>
         Uses the same account as the web dispatcher/agent console.
       </Text>
+      {!twoFactorChallenge && (
+        <TouchableOpacity onPress={onSwitchToSignup} style={{ marginTop: 12 }}>
+          <Text style={styles.linkText}>New agent? Sign up</Text>
+        </TouchableOpacity>
+      )}
     </KeyboardAvoidingView>
   );
 }
@@ -111,4 +119,5 @@ const styles = StyleSheet.create({
   buttonText: { color: colors.accentTextOn, fontWeight: "700", fontSize: 15 },
   error: { color: colors.danger, fontSize: 13, marginTop: 12 },
   footnote: { color: colors.textMuted, fontSize: 12, textAlign: "center", marginTop: 24 },
+  linkText: { color: colors.accent, fontSize: 13, textAlign: "center", fontWeight: "600" },
 });

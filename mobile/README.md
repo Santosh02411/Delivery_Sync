@@ -37,17 +37,27 @@ app was written:
 | This app calls | For |
 |---|---|
 | `POST /auth/login` (+ `/auth/2fa/verify-login` if 2FA is on) | Login |
+| `POST /auth/signup` | Creating an agent/dispatcher account (join via invite code, or create a new org) |
+| `POST /auth/forgot-password` | Requesting a password reset email |
 | `GET /auth/me` | Restoring a session on app relaunch |
 | `GET /deliveries/mine` | The agent's delivery list |
 | `GET /deliveries/{id}` | Delivery detail |
 | `PATCH /deliveries/{id}` | Advancing delivery status |
+| `POST /deliveries/{id}/pod` | Submitting proof of delivery (photo/signature/recipient) |
+| `GET /deliveries/reason-codes/active` | The org's failed-attempt reason codes |
+| `GET /scan/{code}` + `POST /deliveries/{id}/scan` | Resolving a scanned QR code and recording the scan event |
+| `GET`/`POST /deliveries/{id}/messages` | The dispatcher ↔ agent chat thread for a delivery |
 | `PUT /users/me/location` | Both the manual foreground case AND the background task's periodic pings |
+| `POST`/`DELETE /users/me/expo-push-token` | Registering/unregistering for push notifications |
 
-No backend code was written or changed to support this app — see
-`mobile/src/services/api.js`'s own docstring for why that's true by
-design, not by coincidence: the location endpoint in particular was
-already generic (any authenticated agent client calling it), it just
-never had a client that could call it from the background before.
+**No backend code was written or changed to support any of this** — every one of
+these endpoints already existed, was already used by the web app, and
+was already tested before this mobile app called it. See
+`mobile/src/services/api.js`'s own docstrings for the handful of
+places worth knowing about (e.g. the location endpoint being generic
+enough to work from a background task with zero backend changes; the
+POD flow being two separate calls — submit, then mark delivered — by
+the backend's own design, not this app's).
 
 ## Setup
 
@@ -85,7 +95,7 @@ cd mobile
 npm test
 ```
 
-30 tests (Jest + jest-expo) covering the offline queue's actual logic —
+43 tests (Jest + jest-expo) covering the offline queue's actual logic —
 `offlineStore.js`'s AsyncStorage-backed cache (per-user scoping, not
 clobbering a pending edit with stale server data, pending-count
 tracking) and `offlineSync.js`'s retry/backoff behavior and
@@ -95,10 +105,14 @@ same way the web app's own `syncEngine.test.js` does — plus
 tests; the one branch not covered — no physical device — is a single
 early-return guard documented as untested in that test file's own
 comment, a genuine Jest/Babel module-mocking limitation, not an
-oversight). Screen
+oversight) and `api.js`'s newest request-building functions (13 tests
+covering signup, forgot-password, proof of delivery, reason codes,
+messaging, and scanning — request shape, error surfacing, and the
+message-vs-body field-name mismatch that would have been an easy
+mistake to ship). Screen
 components (Login, DeliveryList, etc.) don't have tests yet — the
-logic layer was prioritized since it's where an offline-sync bug would
-actually cost real data.
+logic layer was prioritized since it's where a real bug would
+actually cost real data or send the wrong request shape.
 
 ## Testing Background Location
 
@@ -213,25 +227,95 @@ Also requires a **physical device** — push tokens are unreliable/
 unsupported on a simulator or emulator, so `registerForPushNotifications()`
 no-ops there too (see `src/services/pushNotifications.js`).
 
+## Signup & Password Reset
+
+**Signup** (`SignupScreen.js`) mirrors the web app's own choice: join
+an existing organization via invite code (as agent or dispatcher —
+never admin via invite code, the same anti-privilege-escalation rule
+the backend itself enforces regardless of what this screen sends), or
+create a brand new organization (becoming its admin automatically).
+No CAPTCHA token is sent — CAPTCHA is only actually enforced
+server-side when `RECAPTCHA_SECRET_KEY` is configured, so this is a
+real gap only for a deployment that has turned that on; signup would
+fail there until this screen is extended with a mobile CAPTCHA widget.
+
+**Password Reset** (`ForgotPasswordScreen.js`) requests the reset
+email — the same `POST /auth/forgot-password` the web app calls — but
+deliberately has no screen of its own for the second half (actually
+setting the new password). The emailed link opens the **web app**
+instead. This is a scope decision, not an oversight: real deep-linking
+(a registered URL scheme/associated domain, tested on both platforms)
+is meaningful setup for a flow that happens rarely per account — open
+the emailed link in the phone's browser, set the new password there,
+then come back here and log in normally.
+
+## Proof of Delivery, Partial Delivery & Failed Attempts
+
+Marking a delivery **Delivered** now opens `ProofOfDeliveryScreen.js`:
+an optional recipient name, a real camera photo (`expo-image-picker`),
+a real hand-drawn signature (`SignaturePad.js` — a plain HTML5 canvas
+inside a WebView, deliberately not a dedicated native signature
+library; see that file's own comment), notes, and a **partial
+delivery** toggle. Submitting sends the POD data first
+(`POST /deliveries/{id}/pod`), then marks the delivery delivered — the
+backend's own two-step design (see `services/pod.py`), not something
+this app invented. If the organization requires POD fields this
+submission didn't include, the backend's own validation error is
+surfaced directly rather than the app guessing requirements in advance.
+
+Marking a delivery a **Failed Attempt** opens `FailedAttemptScreen.js`
+— a real picker over the organization's actual active reason codes
+(`GET /deliveries/reason-codes/active`, the same list the web app's
+dispatcher-configured reason codes populate), each showing whether
+it's eligible for return-to-origin, plus optional notes.
+
+## Barcode / QR Scanning
+
+`ScanScreen.js` (reachable via the 📷 **Scan** button on the delivery
+list) uses `expo-camera`'s built-in barcode scanning — no separate
+scanning library needed. The scanned code IS the delivery's own id
+(same design as the web app's QR codes — see
+`backend/app/models/scan.py`), so scanning resolves straight to that
+delivery's detail screen, recording a scan event (pickup/delivery/hub,
+inferred from the delivery's current status) along the way.
+
+## Dispatcher ↔ Agent Messaging
+
+`MessagesScreen.js` (reachable via the 💬 **Chat** button on a
+delivery's detail screen) is the same per-delivery chat thread the web
+app uses — `backend/app/models/delivery_message.py`'s own comment
+calls it "the original agent<->dispatcher thread" (later extended to
+include customers too), so this genuinely is the feature named in this
+project's own docs as missing from the mobile app.
+
+**Honest limitation**: this polls (`GET .../messages` every 10 seconds
+while the screen is open) rather than subscribing to the backend's
+real websocket `chat_room` channel the web app uses for instant
+delivery. Wiring a websocket client into a mobile app means also
+handling reconnect-on-background/foreground and reconnect-on-
+network-change correctly for a mobile OS's much more aggressive
+connection lifecycle than a browser tab's — a genuinely larger,
+separate piece of work, not attempted here. Polling every 10 seconds
+is a reasonable "feels live enough" trade-off for a delivery chat
+thread, not the real thing.
+
 ## Not Yet Built
 
 Stated plainly rather than discovered the hard way:
 
-- **Signup / password reset** — login only. Create the agent account
-  on the web app first, then log into this app with the same
-  credentials.
-- **Proof of delivery capture** (signature/photo), **partial
-  delivery**, and **failed-attempt reason codes** — the web app
-  supports all three when marking a delivery; this app's "Mark
-  Delivered" is a simple one-tap status change with none of them.
-- **Barcode/QR scanning** — the web app uses the browser's native
-  `BarcodeDetector`; this app has no scanning at all yet
-  (`expo-camera` + a barcode-scanning library would be the addition).
-- **Dispatcher ↔ agent messaging** — exists on the web app, not here.
+- **Real-time messaging** — the chat above polls; see its own section
+  for why that's a deliberate, bounded gap rather than the full
+  websocket experience the web app has.
+- **CAPTCHA on mobile signup** — only matters if a deployment has
+  `RECAPTCHA_SECRET_KEY` configured; see the Signup section above.
+- Deep-linking the password-reset email straight into this app instead
+  of the web app — see the Password Reset section above for why that
+  wasn't worth building for how rarely this flow is used.
 
 None of these are silently missing — an agent using only this app
 today gets a real, working, genuinely background-location-capable,
-offline-capable, push-notification-capable experience for the core
-loop (see assigned deliveries, advance status even with no signal,
-share live location, get notified of a new assignment), just a
-narrower one than the full web agent app.
+offline-capable, push-notification-capable experience with signup,
+proof of delivery, failed-attempt reason codes, barcode scanning, and
+dispatcher messaging — genuinely close to full parity with the web
+agent app at this point, with the gaps above being the actual,
+specific remaining differences, not a vague "narrower" hand-wave.

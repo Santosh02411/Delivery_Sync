@@ -3805,6 +3805,96 @@ this session.
 
 ---
 
+---
+
+## Closing the mobile app's remaining feature gaps — signup, POD, reason codes, scanning, messaging
+
+**What was missing:**
+`mobile/README.md`'s own "Not Yet Built" list named all of these
+directly: login-only (no signup/password reset), no proof-of-delivery
+capture or partial-delivery flag, no failed-attempt reason codes, no
+barcode/QR scanning, no dispatcher ↔ agent messaging.
+
+**Why it was needed:**
+Requested directly, as the specific remaining items from that same
+list.
+
+**What it does — and what's notable is what it DIDN'T need:**
+**Zero backend code was written or changed this entire session.**
+Every single feature below reused an endpoint that already existed,
+was already used by the web app, and was already tested:
+
+- **`SignupScreen.js` + `ForgotPasswordScreen.js`** — `POST
+  /auth/signup` (join via invite code as agent/dispatcher, or create a
+  new org and become its admin — same anti-privilege-escalation rule
+  the backend already enforces regardless of what the mobile UI sends)
+  and `POST /auth/forgot-password`. Password reset deliberately has no
+  second screen for actually setting the new password — the emailed
+  link opens the web app instead; real deep-linking is meaningful
+  setup for a flow used rarely per account, a scope decision stated
+  plainly, not discovered later. Honest gap noted: no CAPTCHA token is
+  sent, so signup would fail on a deployment with `RECAPTCHA_SECRET_KEY`
+  configured.
+- **`ProofOfDeliveryScreen.js`** + **`SignaturePad.js`** — real camera
+  photo capture (`expo-image-picker`), a real hand-drawn signature (a
+  plain HTML5 `<canvas>` inside a `react-native-webview`, deliberately
+  not a dedicated native signature-drawing library — fewer native
+  dependencies to keep in sync with Expo SDK upgrades for a genuinely
+  simple drawing implementation), and a partial-delivery toggle.
+  Submits via `POST /deliveries/{id}/pod` then `PATCH
+  /deliveries/{id}` with `status=delivered` — the backend's own
+  existing two-step design, not something invented for mobile.
+- **`FailedAttemptScreen.js`** — a real picker over `GET
+  /deliveries/reason-codes/active`, the same org-configured reason
+  codes the web app's dispatcher settings populate, each showing its
+  return-to-origin eligibility.
+- **`ScanScreen.js`** — `expo-camera`'s built-in barcode scanning (no
+  separate scanning library needed) resolving a scanned code via `GET
+  /scan/{code}` (the code IS the delivery's own id, same design as the
+  web app's QR codes) straight to that delivery's detail screen,
+  recording the scan event along the way.
+- **`MessagesScreen.js`** — the actual "dispatcher ↔ agent messaging"
+  feature named as missing: the same per-delivery chat thread
+  (`GET`/`POST /deliveries/{id}/messages`) `backend/app/models/
+  delivery_message.py`'s own comment calls "the original agent
+  <->dispatcher thread." **Honestly scoped**: polls every 10 seconds
+  while the screen is open rather than subscribing to the backend's
+  real websocket `chat_room` channel — wiring a websocket client into
+  a mobile app means handling reconnect-on-background/foreground and
+  reconnect-on-network-change correctly for a much more aggressive
+  connection lifecycle than a browser tab's, a genuinely larger,
+  separate piece of work not attempted here.
+- `DeliveryDetailScreen.js` restructured: `delivered`/`failed_attempt`
+  are no longer one-tap status changes — they navigate to the two
+  screens above, since both genuinely need real data first. A new 💬
+  Chat button and 📷 Scan button (on the delivery list) tie the new
+  screens together.
+
+**One real mistake caught before it shipped**: `sendDeliveryMessage`
+was initially written sending `{ body: message }` — a natural-seeming
+field name that turned out to be wrong; the backend's `MessageCreate`
+schema actually expects `{ message: ... }`. Caught by checking the
+backend model directly rather than guessing, and locked in with a test
+asserting the exact request body shape (see `api.test.js`'s "sends a
+message with the correct field name (message, not body)").
+
+**13 new mobile tests** (`api.test.js`) covering every new request
+function's shape and error handling — including the field-name catch
+above, and confirming optional POD fields are omitted rather than sent
+as `null`, and that coordinates get stringified for the backend's
+string lat/long fields.
+
+Full mobile suite: **43/43 passing** (30 previously + 13 new). No
+backend or web-frontend changes this session — the 447 backend tests
+and 69 frontend tests are unaffected and were not re-run.
+
+**What's still not built, stated plainly**: real-time messaging (this
+session's chat polls, doesn't subscribe to the websocket channel), a
+mobile CAPTCHA widget, and deep-linked password reset. See
+`mobile/README.md`'s own "Not Yet Built" section.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
