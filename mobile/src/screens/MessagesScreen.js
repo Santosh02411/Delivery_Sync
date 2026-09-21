@@ -1,25 +1,31 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator } from "react-native";
+import React, { useCallback, useRef, useState } from "react";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, FlatList, KeyboardAvoidingView, Platform, ActivityIndicator, AppState } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
-import { fetchDeliveryMessages, sendDeliveryMessage } from "../services/api";
+import { fetchDeliveryMessages, sendDeliveryMessage, getAccessToken } from "../services/api";
+import { connectWebSocket } from "../services/websocket";
 import { useAuth } from "../context/AuthContext";
 import { colors } from "../theme";
 
-// Polling-based, not a real websocket subscription — an honest,
-// deliberate scope decision, not an oversight. The backend already
-// has a real-time chat_room websocket channel (see
-// backend/app/services/websocket_manager.py, used by the web app), but
-// wiring a websocket client into this app means also handling
-// reconnect-on-background/foreground and reconnect-on-network-change
-// correctly for a mobile OS's much more aggressive connection
-// lifecycle than a browser tab's — a genuinely different, larger piece
-// of work than the polling here, which reuses patterns this app
-// already has (see ../services/offlineSync.js's own foreground/
-// interval-triggered checks). 10s while this screen is focused is a
-// reasonable "feels live enough" interval for a delivery chat thread,
-// not a battery concern the way a background location tick is.
-const POLL_INTERVAL_MS = 10000;
-
+/**
+ * Real-time, via the backend's existing `/ws/deliveries/{id}/messages`
+ * socket — the same `chat_room` channel the web app already connects
+ * to (see backend/app/routes/websockets.py; no backend changes needed
+ * here either). Ported the reconnect-with-backoff logic from the web
+ * app's own frontend/src/services/websocket.js almost verbatim (see
+ * ../services/websocket.js) rather than reinventing it, since React
+ * Native's built-in `WebSocket` implements the same interface a
+ * browser's does.
+ *
+ * A one-time re-fetch on the app returning to the foreground (see the
+ * AppState listener below) is kept as a safety net: a mobile OS can
+ * suspend a background app's network activity far more aggressively
+ * than a browser tab's, so a message sent by the other party while
+ * this device was backgrounded might arrive right as the socket
+ * reconnects, or might genuinely be missed by the live channel and
+ * only show up on the next explicit fetch — the same "trust, but
+ * verify on reconnect" pattern ../services/offlineSync.js already
+ * uses for the offline queue.
+ */
 export default function MessagesScreen({ route }) {
   const { deliveryId, orderId } = route.params;
   const { user } = useAuth();
@@ -27,9 +33,10 @@ export default function MessagesScreen({ route }) {
   const [draft, setDraft] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [isLive, setIsLive] = useState(false);
   const [error, setError] = useState("");
   const listRef = useRef(null);
-  const intervalRef = useRef(null);
+  const socketRef = useRef(null);
 
   const load = useCallback(async () => {
     try {
@@ -43,12 +50,42 @@ export default function MessagesScreen({ route }) {
     }
   }, [deliveryId]);
 
+  function appendIfNew(message) {
+    setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]));
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+  }
+
   useFocusEffect(
     useCallback(() => {
+      let isActive = true;
+
       load();
-      intervalRef.current = setInterval(load, POLL_INTERVAL_MS);
-      return () => clearInterval(intervalRef.current);
-    }, [load])
+
+      (async () => {
+        const token = await getAccessToken();
+        if (!isActive || !token) return;
+        socketRef.current = connectWebSocket(`/ws/deliveries/${deliveryId}/messages?token=${token}`, {
+          onOpen: () => setIsLive(true),
+          onClose: () => setIsLive(false),
+          onMessage: (data) => {
+            if (data.event === "new_message" && data.message) {
+              appendIfNew(data.message);
+            }
+          },
+        });
+      })();
+
+      const appStateSubscription = AppState.addEventListener("change", (nextState) => {
+        if (nextState === "active") load();
+      });
+
+      return () => {
+        isActive = false;
+        socketRef.current?.close();
+        socketRef.current = null;
+        appStateSubscription.remove();
+      };
+    }, [load, deliveryId])
   );
 
   async function handleSend() {
@@ -58,8 +95,11 @@ export default function MessagesScreen({ route }) {
     setDraft("");
     try {
       const sent = await sendDeliveryMessage(deliveryId, text);
-      setMessages((prev) => [...prev, sent]);
-      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50);
+      // The socket will also receive this same message back as a
+      // "new_message" broadcast (the backend broadcasts to the whole
+      // room, including the sender's own connection) — appendIfNew's
+      // id check is what keeps that from showing this message twice.
+      appendIfNew(sent);
     } catch (err) {
       setError(err.message);
       setDraft(text); // give the agent their unsent text back to retry
@@ -85,6 +125,10 @@ export default function MessagesScreen({ route }) {
     <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === "ios" ? "padding" : undefined} keyboardVerticalOffset={90}>
       <View style={styles.header}>
         <Text style={styles.headerText}>{orderId}</Text>
+        <View style={styles.liveRow}>
+          <View style={[styles.liveDot, { backgroundColor: isLive ? colors.success : colors.textMuted }]} />
+          <Text style={styles.liveText}>{isLive ? "Live" : "Reconnecting…"}</Text>
+        </View>
       </View>
 
       {isLoading ? (
@@ -122,8 +166,11 @@ export default function MessagesScreen({ route }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bgPage },
-  header: { padding: 14, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.bgSurface },
+  header: { padding: 14, borderBottomWidth: 1, borderBottomColor: colors.border, backgroundColor: colors.bgSurface, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   headerText: { color: colors.textSecondary, fontSize: 12, fontFamily: "monospace" },
+  liveRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  liveDot: { width: 7, height: 7, borderRadius: 4 },
+  liveText: { color: colors.textMuted, fontSize: 11, fontWeight: "600" },
   empty: { color: colors.textMuted, textAlign: "center", marginTop: 40, fontSize: 13 },
   bubbleRow: { marginBottom: 10, flexDirection: "row" },
   bubbleRowMine: { justifyContent: "flex-end" },
