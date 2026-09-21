@@ -3895,6 +3895,70 @@ mobile CAPTCHA widget, and deep-linked password reset. See
 
 ---
 
+---
+
+## Mobile real-time messaging — replacing polling with the backend's existing websocket
+
+**What was missing:**
+The previous session's own docs stated plainly: "this polls... rather
+than subscribing to the backend's real websocket `chat_room` channel
+the web app uses for instant delivery," naming it explicitly as a
+deliberate but real gap.
+
+**Why it was needed:**
+Requested directly, as that same previously-named gap.
+
+**What it does:**
+**Zero backend changes needed** — the websocket endpoint
+(`/ws/deliveries/{id}/messages`, the same `chat_room` channel the web
+app already connects to) already existed. New
+`mobile/src/services/websocket.js`: a thin wrapper around React
+Native's built-in `WebSocket` global (part of React Native core, no
+extra native dependency) with automatic reconnection — deliberately
+**ported from the web app's own `frontend/src/services/websocket.js`
+almost verbatim**, not reinvented, since both are solving the exact
+same problem (a flaky connection should retry, not die silently) with
+an interface a browser's `WebSocket` and React Native's implement
+identically. Exponential backoff (1s → 2s → 4s... capped at 15s),
+reset to 1s after any successful reconnection.
+
+`MessagesScreen.js` rewritten to open this socket on focus (using the
+current access token as a query param, matching the backend's own
+auth expectation for this endpoint) instead of a 10-second polling
+interval, appending incoming `new_message` broadcasts live via an
+id-deduplication check (the backend broadcasts to the whole room
+including the sender's own connection, so a message this device just
+sent arrives back over the socket too — the dedup check is what keeps
+it from appearing twice). A small "Live" / "Reconnecting…" indicator
+in the header shows the actual connection state honestly rather than
+always claiming to be live. A one-time re-fetch on the app returning
+to the foreground is kept as a deliberate safety net — a mobile OS can
+suspend a backgrounded app's network activity far more aggressively
+than a browser tab's, so a message sent by the other party while this
+device was backgrounded might be missed by the live channel and only
+show up on that reconnect-triggered fetch; the same "trust, but verify
+on reconnect" pattern `offlineSync.js` already uses for the offline
+queue.
+
+**8 new tests** (`websocket.test.js`) against a hand-rolled mock
+`WebSocket` class, driving the reconnect logic with real fake timers
+(the same rigor `offlineSync.test.js` already established) rather than
+mocking the delay away: the exponential backoff verified step by step
+(1s, then 2s, not just "eventually reconnects"), the backoff resetting
+to 1s after a successful reconnection, and the caller's `close()`
+correctly stopping all further reconnect attempts.
+
+Full mobile suite: **51/51 passing** (43 previously + 8 new). No
+backend or web-frontend changes this session — the 447 backend tests
+and 69 frontend tests are unaffected and were not re-run.
+
+With this, the mobile app's only remaining stated gaps are a mobile
+CAPTCHA widget (matters only if a deployment has `RECAPTCHA_SECRET_KEY`
+configured) and deep-linked password reset (opens the web app instead,
+a stated scope decision) — see `mobile/README.md`'s "Not Yet Built".
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
