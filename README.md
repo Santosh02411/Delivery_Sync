@@ -274,9 +274,11 @@ endpoint it calls already existed and was already tested — see
   list.
 - **Barcode/QR scanning** via `expo-camera`'s built-in scanning — no
   separate scanning library.
-- **Dispatcher ↔ agent messaging** — the same per-delivery chat thread
-  the web app uses (polling-based on mobile, not real-time — an
-  honestly-scoped, stated trade-off; see `mobile/README.md`).
+- **Real-time dispatcher ↔ agent messaging** — the same per-delivery
+  chat thread the web app uses, over the backend's own existing
+  websocket channel (not polling) — React Native's built-in
+  `WebSocket` with the same reconnect-with-backoff logic ported from
+  the web app's own client.
 - **Real push notifications** via Expo's push service — an agent gets notified of a
 new/removed assignment even with the app fully closed, sent from the
 exact same backend fan-out function that already sends the web app's
@@ -365,13 +367,12 @@ intentionally:
 - The mobile app (`mobile/`) now has signup, password-reset requests,
   a real offline queue, push notifications (requires a one-time
   `npx eas init` and a physical device), proof-of-delivery capture,
-  failed-attempt reason codes, barcode/QR scanning, and dispatcher ↔
-  agent messaging (polling-based, not real-time) — see its README's
+  failed-attempt reason codes, barcode/QR scanning, and real-time
+  dispatcher ↔ agent messaging over websocket — see its README's
   own section for each. No compiled `.apk`/`.ipa` was produced — this
   sandbox has no Xcode/Android Studio/device to build or test one on;
   see `mobile/README.md`'s "Not Yet Built" section for the remaining
-  honest list (real-time messaging, mobile CAPTCHA, deep-linked
-  password reset)
+  honest list (mobile CAPTCHA, deep-linked password reset)
 - Frontend test coverage is a real start (69 tests), not comprehensive —
   4 of ~19 service files and 4 of ~63 components are actually tested;
   writing those tests found and fixed one real accessibility bug
