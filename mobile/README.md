@@ -46,7 +46,8 @@ app was written:
 | `POST /deliveries/{id}/pod` | Submitting proof of delivery (photo/signature/recipient) |
 | `GET /deliveries/reason-codes/active` | The org's failed-attempt reason codes |
 | `GET /scan/{code}` + `POST /deliveries/{id}/scan` | Resolving a scanned QR code and recording the scan event |
-| `GET`/`POST /deliveries/{id}/messages` | The dispatcher ↔ agent chat thread for a delivery |
+| `GET`/`POST /deliveries/{id}/messages` | Loading a delivery's chat history, and sending a message |
+| `WS /ws/deliveries/{id}/messages` | Real-time delivery of new chat messages |
 | `PUT /users/me/location` | Both the manual foreground case AND the background task's periodic pings |
 | `POST`/`DELETE /users/me/expo-push-token` | Registering/unregistering for push notifications |
 
@@ -95,7 +96,7 @@ cd mobile
 npm test
 ```
 
-43 tests (Jest + jest-expo) covering the offline queue's actual logic —
+51 tests (Jest + jest-expo) covering the offline queue's actual logic —
 `offlineStore.js`'s AsyncStorage-backed cache (per-user scoping, not
 clobbering a pending edit with stale server data, pending-count
 tracking) and `offlineSync.js`'s retry/backoff behavior and
@@ -105,11 +106,15 @@ same way the web app's own `syncEngine.test.js` does — plus
 tests; the one branch not covered — no physical device — is a single
 early-return guard documented as untested in that test file's own
 comment, a genuine Jest/Babel module-mocking limitation, not an
-oversight) and `api.js`'s newest request-building functions (13 tests
+oversight), `api.js`'s newest request-building functions (13 tests
 covering signup, forgot-password, proof of delivery, reason codes,
 messaging, and scanning — request shape, error surfacing, and the
 message-vs-body field-name mismatch that would have been an easy
-mistake to ship). Screen
+mistake to ship), and `websocket.js`'s reconnect-with-backoff logic (8
+tests, again driven with real fake timers — the exponential delay
+actually verified step by step, not mocked away, plus the reset-after-
+a-successful-reconnect behavior and the "caller closed it, stop
+retrying" case). Screen
 components (Login, DeliveryList, etc.) don't have tests yet — the
 logic layer was prioritized since it's where a real bug would
 actually cost real data or send the wrong request shape.
@@ -288,24 +293,25 @@ calls it "the original agent<->dispatcher thread" (later extended to
 include customers too), so this genuinely is the feature named in this
 project's own docs as missing from the mobile app.
 
-**Honest limitation**: this polls (`GET .../messages` every 10 seconds
-while the screen is open) rather than subscribing to the backend's
-real websocket `chat_room` channel the web app uses for instant
-delivery. Wiring a websocket client into a mobile app means also
-handling reconnect-on-background/foreground and reconnect-on-
-network-change correctly for a mobile OS's much more aggressive
-connection lifecycle than a browser tab's — a genuinely larger,
-separate piece of work, not attempted here. Polling every 10 seconds
-is a reasonable "feels live enough" trade-off for a delivery chat
-thread, not the real thing.
+**Real-time**, via the backend's existing `/ws/deliveries/{id}/messages`
+websocket — the same `chat_room` channel the web app already connects
+to; no backend changes needed here either. `src/services/websocket.js`
+ports the web app's own reconnect-with-exponential-backoff logic
+(`frontend/src/services/websocket.js`) almost verbatim, since React
+Native's built-in `WebSocket` implements the same interface a
+browser's does. A small "Live" / "Reconnecting…" indicator in the
+screen's header shows the actual connection state rather than
+pretending it's always live. A one-time re-fetch when the app returns
+to the foreground is kept as a safety net — a mobile OS can suspend a
+backgrounded app's network activity far more aggressively than a
+browser tab's, so a message sent while this device was backgrounded
+might be missed by the live channel and only show up on that
+reconnect-triggered fetch.
 
 ## Not Yet Built
 
 Stated plainly rather than discovered the hard way:
 
-- **Real-time messaging** — the chat above polls; see its own section
-  for why that's a deliberate, bounded gap rather than the full
-  websocket experience the web app has.
 - **CAPTCHA on mobile signup** — only matters if a deployment has
   `RECAPTCHA_SECRET_KEY` configured; see the Signup section above.
 - Deep-linking the password-reset email straight into this app instead
@@ -316,6 +322,7 @@ None of these are silently missing — an agent using only this app
 today gets a real, working, genuinely background-location-capable,
 offline-capable, push-notification-capable experience with signup,
 proof of delivery, failed-attempt reason codes, barcode scanning, and
-dispatcher messaging — genuinely close to full parity with the web
-agent app at this point, with the gaps above being the actual,
-specific remaining differences, not a vague "narrower" hand-wave.
+real-time dispatcher messaging — genuinely close to full parity with
+the web agent app at this point, with the two gaps above being the
+actual, specific remaining differences, not a vague "narrower"
+hand-wave.
