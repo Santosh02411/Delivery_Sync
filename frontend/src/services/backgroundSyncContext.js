@@ -14,10 +14,7 @@
  *
  * Security tradeoff, stated plainly: this persists an auth token in
  * IndexedDB so a closed-tab service worker can use it. That's a wider
- * exposure window than keeping a token only in memory/context. For a
- * real production deployment, prefer a short-lived token here (refreshed
- * frequently) over the long-lived session token, so a stolen local copy
- * has a short useful life.
+ * exposure window than keeping a token only in memory/context.
  */
 
 const DB_NAME = "app_sync_context";
