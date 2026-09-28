@@ -1218,6 +1218,38 @@ not just label association) remains a real, separate, not-yet-done
 piece of work — noted here rather than implied to be covered by this
 session's test suite.
 
+**That bet paid off.** A few sessions later, while doing a general
+improvement pass, grepping the codebase for the same bare
+`<label>text</label>` (no `htmlFor`) pattern found it recurring in
+`SignupPage.jsx`, `ForgotPasswordPage.jsx`, and `ResetPasswordPage.jsx`
+— every field on all three (role selector, name/email/password on both
+the customer and staff signup forms, the invite-code/org-name fields,
+the forgot-password email field, both reset-password fields) had the
+identical `<label>`-with-no-`htmlFor` bug, unrelated to and undetected
+by the fix above since no tests existed for any of those three files
+yet. Fixed the same way: `id`/`htmlFor` pairs added to every field
+(disambiguated per-form where a customer and a staff form share a
+label like "Email" or "Password" on the same page), then a new test
+file per component (`SignupPage.test.jsx`, `ForgotPasswordPage.test.jsx`,
+`ResetPasswordPage.test.jsx`) written the same `getByLabelText`-first
+way, so the fix is locked in rather than just visually verified.
+
+The same grep also turned up this exact pattern in 11 *other*
+components outside the auth flow (`AccountSettings.jsx`,
+`AuditLogViewer.jsx`, `CustomerDashboard.jsx`,
+`FailedDeliveryReasonManager.jsx`, `MyWorkforce.jsx`,
+`ProductManager.jsx`, `Storefront.jsx`, `SubscriptionManager.jsx`,
+`TwoFactorSettings.jsx`, `WorkforceManager.jsx`, `ZoneManager.jsx` —
+roughly 80 more unlabeled fields combined). Those were deliberately
+**not** fixed in this pass — the auth pages were fixed because they
+were the ones already being touched (password-reset deep-linking) and
+because they're the highest-traffic, first-impression forms in the
+app; sweeping all 11 remaining files is real, additional, not-yet-done
+work, stated plainly here rather than implied to be finished by this
+entry. If picked up later: same mechanical fix (an `id` per input, a
+matching `htmlFor` per label), plus a test per component so it can't
+silently regress again.
+
 ---
 
 ## Two real snags while adding the mobile offline queue's test suite
