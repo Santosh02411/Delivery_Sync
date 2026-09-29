@@ -3959,6 +3959,92 @@ a stated scope decision) — see `mobile/README.md`'s "Not Yet Built".
 
 ---
 
+## Mobile CAPTCHA widget + password-reset deep-linking
+
+**What was missing:** the two gaps `mobile/README.md`'s "Not Yet
+Built" listed at the end of the previous session: signup/forgot-
+password had no CAPTCHA widget on mobile (so a deployment with
+`RECAPTCHA_SECRET_KEY` configured would reject those requests from
+this app), and the password-reset email's link only ever opened the
+web app — this app had no screen at all for the second half of that
+flow (setting the new password).
+
+**Why it was needed:** both were explicitly named, honest gaps in the
+mobile app's parity with the web app, called out rather than hidden —
+closing them was the natural next step once real-time messaging
+closed the previous remaining gap last session.
+
+**What it does:**
+
+*CAPTCHA* — new `mobile/src/components/Captcha.js` renders Google's
+reCAPTCHA v2 checkbox the only way it can be rendered in a native app
+(it's a browser widget, not a native SDK): a small `react-native-
+webview` (already a dependency — `SignaturePad.js` uses the identical
+`WebView` + `postMessage` pattern) loads a tiny self-contained HTML
+page pulling in Google's own `recaptcha/api.js`; the resulting token
+comes back to React Native via `window.ReactNativeWebView.postMessage()`.
+Wired into `SignupScreen.js` and `ForgotPasswordScreen.js`, both of
+which now pass the captured token through to `api.js`'s `signup()`
+and `forgotPassword()` as `captcha_token` — the exact field name
+`backend/app/models/user.py`'s `UserSignup` and
+`backend/app/models/password_reset.py`'s `ForgotPasswordRequest`
+already expected. Renders nothing and blocks nothing when
+`EXPO_PUBLIC_RECAPTCHA_SITE_KEY` isn't set (new `mobile/.env.example`)
+— exactly the same "bring your own credentials, or it no-ops" shape
+as the web app's own `Captcha.jsx`, since the backend only actually
+enforces the check when its own `RECAPTCHA_SECRET_KEY` is configured.
+Zero backend changes needed — the `captcha_token` field and its
+enforcement already existed and were already tested.
+
+*Password-reset deep-linking* — new `mobile/src/screens/
+ResetPasswordScreen.js` (new password + confirm, calls the same
+`POST /auth/reset-password` the web app's own reset form does) plus a
+registered `deliverysync://` URL scheme (`app.json`'s new `"scheme"`
+field) that `App.js` now listens for via `expo-linking`, both cold-
+start (`getInitialURL()`) and warm-start (the `"url"` event), routing
+straight to that screen with the token pulled out of the URL — ahead
+of both the authenticated and logged-out render branches, so tapping
+an old reset link works even while already logged in as a different
+account. The emailed link itself is unchanged (still opens the web
+app by default, since that needs to work whether or not this app is
+installed) — what's new is that `frontend/src/components/
+ResetPasswordPage.jsx` now shows a staff-only "Open in the Delivery
+Sync app" link built from the same token, using the registered
+scheme. This is deliberately **not** a true zero-tap "click the
+email, land in the app" flow — that needs Android App Links / iOS
+Universal Links, which need a verified HTTPS domain this sandbox has
+no way to register or test — so the honest, achievable version is: the
+web link always works, with a real one-tap path into the app for
+anyone who has it installed. Zero backend changes needed — `POST
+/auth/reset-password` already existed and was already tested; only
+its mobile *client* was missing.
+
+**5 new tests** (`api.test.js`): `signup()` and `forgotPassword()`
+each gained a test confirming the captcha token is included when
+present and cleanly omitted (not sent as `null`) when it isn't;
+`resetPassword()` (newly exported from `api.js`) got two tests
+covering the request shape (`token` + `new_password`, matching
+`ResetPasswordRequest`) and error surfacing for an expired/invalid
+token. `Captcha.js` and `ResetPasswordScreen.js` themselves have no
+tests yet, consistent with this suite's existing scope (screen
+components generally aren't covered — see `mobile/README.md`'s
+"Running Tests" section) — the WebView/reCAPTCHA integration is also
+not independently verifiable in this sandbox (no device to load a
+real Google-hosted challenge in), same honest caveat as the
+background-location task.
+
+Full mobile suite: **56/56 passing** (51 previously + 5 new). No
+backend or web-frontend *logic* changes this session — only the one
+new anchor tag on `ResetPasswordPage.jsx` — so the 447 backend tests
+and 69 frontend tests are unaffected and were not re-run.
+
+With this, `mobile/README.md`'s "Not Yet Built" no longer lists either
+gap as missing — what's left there now is about verification depth
+(CAPTCHA not device-tested) and true zero-tap deep-linking (needs a
+verified domain this sandbox can't provide), not missing features.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
