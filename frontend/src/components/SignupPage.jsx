@@ -134,8 +134,8 @@ export default function SignupPage({ onSwitchToLogin, initialAccountType }) {
         <h2>Create your account</h2>
 
         <div className="auth-field">
-          <label>I am a...</label>
-          <select value={iAmA} onChange={(e) => { setError(""); setIAmA(e.target.value); }}>
+          <label htmlFor="signup-role">I am a...</label>
+          <select id="signup-role" value={iAmA} onChange={(e) => { setError(""); setIAmA(e.target.value); }}>
             {ROLE_OPTIONS.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
@@ -151,16 +151,16 @@ export default function SignupPage({ onSwitchToLogin, initialAccountType }) {
             </p>
             <form onSubmit={handleCustomerSubmit}>
               <div className="auth-field">
-                <label>Name</label>
-                <input type="text" value={customerName} onChange={(e) => setCustomerName(e.target.value)} required autoFocus />
+                <label htmlFor="signup-customer-name">Name</label>
+                <input id="signup-customer-name" type="text" value={customerName} onChange={(e) => setCustomerName(e.target.value)} required autoFocus />
               </div>
               <div className="auth-field">
-                <label>Email</label>
-                <input type="email" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} required />
+                <label htmlFor="signup-customer-email">Email</label>
+                <input id="signup-customer-email" type="email" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} required />
               </div>
               <div className="auth-field">
-                <label>Password</label>
-                <PasswordInput value={customerPassword} onChange={(e) => setCustomerPassword(e.target.value)} required />
+                <label htmlFor="signup-customer-password">Password</label>
+                <PasswordInput id="signup-customer-password" value={customerPassword} onChange={(e) => setCustomerPassword(e.target.value)} required />
               </div>
 
               <Captcha onVerify={setCaptchaToken} />
@@ -177,33 +177,33 @@ export default function SignupPage({ onSwitchToLogin, initialAccountType }) {
         {!isCustomer && (
           <form onSubmit={handleStaffSubmit}>
             <div className="auth-field">
-              <label>Display name</label>
-              <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required autoFocus />
+              <label htmlFor="signup-staff-displayname">Display name</label>
+              <input id="signup-staff-displayname" type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required autoFocus />
             </div>
             <div className="auth-field">
-              <label>Username</label>
-              <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} required />
+              <label htmlFor="signup-staff-username">Username</label>
+              <input id="signup-staff-username" type="text" value={username} onChange={(e) => setUsername(e.target.value)} required />
             </div>
             <div className="auth-field">
-              <label>Email</label>
-              <input type="email" value={staffEmail} onChange={(e) => setStaffEmail(e.target.value)} required />
+              <label htmlFor="signup-staff-email">Email</label>
+              <input id="signup-staff-email" type="email" value={staffEmail} onChange={(e) => setStaffEmail(e.target.value)} required />
             </div>
             <div className="auth-field">
-              <label>Password</label>
-              <PasswordInput value={staffPassword} onChange={(e) => setStaffPassword(e.target.value)} required />
+              <label htmlFor="signup-staff-password">Password</label>
+              <PasswordInput id="signup-staff-password" value={staffPassword} onChange={(e) => setStaffPassword(e.target.value)} required />
             </div>
 
             {isAdmin && (
               <div className="auth-field">
-                <label>Organization Name</label>
-                <input type="text" value={orgName} onChange={(e) => setOrgName(e.target.value)} required />
+                <label htmlFor="signup-org-name">Organization Name</label>
+                <input id="signup-org-name" type="text" value={orgName} onChange={(e) => setOrgName(e.target.value)} required />
               </div>
             )}
 
             {isJoiningOrg && (
               <div className="auth-field">
-                <label>Invite Code</label>
-                <input type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} required />
+                <label htmlFor="signup-invite-code">Invite Code</label>
+                <input id="signup-invite-code" type="text" value={inviteCode} onChange={(e) => setInviteCode(e.target.value)} required />
               </div>
             )}
 

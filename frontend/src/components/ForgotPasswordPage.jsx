@@ -46,8 +46,9 @@ export default function ForgotPasswordPage({ onBackToLogin, accountType = "staff
         {!message && (
           <form onSubmit={handleSubmit}>
             <div className="auth-field">
-              <label>Email</label>
+              <label htmlFor="forgot-password-email">Email</label>
               <input
+                id="forgot-password-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}

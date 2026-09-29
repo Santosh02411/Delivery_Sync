@@ -69,8 +69,9 @@ export default function ResetPasswordPage({ token, onDone, accountType = "staff"
         {!message && (
           <form onSubmit={handleSubmit}>
             <div className="auth-field">
-              <label>New Password</label>
+              <label htmlFor="reset-password-new">New Password</label>
               <PasswordInput
+                id="reset-password-new"
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 required
@@ -78,8 +79,9 @@ export default function ResetPasswordPage({ token, onDone, accountType = "staff"
               />
             </div>
             <div className="auth-field">
-              <label>Confirm New Password</label>
+              <label htmlFor="reset-password-confirm">Confirm New Password</label>
               <PasswordInput
+                id="reset-password-confirm"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 required

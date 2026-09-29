@@ -4045,6 +4045,52 @@ verified domain this sandbox can't provide), not missing features.
 
 ---
 
+## Auth-page accessibility fix (SignupPage, ForgotPasswordPage, ResetPasswordPage)
+
+**What was missing:** with both stated mobile gaps closed last
+session, this session went looking for genuine improvements rather
+than inventing busywork. Session #46's own note (see
+`docs/PROJECT_WORKFLOW.md`'s "Real accessibility bug found by writing
+a test, not by an audit") had explicitly flagged its `LoginPage.jsx`
+label-association fix as "a reasonable bet the same pattern recurs" in
+untested components — that bet was checked by grepping for the same
+bare `<label>text</label>` (no `htmlFor`) shape across the rest of
+`frontend/src/components/`.
+
+**Why it was needed:** it recurred, in exactly the three auth pages
+this session had just touched (`ResetPasswordPage.jsx` for the new
+mobile deep-link, `SignupPage.jsx` and `ForgotPasswordPage.jsx` are
+its immediate siblings in the same auth flow) — every field on all
+three (role selector, name/email/password on both the customer and
+staff signup forms, invite-code/org-name, the forgot-password email
+field, both reset-password fields) had a `<label>` with no
+programmatic association to its input, meaning a screen reader user
+couldn't reliably tell which label announces which field — a real
+accessibility defect, not a cosmetic one, on the exact pages a new
+user or a password-reset-in-progress user hits first.
+
+**What it does:** added `id`/`htmlFor` pairs to every field across the
+three files (disambiguated per sub-form where the customer and staff
+forms on `SignupPage.jsx` reuse a label like "Email" or "Password" on
+the same page), then wrote a new test file per component
+(`SignupPage.test.jsx`, `ForgotPasswordPage.test.jsx`,
+`ResetPasswordPage.test.jsx`), each written `getByLabelText`-first the
+same way `LoginPage.test.jsx` already was — so the fix is locked in by
+a real regression test, not just eyeballed. See
+`docs/PROJECT_WORKFLOW.md`'s new entry (appended to the original #46
+entry it's a direct follow-up to) for the full account, including the
+~80 more unlabeled fields found in 11 *other* components
+(`AccountSettings.jsx`, `AuditLogViewer.jsx`, `CustomerDashboard.jsx`,
+and 8 more) that were deliberately left unfixed this session and are
+stated there as real, remaining, not-yet-done work — not swept under
+this entry.
+
+**10 new tests** across the 3 new test files (3 + 2 + 5), all passing
+alongside the existing suite. Frontend suite now **79/79** (69
+previously + 10 new). No backend or mobile changes this session.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
