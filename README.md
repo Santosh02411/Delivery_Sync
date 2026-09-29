@@ -393,3 +393,5 @@ intentionally:
 
 Built by Santy as a portfolio project targeting Python Full Stack,
 Software Developer, and Backend Developer roles.
+#   S _ c a r t  
+ 
