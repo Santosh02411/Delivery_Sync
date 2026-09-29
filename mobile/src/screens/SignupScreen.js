@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView } from "react-native";
 import { useAuth } from "../context/AuthContext";
+import Captcha from "../components/Captcha";
 import { colors } from "../theme";
 
 // "Create a new organization" is a real, supported path (matches the
@@ -20,6 +21,7 @@ export default function SignupScreen({ onDone, onSwitchToLogin }) {
   const [inviteCode, setInviteCode] = useState("");
   const [orgName, setOrgName] = useState("");
 
+  const [captchaToken, setCaptchaToken] = useState(null);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -35,6 +37,7 @@ export default function SignupScreen({ onDone, onSwitchToLogin }) {
         role: mode === "create" ? "agent" : role, // role is granted admin server-side on org creation regardless of what's sent
         orgName: mode === "create" ? orgName.trim() : undefined,
         inviteCode: mode === "join" ? inviteCode.trim() : undefined,
+        captchaToken,
       });
       if (onDone) onDone(result);
     } catch (err) {
@@ -93,6 +96,8 @@ export default function SignupScreen({ onDone, onSwitchToLogin }) {
             <Text style={styles.hint}>You'll become this organization's admin.</Text>
           </>
         )}
+
+        <Captcha onVerify={setCaptchaToken} />
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 

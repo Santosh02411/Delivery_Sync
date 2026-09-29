@@ -10,6 +10,21 @@ import "../styles/auth.css";
  * clicked the link from their "reset email" — which, without SMTP
  * configured, means the link printed to the backend console during local
  * development/testing).
+ *
+ * Staff accounts (not customers — the mobile app is agent/dispatcher-
+ * only) additionally get an "Open in the Delivery Sync app" link,
+ * built from the SAME token, using the `deliverysync://` scheme the
+ * mobile app registers (see mobile/app.json's "scheme" and App.js's
+ * deep-link handling). Tapping it in a mobile browser hands the token
+ * straight to mobile/src/screens/ResetPasswordScreen.js instead of
+ * finishing here. This page stays the link that actually goes in the
+ * email (see backend FRONTEND_URL) because it works everywhere,
+ * app-installed or not, unlike a bare custom-scheme link would — a
+ * real "click the email, land straight in the app" flow (no browser
+ * step at all) needs Android App Links / iOS Universal Links, which
+ * need a verified HTTPS domain this project has no way to register or
+ * test, so this is the honest middle ground: works for everyone, with
+ * a real one-tap path into the app for anyone who has it installed.
  */
 export default function ResetPasswordPage({ token, onDone, accountType = "staff" }) {
   const { theme, toggleTheme } = useTheme();
@@ -77,6 +92,14 @@ export default function ResetPasswordPage({ token, onDone, accountType = "staff"
               {isSubmitting ? "Resetting..." : "Reset Password"}
             </button>
           </form>
+        )}
+
+        {!message && !isCustomer && (
+          <p style={{ fontSize: "12.5px", marginTop: "16px", textAlign: "center" }}>
+            <a href={`deliverysync://reset-password?token=${encodeURIComponent(token)}`}>
+              Open in the Delivery Sync app
+            </a>
+          </p>
         )}
 
         {message && (

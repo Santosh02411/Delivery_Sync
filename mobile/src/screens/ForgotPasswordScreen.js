@@ -1,25 +1,28 @@
 import React, { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
 import { forgotPassword } from "../services/api";
+import Captcha from "../components/Captcha";
 import { colors } from "../theme";
 
 /**
  * Requests a password reset email — the same POST /auth/forgot-
- * password the web app's ForgotPasswordPage.jsx calls. The email's
- * reset link opens the WEB app (see FRONTEND_URL in backend/app/
- * routes/auth.py), not this one — there's no screen here for actually
- * setting the new password. This is a deliberate scope decision, not
- * an oversight: building real deep-linking (so tapping the emailed
- * link opens THIS app directly on a "set new password" screen) is
- * meaningful additional setup (a registered URL scheme/associated
- * domain, tested on both platforms) for a flow that, realistically,
- * happens rarely per account — an agent can open the emailed link in
- * their phone's browser, set the new password there, then come back
- * here and log in normally. See mobile/README.md's "Password Reset"
- * section.
+ * password the web app's ForgotPasswordPage.jsx calls. The reset link
+ * in that email opens the web app by default (see FRONTEND_URL in
+ * backend/app/routes/auth.py), but that web page now also offers an
+ * "Open in the Delivery Sync app" option (see frontend/src/components/
+ * ResetPasswordPage.jsx) — a `deliverysync://reset-password?token=...`
+ * link that, if this app is installed, opens it directly to
+ * ../screens/ResetPasswordScreen.js instead. See App.js for how that
+ * deep link is caught and routed. There's still no true
+ * "click the email, land straight in the app, no browser involved"
+ * flow — that needs a verified HTTPS domain (Android App Links / iOS
+ * Universal Links) this sandbox has no way to register or test — so
+ * the honest middle ground is: web link works everywhere, with a real
+ * one-tap path into the app for anyone who has it installed.
  */
 export default function ForgotPasswordScreen({ onBackToLogin }) {
   const [email, setEmail] = useState("");
+  const [captchaToken, setCaptchaToken] = useState(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -29,7 +32,7 @@ export default function ForgotPasswordScreen({ onBackToLogin }) {
     setMessage("");
     setIsSubmitting(true);
     try {
-      const result = await forgotPassword(email.trim());
+      const result = await forgotPassword(email.trim(), captchaToken);
       setMessage(result.message);
     } catch (err) {
       setError(err.message);
@@ -45,8 +48,9 @@ export default function ForgotPasswordScreen({ onBackToLogin }) {
       <View style={styles.card}>
         <Text style={styles.title}>Reset your password</Text>
         <Text style={styles.hint}>
-          Enter your account email — we'll send a reset link you can open in your
-          phone's browser to set a new password.
+          Enter your account email — we'll send a reset link. Tap it on this phone
+          to open the app directly and set a new password, or open it in a browser
+          if you'd rather do that instead.
         </Text>
 
         <Text style={styles.label}>Email</Text>
@@ -60,6 +64,8 @@ export default function ForgotPasswordScreen({ onBackToLogin }) {
           placeholderTextColor={colors.textMuted}
           editable={!message}
         />
+
+        {!message ? <Captcha onVerify={setCaptchaToken} /> : null}
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {message ? <Text style={styles.success}>{message}</Text> : null}

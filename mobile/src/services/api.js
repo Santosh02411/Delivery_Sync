@@ -105,12 +105,13 @@ export async function login(username, password) {
  * Same POST /auth/signup the web app's SignupPage.jsx calls. Provide
  * exactly one of orgName (create a new org, becoming its admin
  * automatically) or inviteCode (join an existing one as `role`) — see
- * UserSignup's own docstring in backend/app/models/user.py. No
- * captcha_token sent — CAPTCHA is only actually enforced server-side
- * when RECAPTCHA_SECRET_KEY is configured, so this is a real gap only
- * for a deployment that has turned that on; see mobile/README.md.
+ * UserSignup's own docstring in backend/app/models/user.py.
+ * captchaToken comes from <Captcha /> (see ../components/Captcha.js) —
+ * omit it (or leave it null) and this still works exactly as before,
+ * since the backend only actually enforces the check when
+ * RECAPTCHA_SECRET_KEY is configured server-side (services/captcha.py).
  */
-export async function signup({ username, email, password, displayName, role, orgName, inviteCode }) {
+export async function signup({ username, email, password, displayName, role, orgName, inviteCode, captchaToken }) {
   const response = await fetch(`${API_BASE_URL}/auth/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -120,6 +121,7 @@ export async function signup({ username, email, password, displayName, role, org
       role,
       org_name: orgName || undefined,
       invite_code: inviteCode || undefined,
+      captcha_token: captchaToken || undefined,
     }),
   });
   const data = await response.json();
@@ -132,22 +134,43 @@ export async function signup({ username, email, password, displayName, role, org
 
 /**
  * Same POST /auth/forgot-password the web app's ForgotPasswordPage.jsx
- * calls. The reset link in that email opens the WEB app (see
- * FRONTEND_URL in backend/app/routes/auth.py) — this mobile app has no
- * screen of its own for the second half of the flow (setting the new
- * password), by design; see mobile/README.md's "Password Reset"
- * section for why building real deep-linking for that wasn't worth it
- * for a flow that only happens rarely per account.
+ * calls. The reset link in that email opens the web app by default,
+ * but now also carries a `deliverysync://reset-password?token=...`
+ * "open in app" option on that page (mobile browsers) which lands on
+ * this app's own ResetPasswordScreen (see AppNavigator/App.js's deep
+ * link handling and ../screens/ResetPasswordScreen.js) — the second
+ * half of the flow this app previously had no screen for at all.
+ * captchaToken comes from <Captcha /> the same way signup()'s does.
  */
-export async function forgotPassword(email) {
+export async function forgotPassword(email, captchaToken) {
   const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, captcha_token: captchaToken || undefined }),
   });
   const data = await response.json();
   if (!response.ok) {
     throw new Error(data.detail || "Request failed.");
+  }
+  return data; // { message }
+}
+
+/**
+ * Same POST /auth/reset-password the web app's ResetPasswordPage.jsx
+ * calls to complete the flow forgotPassword() above started — given a
+ * valid, unused, unexpired token (lifted from the deep-link URL by
+ * App.js), sets the new password. No auth header: a password reset is
+ * deliberately usable while logged out (that's the whole point).
+ */
+export async function resetPassword(token, newPassword) {
+  const response = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data.detail || "Reset failed.");
   }
   return data; // { message }
 }

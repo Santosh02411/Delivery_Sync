@@ -20,6 +20,7 @@ jest.mock("@react-native-async-storage/async-storage", () =>
 import {
   signup,
   forgotPassword,
+  resetPassword,
   fetchActiveReasonCodes,
   submitProofOfDelivery,
   fetchDeliveryMessages,
@@ -58,6 +59,23 @@ describe("signup", () => {
     await expect(signup({ username: "x", email: "x@example.com", password: "x", displayName: "X", role: "agent", inviteCode: "BAD" }))
       .rejects.toThrow("That invite code doesn't match any organization.");
   });
+
+  it("includes the captcha token from <Captcha /> when one was captured", async () => {
+    mockFetchOnce(200, { access_token: "t", refresh_token: "r", user: { id: "u1" } });
+    await signup({
+      username: "jane", email: "jane@example.com", password: "pw", displayName: "Jane",
+      role: "agent", inviteCode: "ABC12345", captchaToken: "recaptcha-token-abc",
+    });
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(body.captcha_token).toBe("recaptcha-token-abc");
+  });
+
+  it("omits captcha_token rather than sending null when no widget is configured", async () => {
+    mockFetchOnce(200, { access_token: "t", refresh_token: "r", user: { id: "u1" } });
+    await signup({ username: "jane", email: "jane@example.com", password: "pw", displayName: "Jane", role: "agent", inviteCode: "ABC12345" });
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(body.captcha_token).toBeUndefined();
+  });
 });
 
 describe("forgotPassword", () => {
@@ -65,6 +83,30 @@ describe("forgotPassword", () => {
     mockFetchOnce(200, { message: "If that email exists, a reset link has been sent." });
     const result = await forgotPassword("agent@example.com");
     expect(result.message).toContain("reset link");
+  });
+
+  it("includes the captcha token when one was captured", async () => {
+    mockFetchOnce(200, { message: "If that email exists, a reset link has been sent." });
+    await forgotPassword("agent@example.com", "recaptcha-token-xyz");
+    const body = JSON.parse(global.fetch.mock.calls[0][1].body);
+    expect(body).toEqual({ email: "agent@example.com", captcha_token: "recaptcha-token-xyz" });
+  });
+});
+
+describe("resetPassword", () => {
+  it("posts the token and new password with the field names the backend expects", async () => {
+    mockFetchOnce(200, { message: "Your password has been reset." });
+    const result = await resetPassword("reset-token-123", "newSecurePw1");
+
+    const [url, options] = global.fetch.mock.calls[0];
+    expect(url).toBe("http://10.0.2.2:8000/auth/reset-password");
+    expect(JSON.parse(options.body)).toEqual({ token: "reset-token-123", new_password: "newSecurePw1" });
+    expect(result.message).toContain("reset");
+  });
+
+  it("throws the backend's error message for an expired or invalid token", async () => {
+    mockFetchOnce(400, { detail: "This reset link has expired. Request a new one." });
+    await expect(resetPassword("stale-token", "newSecurePw1")).rejects.toThrow("expired");
   });
 });
 

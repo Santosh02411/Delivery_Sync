@@ -383,7 +383,11 @@ intentionally:
 - The demo (`POST /auth/demo-login`) is one SHARED sandbox organization,
   not a private one per visitor — every concurrent demo user sees (and
   can edit) the same data, reset back to its known-good seeded state
-  automatically every few hours.
+  automatically every few hours (`DEMO_RESET_INTERVAL_HOURS`); it also
+  only seeds the delivery-operations side of the product (staff, zones,
+  fleet, deliveries, SLA) — the e-commerce/marketplace/invoicing
+  subsystems aren't pre-populated with sample data, see
+  `services/demo_seed.py`'s own module docstring for the full scope
 
 ## Author
 

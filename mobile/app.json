@@ -3,6 +3,7 @@
     "name": "Delivery Sync Agent",
     "slug": "delivery-sync-agent",
     "version": "1.0.0",
+    "scheme": "deliverysync",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",

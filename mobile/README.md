@@ -85,9 +85,12 @@ EXPO_PUBLIC_API_BASE_URL=http://192.168.1.42:8000 npx expo start
 macOS/Linux. Your phone and computer must be on the same Wi-Fi
 network.)
 
-Log in with any existing **agent** account from the web app (staff
-signup happens on the web app — this app is intentionally login-only,
-see [Not Yet Built](#not-yet-built) below).
+Log in with any existing **agent** account from the web app, or use
+the **Sign Up** link to join an org via invite code or create a new
+one right from this app — see [Signup & Password
+Reset](#signup--password-reset) below. (This line was stale — an
+earlier version of this README predated `SignupScreen.js` and never
+got corrected.)
 
 ## Running Tests
 
@@ -96,7 +99,7 @@ cd mobile
 npm test
 ```
 
-51 tests (Jest + jest-expo) covering the offline queue's actual logic —
+56 tests (Jest + jest-expo) covering the offline queue's actual logic —
 `offlineStore.js`'s AsyncStorage-backed cache (per-user scoping, not
 clobbering a pending edit with stale server data, pending-count
 tracking) and `offlineSync.js`'s retry/backoff behavior and
@@ -106,11 +109,13 @@ same way the web app's own `syncEngine.test.js` does — plus
 tests; the one branch not covered — no physical device — is a single
 early-return guard documented as untested in that test file's own
 comment, a genuine Jest/Babel module-mocking limitation, not an
-oversight), `api.js`'s newest request-building functions (13 tests
-covering signup, forgot-password, proof of delivery, reason codes,
-messaging, and scanning — request shape, error surfacing, and the
+oversight), `api.js`'s request-building functions (18 tests covering
+signup, forgot-password, password reset, proof of delivery, reason
+codes, messaging, and scanning — request shape, error surfacing, the
 message-vs-body field-name mismatch that would have been an easy
-mistake to ship), and `websocket.js`'s reconnect-with-backoff logic (8
+mistake to ship, and that the optional CAPTCHA token is sent when
+present and cleanly omitted rather than sent as `null` when it isn't),
+and `websocket.js`'s reconnect-with-backoff logic (8
 tests, again driven with real fake timers — the exponential delay
 actually verified step by step, not mocked away, plus the reset-after-
 a-successful-reconnect behavior and the "caller closed it, stop
@@ -239,20 +244,48 @@ an existing organization via invite code (as agent or dispatcher —
 never admin via invite code, the same anti-privilege-escalation rule
 the backend itself enforces regardless of what this screen sends), or
 create a brand new organization (becoming its admin automatically).
-No CAPTCHA token is sent — CAPTCHA is only actually enforced
-server-side when `RECAPTCHA_SECRET_KEY` is configured, so this is a
-real gap only for a deployment that has turned that on; signup would
-fail there until this screen is extended with a mobile CAPTCHA widget.
+Also renders `<Captcha />` (see below) so signup keeps working even on
+a deployment that has `RECAPTCHA_SECRET_KEY` configured.
 
-**Password Reset** (`ForgotPasswordScreen.js`) requests the reset
-email — the same `POST /auth/forgot-password` the web app calls — but
-deliberately has no screen of its own for the second half (actually
-setting the new password). The emailed link opens the **web app**
-instead. This is a scope decision, not an oversight: real deep-linking
-(a registered URL scheme/associated domain, tested on both platforms)
-is meaningful setup for a flow that happens rarely per account — open
-the emailed link in the phone's browser, set the new password there,
-then come back here and log in normally.
+**Password Reset** now has two real, working halves. `ForgotPassword-
+Screen.js` requests the reset email — the same `POST /auth/forgot-
+password` the web app calls, also with `<Captcha />` — and the emailed
+link still opens the **web app** by default (`ResetPasswordPage.jsx`,
+same as before), because that link needs to work whether or not this
+app is installed. What's new: that web page now also shows an "Open
+in the Delivery Sync app" link for staff accounts, built from the same
+token using the `deliverysync://` scheme this app registers (see
+`app.json`'s `"scheme"` and `App.js`'s `Linking` handling, both cold-
+start via `getInitialURL()` and warm-start via the `"url"` event).
+Tapping it lands directly on the new `ResetPasswordScreen.js`, which
+calls the same `POST /auth/reset-password` the web page's own reset
+form does. What this genuinely is NOT: a "tap the emailed link, skip
+the browser entirely" flow — that needs Android App Links / iOS
+Universal Links, which need a verified HTTPS domain this sandbox has
+no way to register or test. So the honest shape is: the email link
+always works (browser fallback), with a real one-tap path into the
+app for anyone who has it installed and taps the extra link.
+
+### CAPTCHA widget (`src/components/Captcha.js`)
+
+Google's reCAPTCHA v2 checkbox is a browser widget, not a native SDK,
+so there's no native RN view for it — this renders it the same way
+libraries like `react-native-recaptcha-that-works` do: a small
+`WebView` (already a dependency — see `SignaturePad.js` for the
+identical `WebView` + `postMessage` pattern used for signature
+capture) loading a tiny self-contained HTML page that pulls in
+Google's own `recaptcha/api.js`, with the resulting token handed back
+to React Native via `window.ReactNativeWebView.postMessage()`.
+Renders nothing, and never blocks either form, when
+`EXPO_PUBLIC_RECAPTCHA_SITE_KEY` isn't set (see `.env.example`) — the
+backend only actually enforces the check when its own
+`RECAPTCHA_SECRET_KEY` is configured, so no-config-anywhere is a
+normal, fully-working state, exactly like the web app's own
+`Captcha.jsx`. Not independently testable in this sandbox (no device
+to load a real Google-hosted challenge in), for the same reason the
+mobile background-location task and the native `.apk`/`.ipa` build
+itself aren't — verified by reading the code against Google's
+documented `grecaptcha.render()` contract instead.
 
 ## Proof of Delivery, Partial Delivery & Failed Attempts
 
@@ -310,19 +343,28 @@ reconnect-triggered fetch.
 
 ## Not Yet Built
 
-Stated plainly rather than discovered the hard way:
+Both of the two gaps previously listed here — mobile CAPTCHA and
+password-reset deep-linking — are now closed (see the Signup &
+Password Reset section above for both). What's left, stated plainly
+rather than discovered the hard way:
 
-- **CAPTCHA on mobile signup** — only matters if a deployment has
-  `RECAPTCHA_SECRET_KEY` configured; see the Signup section above.
-- Deep-linking the password-reset email straight into this app instead
-  of the web app — see the Password Reset section above for why that
-  wasn't worth building for how rarely this flow is used.
+- A **true** "tap the email, land in the app, no browser involved"
+  reset flow — the custom-scheme deep link above needs a tap on an
+  "Open in app" link on the web page; Android App Links / iOS
+  Universal Links could remove even that tap, but need a verified
+  HTTPS domain this sandbox has no way to register or test.
+- Mobile CAPTCHA is code-complete against Google's documented
+  `grecaptcha.render()` contract but not independently verified end to
+  end on a real device (no device available here) — same honest
+  caveat as the background-location task and the lack of a compiled
+  `.apk`/`.ipa`.
 
-None of these are silently missing — an agent using only this app
-today gets a real, working, genuinely background-location-capable,
-offline-capable, push-notification-capable experience with signup,
-proof of delivery, failed-attempt reason codes, barcode scanning, and
-real-time dispatcher messaging — genuinely close to full parity with
-the web agent app at this point, with the two gaps above being the
-actual, specific remaining differences, not a vague "narrower"
-hand-wave.
+Neither of these is a silent gap — an agent using only this app today
+gets a real, working, genuinely background-location-capable,
+offline-capable, push-notification-capable experience with signup
+(CAPTCHA included), a full two-screen password reset, proof of
+delivery, failed-attempt reason codes, barcode scanning, and real-time
+dispatcher messaging — full parity with the web agent app's auth
+flows at this point, with the two items above being about
+verification depth and true zero-tap deep-linking, not missing
+features.
