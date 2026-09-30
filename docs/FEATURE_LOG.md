@@ -4222,6 +4222,64 @@ rewriting real backend errors). Mobile suite: **58/58** (56 previously
 
 ---
 
+## Customer notification staleness after checkout + mobile scanner format parity
+
+**What was reported:** (1) on the web customer dashboard, placing an
+order shows notification detail for the *previous* order rather than
+the one just placed; (2) the mobile scan screen is "not even close"
+to the web scanner.
+
+**What was actually wrong, #1:** `CustomerDashboard.jsx` renders
+`<Storefront onOrderPlaced={() => { loadDeliveries(); setActiveView("orders"); }} />`
+— checkout success refreshes the delivery list and switches tabs, but
+never calls `loadNotifications()`. The backend DOES create the new
+"Order Confirmed" notification synchronously during checkout
+(`routes/checkout.py`'s `verify_payment` → `notify_customer_of_status_change`)
+— it's real and correct the moment it's created. The bug is purely on
+the frontend: the notifications panel only refreshes on its
+pre-existing 10-second poll, so anyone checking notifications right
+after ordering sees whatever was last polled — reading exactly like
+"the previous order's" detail until that poll catches up. Fixed by
+adding `loadNotifications()` to the same `onOrderPlaced` callback.
+
+**What was actually wrong, #2:** `mobile/src/screens/ScanScreen.js`'s
+`barcodeScannerSettings` was `{ barcodeTypes: ["qr"] }` — QR only. The
+web app's `BarcodeScannerModal.jsx` scans `["qr_code", "code_128",
+"code_39", "ean_13", "upc_a"]` — five formats. Any package barcoded in
+one of the other four simply couldn't be read on mobile at all, while
+working fine on web — a real functional gap, not a cosmetic one.
+Fixed by widening mobile's list to `["qr", "code128", "code39",
+"ean13", "upc_a"]` (expo-camera's exact, verified `BarcodeType`
+strings — checked against Expo's own docs rather than assumed, since
+its naming drops the web API's underscores) — genuine format parity
+with the web scanner now, not just visual similarity. Hint text
+updated from "QR code" to "QR code or barcode" to match.
+
+**Also this session (from a live debugging session with the user,
+not a code-review find):** confirmed and helped fix two setup issues
+that were blocking testing entirely and had nothing to do with app
+code — `uvicorn main:app --reload` binds to `127.0.0.1` by default
+(needs `--host 0.0.0.0` for a phone on the same LAN to reach it at
+all), and the previous session's `EXPO_PUBLIC_API_BASE_URL` fix needed
+a plain-language walkthrough (a `.env` file in `mobile/`, not shell
+env-var syntax, which differs by OS and was a real point of
+confusion). Not a code change — documented here because it's the
+direct, necessary precondition for the user ever being able to verify
+anything else in this app on a real device, and because "the fix
+didn't work" the first time around was actually two separate
+un-run steps, not a flaw in the fix itself.
+
+No new tests this session: the notification fix is a one-line callback
+change with no dedicated `CustomerDashboard.jsx` test file to extend
+(consistent with this project's stated ~3% frontend component test
+coverage), and the scanner fix only changes a config array passed to
+a native camera API that categorically cannot be exercised via Jest
+(same disclosed limitation as the rest of `ScanScreen.js`). Both
+verified by reading the exact code path rather than assumed. Frontend
+suite: 79/79 unchanged. Mobile suite: 58/58 unchanged.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
