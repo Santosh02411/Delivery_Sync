@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { useAuth } from "../context/AuthContext";
+import PasswordInput from "../components/PasswordInput";
 import { colors } from "../theme";
 
 export default function LoginScreen({ onSwitchToSignup, onForgotPassword }) {
@@ -60,11 +61,10 @@ export default function LoginScreen({ onSwitchToSignup, onForgotPassword }) {
               placeholderTextColor={colors.textMuted}
             />
             <Text style={styles.label}>Password</Text>
-            <TextInput
+            <PasswordInput
               style={styles.input}
               value={password}
               onChangeText={setPassword}
-              secureTextEntry
               placeholder="••••••••"
               placeholderTextColor={colors.textMuted}
             />

@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, ScrollView } from "react-native";
 import { useAuth } from "../context/AuthContext";
 import Captcha from "../components/Captcha";
+import PasswordInput from "../components/PasswordInput";
 import { colors } from "../theme";
 
 // "Create a new organization" is a real, supported path (matches the
@@ -72,7 +73,7 @@ export default function SignupScreen({ onDone, onSwitchToLogin }) {
         <TextInput style={styles.input} value={email} onChangeText={setEmail} autoCapitalize="none" keyboardType="email-address" placeholder="jane@example.com" placeholderTextColor={colors.textMuted} />
 
         <Text style={styles.label}>Password</Text>
-        <TextInput style={styles.input} value={password} onChangeText={setPassword} secureTextEntry placeholder="••••••••" placeholderTextColor={colors.textMuted} />
+        <PasswordInput style={styles.input} value={password} onChangeText={setPassword} placeholder="••••••••" placeholderTextColor={colors.textMuted} />
 
         {mode === "join" ? (
           <>

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from "react-native";
 import { resetPassword } from "../services/api";
+import PasswordInput from "../components/PasswordInput";
 import { colors } from "../theme";
 
 /**
@@ -52,22 +53,20 @@ export default function ResetPasswordScreen({ token, onDone }) {
         {!message ? (
           <>
             <Text style={styles.label}>New Password</Text>
-            <TextInput
+            <PasswordInput
               style={styles.input}
               value={newPassword}
               onChangeText={setNewPassword}
-              secureTextEntry
               autoFocus
               placeholder="••••••••"
               placeholderTextColor={colors.textMuted}
             />
 
             <Text style={styles.label}>Confirm New Password</Text>
-            <TextInput
+            <PasswordInput
               style={styles.input}
               value={confirmPassword}
               onChangeText={setConfirmPassword}
-              secureTextEntry
               placeholder="••••••••"
               placeholderTextColor={colors.textMuted}
             />
