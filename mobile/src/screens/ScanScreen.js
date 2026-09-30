@@ -10,6 +10,14 @@ import { colors } from "../theme";
 // onBarcodeScanned) needs no separate scanning library, same
 // "fewer native dependencies" reasoning as SignaturePad.js's
 // WebView-canvas approach elsewhere in this app.
+//
+// barcodeTypes below matches the web app's BarcodeScannerModal.jsx
+// format-for-format (qr_code, code_128, code_39, ean_13, upc_a) —
+// previously this only listed "qr", so a package barcoded in any of
+// the other four formats simply couldn't be read here even though
+// the web scanner handles it fine. expo-camera's naming differs
+// slightly from the web BarcodeDetector API's (no underscores), which
+// is the only reason this list doesn't look identical to that one.
 export default function ScanScreen({ navigation }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -59,7 +67,7 @@ export default function ScanScreen({ navigation }) {
   if (!permission.granted) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.permissionText}>Camera access is needed to scan a package's QR code.</Text>
+        <Text style={styles.permissionText}>Camera access is needed to scan a package's QR code or barcode.</Text>
         <TouchableOpacity style={styles.button} onPress={requestPermission}>
           <Text style={styles.buttonText}>Grant Camera Access</Text>
         </TouchableOpacity>
@@ -71,13 +79,13 @@ export default function ScanScreen({ navigation }) {
     <View style={styles.container}>
       <CameraView
         style={StyleSheet.absoluteFillObject}
-        barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+        barcodeScannerSettings={{ barcodeTypes: ["qr", "code128", "code39", "ean13", "upc_a"] }}
         onBarcodeScanned={handleBarcodeScanned}
       />
       <View style={styles.overlay}>
         <View style={styles.scanBox} />
         <Text style={styles.hint}>
-          {isProcessing ? "Looking up delivery…" : "Point the camera at a package's QR code"}
+          {isProcessing ? "Looking up delivery…" : "Point the camera at a package's QR code or barcode"}
         </Text>
       </View>
     </View>
