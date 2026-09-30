@@ -88,6 +88,14 @@ export default function SignupScreen({ onDone, onSwitchToLogin }) {
                 <Text style={[styles.tabText, role === "dispatcher" && styles.tabTextActive]}>Dispatcher</Text>
               </TouchableOpacity>
             </View>
+            {role === "dispatcher" ? (
+              <Text style={styles.hint}>
+                This app only has an agent's delivery workflow today — a
+                dispatcher account will work, but you'll see an empty
+                delivery list here. Use the web app for dispatching,
+                zone/workforce management, and the rest of the console.
+              </Text>
+            ) : null}
           </>
         ) : (
           <>

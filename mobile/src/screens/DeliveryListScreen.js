@@ -3,9 +3,11 @@ import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl } fr
 import { useFocusEffect } from "@react-navigation/native";
 import { fetchMyDeliveries } from "../services/api";
 import { getPendingCount } from "../services/offlineStore";
+import { useAuth } from "../context/AuthContext";
 import { colors, statusLabels, statusColors } from "../theme";
 
 export default function DeliveryListScreen({ navigation }) {
+  const { user } = useAuth();
   const [deliveries, setDeliveries] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
@@ -88,7 +90,13 @@ export default function DeliveryListScreen({ navigation }) {
         refreshControl={<RefreshControl refreshing={isLoading} onRefresh={load} tintColor={colors.accent} />}
         contentContainerStyle={{ padding: 16 }}
         ListEmptyComponent={
-          !isLoading ? <Text style={styles.empty}>No deliveries assigned right now.</Text> : null
+          !isLoading ? (
+            <Text style={styles.empty}>
+              {user && user.role !== "agent"
+                ? `This app only shows an agent's assigned deliveries — a ${user.role} account won't have any. Use the web app for dispatching and admin tools.`
+                : "No deliveries assigned right now."}
+            </Text>
+          ) : null
         }
       />
     </View>

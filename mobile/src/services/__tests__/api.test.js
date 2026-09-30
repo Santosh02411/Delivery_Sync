@@ -19,6 +19,7 @@ jest.mock("@react-native-async-storage/async-storage", () =>
 
 import {
   signup,
+  login,
   forgotPassword,
   resetPassword,
   fetchActiveReasonCodes,
@@ -27,6 +28,7 @@ import {
   sendDeliveryMessage,
   resolveScannedCode,
   recordScan,
+  API_BASE_URL,
 } from "../api";
 
 function mockFetchOnce(status, body) {
@@ -36,6 +38,25 @@ function mockFetchOnce(status, body) {
     json: async () => body,
   });
 }
+
+/**
+ * The one thing apiFetch() (api.js's internal fetch wrapper — see its
+ * own doc comment) changes: when the request never reaches a server
+ * at all, rewrite React Native's opaque "Network request failed"
+ * TypeError into something a user looking at LoginScreen.js's plain
+ * `setError(err.message)` can actually act on.
+ */
+describe("network-unreachable errors", () => {
+  it("rewrites a raw fetch failure into an actionable message naming the configured API_BASE_URL", async () => {
+    global.fetch = jest.fn().mockRejectedValue(new TypeError("Network request failed"));
+    await expect(login("agent1", "pw")).rejects.toThrow(API_BASE_URL);
+  });
+
+  it("leaves a real HTTP error response untouched (still surfaces the backend's own detail message)", async () => {
+    mockFetchOnce(401, { detail: "Incorrect username or password." });
+    await expect(login("agent1", "wrong-pw")).rejects.toThrow("Incorrect username or password.");
+  });
+});
 
 describe("signup", () => {
   it("sends invite-code join fields and returns a real session", async () => {

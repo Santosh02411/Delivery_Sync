@@ -26,6 +26,38 @@ import { cacheDeliveries, getCachedDeliveries, getCachedDelivery, queueStatusUpd
 // since "localhost" on a phone means the phone itself.
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || "http://10.0.2.2:8000";
 
+/**
+ * Thin wrapper around every `fetch()` call in this file. The one thing
+ * it does that a bare `fetch()` doesn't: when the request never
+ * reaches a server at all (wrong/unreachable API_BASE_URL, backend not
+ * running, phone and computer on different networks — by far the most
+ * common failure mode reported against this app), `fetch()` itself
+ * throws a raw `TypeError` whose message ("Network request failed" on
+ * React Native, something similarly opaque on web) tells a user
+ * nothing actionable. Every screen's catch block just does
+ * `setError(err.message)` and shows that message as-is (see
+ * LoginScreen.js, SignupScreen.js, etc.) — so that opaque message was
+ * literally the only thing on screen. This rewrites JUST that one
+ * failure mode into something someone can actually act on, quoting
+ * the exact URL that was tried so a wrong EXPO_PUBLIC_API_BASE_URL is
+ * obvious rather than guessed at. A real HTTP error response (401,
+ * 404, 500, validation errors) is untouched — those already carry a
+ * useful `detail` message from the backend, handled by each function
+ * below exactly as before.
+ */
+async function apiFetch(url, options) {
+  try {
+    return await fetch(url, options);
+  } catch (err) {
+    throw new Error(
+      `Can't reach the server at ${API_BASE_URL}. Check that the backend is running, that ` +
+      `EXPO_PUBLIC_API_BASE_URL is set correctly for how you're testing this app (see README.md's ` +
+      `Setup section — 10.0.2.2 only works from the Android emulator, a real phone needs your ` +
+      `computer's LAN IP), and that your phone and computer are on the same Wi-Fi network.`
+    );
+  }
+}
+
 const TOKEN_KEY = "delivery_sync_access_token";
 const REFRESH_TOKEN_KEY = "delivery_sync_refresh_token";
 
@@ -88,7 +120,7 @@ async function authHeaders() {
  * delivery list since none would be assigned to them.
  */
 export async function login(username, password) {
-  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+  const response = await apiFetch(`${API_BASE_URL}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username, password }),
@@ -112,7 +144,7 @@ export async function login(username, password) {
  * RECAPTCHA_SECRET_KEY is configured server-side (services/captcha.py).
  */
 export async function signup({ username, email, password, displayName, role, orgName, inviteCode, captchaToken }) {
-  const response = await fetch(`${API_BASE_URL}/auth/signup`, {
+  const response = await apiFetch(`${API_BASE_URL}/auth/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -143,7 +175,7 @@ export async function signup({ username, email, password, displayName, role, org
  * captchaToken comes from <Captcha /> the same way signup()'s does.
  */
 export async function forgotPassword(email, captchaToken) {
-  const response = await fetch(`${API_BASE_URL}/auth/forgot-password`, {
+  const response = await apiFetch(`${API_BASE_URL}/auth/forgot-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, captcha_token: captchaToken || undefined }),
@@ -163,7 +195,7 @@ export async function forgotPassword(email, captchaToken) {
  * deliberately usable while logged out (that's the whole point).
  */
 export async function resetPassword(token, newPassword) {
-  const response = await fetch(`${API_BASE_URL}/auth/reset-password`, {
+  const response = await apiFetch(`${API_BASE_URL}/auth/reset-password`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, new_password: newPassword }),
@@ -176,7 +208,7 @@ export async function resetPassword(token, newPassword) {
 }
 
 export async function verifyTwoFactorLogin(challengeToken, code) {
-  const response = await fetch(`${API_BASE_URL}/auth/2fa/verify-login`, {
+  const response = await apiFetch(`${API_BASE_URL}/auth/2fa/verify-login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ challenge_token: challengeToken, code }),
@@ -208,7 +240,7 @@ export function isNetworkError(error) {
 
 export async function fetchMyDeliveries() {
   try {
-    const response = await fetch(`${API_BASE_URL}/deliveries/mine`, {
+    const response = await apiFetch(`${API_BASE_URL}/deliveries/mine`, {
       headers: await authHeaders(),
     });
     const data = await response.json();
@@ -225,7 +257,7 @@ export async function fetchMyDeliveries() {
 
 export async function getDelivery(deliveryId) {
   try {
-    const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}`, {
+    const response = await apiFetch(`${API_BASE_URL}/deliveries/${deliveryId}`, {
       headers: await authHeaders(),
     });
     const data = await response.json();
@@ -266,7 +298,7 @@ export async function getDelivery(deliveryId) {
 export async function updateDeliveryStatus(delivery, status, extra = {}) {
   const patch = { status, updated_at: new Date().toISOString(), ...extra };
   try {
-    const response = await fetch(`${API_BASE_URL}/deliveries/${delivery.id}`, {
+    const response = await apiFetch(`${API_BASE_URL}/deliveries/${delivery.id}`, {
       method: "PATCH",
       headers: await authHeaders(),
       body: JSON.stringify(patch),
@@ -289,7 +321,7 @@ export async function updateDeliveryStatus(delivery, status, extra = {}) {
  * backend/app/models/failed_delivery_reason.py).
  */
 export async function fetchActiveReasonCodes() {
-  const response = await fetch(`${API_BASE_URL}/deliveries/reason-codes/active`, {
+  const response = await apiFetch(`${API_BASE_URL}/deliveries/reason-codes/active`, {
     headers: await authHeaders(),
   });
   const data = await response.json();
@@ -309,7 +341,7 @@ export async function fetchActiveReasonCodes() {
  * surfaces whatever the backend says is missing).
  */
 export async function submitProofOfDelivery(deliveryId, { recipientName, signatureDataUrl, photoDataUrl, latitude, longitude, notes } = {}) {
-  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/pod`, {
+  const response = await apiFetch(`${API_BASE_URL}/deliveries/${deliveryId}/pod`, {
     method: "POST",
     headers: await authHeaders(),
     body: JSON.stringify({
@@ -336,7 +368,7 @@ export async function submitProofOfDelivery(deliveryId, { recipientName, signatu
  * own comment for why that's an acceptable, honestly-scoped trade-off.
  */
 export async function fetchDeliveryMessages(deliveryId) {
-  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/messages`, {
+  const response = await apiFetch(`${API_BASE_URL}/deliveries/${deliveryId}/messages`, {
     headers: await authHeaders(),
   });
   const data = await response.json();
@@ -345,7 +377,7 @@ export async function fetchDeliveryMessages(deliveryId) {
 }
 
 export async function sendDeliveryMessage(deliveryId, message) {
-  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/messages`, {
+  const response = await apiFetch(`${API_BASE_URL}/deliveries/${deliveryId}/messages`, {
     method: "POST",
     headers: await authHeaders(),
     body: JSON.stringify({ message }),
@@ -362,7 +394,7 @@ export async function sendDeliveryMessage(deliveryId, message) {
  * confirms it's real and fetches the delivery in one call.
  */
 export async function resolveScannedCode(code) {
-  const response = await fetch(`${API_BASE_URL}/scan/${encodeURIComponent(code)}`, {
+  const response = await apiFetch(`${API_BASE_URL}/scan/${encodeURIComponent(code)}`, {
     headers: await authHeaders(),
   });
   const data = await response.json();
@@ -371,7 +403,7 @@ export async function resolveScannedCode(code) {
 }
 
 export async function recordScan(deliveryId, scanType) {
-  const response = await fetch(`${API_BASE_URL}/deliveries/${deliveryId}/scan`, {
+  const response = await apiFetch(`${API_BASE_URL}/deliveries/${deliveryId}/scan`, {
     method: "POST",
     headers: await authHeaders(),
     body: JSON.stringify({ scan_type: scanType }),
@@ -386,7 +418,7 @@ export async function recordScan(deliveryId, scanType) {
  * reliably in the background — see ../locationTask.js.
  */
 export async function pushMyLocation(latitude, longitude) {
-  const response = await fetch(`${API_BASE_URL}/users/me/location`, {
+  const response = await apiFetch(`${API_BASE_URL}/users/me/location`, {
     method: "PUT",
     headers: await authHeaders(),
     body: JSON.stringify({ latitude, longitude }),
@@ -399,7 +431,7 @@ export async function pushMyLocation(latitude, longitude) {
 }
 
 export async function registerExpoPushToken(token) {
-  const response = await fetch(`${API_BASE_URL}/users/me/expo-push-token`, {
+  const response = await apiFetch(`${API_BASE_URL}/users/me/expo-push-token`, {
     method: "POST",
     headers: await authHeaders(),
     body: JSON.stringify({ token }),
@@ -412,7 +444,7 @@ export async function registerExpoPushToken(token) {
 }
 
 export async function unregisterExpoPushToken(token) {
-  const response = await fetch(`${API_BASE_URL}/users/me/expo-push-token`, {
+  const response = await apiFetch(`${API_BASE_URL}/users/me/expo-push-token`, {
     method: "DELETE",
     headers: await authHeaders(),
     body: JSON.stringify({ token }),
@@ -425,7 +457,7 @@ export async function unregisterExpoPushToken(token) {
 }
 
 export async function fetchMyProfile() {
-  const response = await fetch(`${API_BASE_URL}/auth/me`, {
+  const response = await apiFetch(`${API_BASE_URL}/auth/me`, {
     headers: await authHeaders(),
   });
   const data = await response.json();

@@ -4164,6 +4164,64 @@ catch above earned).
 
 ---
 
+## Mobile: actionable network errors + honest role-scope clarification
+
+**What was reported:** a user testing the mobile app hit an opaque
+"could not connect to the network" failure on login/signup, and
+separately expected the mobile app to offer every role and login type
+the web app does (customer, agent, dispatcher, admin) plus assurance
+that web-created credentials work on mobile.
+
+**What was actually true vs. what needed fixing:** staff credentials
+(agent/dispatcher/admin) created on the web app already worked on
+mobile before this session — same backend, same `/auth/login`. Admin
+account creation already existed too (`SignupScreen.js`'s "Create
+new" tab, unchanged). What was real and worth fixing: (1) a network-
+unreachable `fetch()` failure surfaced React Native's raw, opaque
+"Network request failed" with zero indication of why or what to do
+about it — the single most likely cause (`API_BASE_URL` defaulting to
+`10.0.2.2`, which only resolves from the Android emulator, not from
+Expo Go on a real phone) went completely unstated; (2) a dispatcher
+selecting their role at signup got no warning that this app has no
+dispatcher screens at all, and would just land on a delivery list
+labeled the same generic way as a legitimately-empty agent list — an
+honest UX gap, not a bug in the strict sense, but misleading.
+
+**What was NOT fixed, and why:** a customer-facing mobile experience
+(storefront, orders, tracking, support) — the web app's customers are
+a wholly separate account system (`/customer/login`, not
+`/auth/login`), and this app has zero customer screens. Adding that
+would mean building a second, unrelated mobile app inside this one,
+directly contradicting this app's stated, narrow reason to exist (see
+`README.md`'s "Why This Exists" — solving background GPS tracking for
+an agent already on a delivery run). This wasn't silently skipped —
+see the reply to the user in this session for the explicit scope
+question left open.
+
+**What it does:** new `apiFetch()` wrapper in `api.js` (every one of
+its 18 `fetch()` call sites now goes through it) catches ONLY the
+network-unreachable failure mode and rewrites it into a message naming
+the exact `API_BASE_URL` that was tried plus what to check — a real
+HTTP error response (401, validation errors, etc.) is untouched,
+still surfacing the backend's own `detail` message exactly as before.
+`SignupScreen.js`'s dispatcher role option now shows an inline warning
+before the account is created. `DeliveryListScreen.js`'s empty state
+is now role-aware (via `useAuth()`'s `user.role`) — a dispatcher or
+admin sees an explanation of why the list is empty and where to go
+instead, an agent with genuinely no deliveries still sees the original
+plain message. `README.md`'s Setup section gained a paragraph
+explaining exactly this — which accounts already work across both
+apps, and which mobile screens don't exist and why.
+
+**2 new tests** (`api.test.js`): one confirms a raw `fetch()` rejection
+is rewritten into a message containing `API_BASE_URL`, one confirms a
+real HTTP error response's `detail` message still passes through
+unchanged (i.e. `apiFetch()` didn't accidentally start swallowing or
+rewriting real backend errors). Mobile suite: **58/58** (56 previously
++ 2 new). No backend or web-frontend changes this session.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name

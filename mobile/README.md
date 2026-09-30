@@ -83,7 +83,36 @@ EXPO_PUBLIC_API_BASE_URL=http://192.168.1.42:8000 npx expo start
 ```
 (Find your LAN IP with `ipconfig` on Windows or `ifconfig`/`ip addr` on
 macOS/Linux. Your phone and computer must be on the same Wi-Fi
-network.)
+network.) **Getting "Can't reach the server..." on login/signup?**
+That's this exact misconfiguration — 10.0.2.2 (the default) only
+resolves from the Android emulator; on Expo Go on a real phone it
+resolves to nothing, which is what "fastest way to test" above
+actually means in practice for most people. The error message itself
+now names the URL it tried and what to check (see `api.js`'s
+`apiFetch()`) — previously this surfaced as a raw, unhelpful
+"Network request failed" with no indication of why.
+
+**One backend, several kinds of accounts — not all of them work in
+this app.** This app talks to the SAME backend and database as the
+web app (see below), so a **staff** account — agent, dispatcher, or
+admin, created either here or on the web app — logs in identically on
+both; there's no separate mobile account system to keep in sync. What
+this app deliberately does NOT have: a **customer**-facing experience.
+The web app's customers (`frontend/src/components/CustomerDashboard.jsx`,
+`Storefront.jsx`, etc.) are an entirely separate account system on the
+backend (`POST /customer/login`, not `POST /auth/login`), with no
+mobile screen for it at all — this app only ever calls the staff auth
+endpoints. And while dispatcher/admin accounts CAN log in here (the
+backend doesn't stop them), this app only has an agent's
+assigned-delivery workflow — a dispatcher lands on a screen that's
+honestly labeled as empty rather than pretending they're missing
+deliveries (see `DeliveryListScreen.js`), and `SignupScreen.js` warns
+about this before a dispatcher account is even created. Building a
+customer mobile experience or a dispatcher-specific mobile console
+would each be a substantial, separate undertaking — this app's whole
+reason to exist (see "Why This Exists" above) is the one specific,
+narrow gap of background GPS tracking for an agent already out on
+deliveries, not a mobile port of the entire web console.
 
 Log in with any existing **agent** account from the web app, or use
 the **Sign Up** link to join an org via invite code or create a new
