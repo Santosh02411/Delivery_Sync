@@ -4280,6 +4280,40 @@ suite: 79/79 unchanged. Mobile suite: 58/58 unchanged.
 
 ---
 
+## Mobile: show/hide password toggle
+
+**What was missing:** the web app's every password field
+(`PasswordInput.jsx`) has a show/hide eye toggle; every mobile
+password field (`LoginScreen.js`, `SignupScreen.js`,
+`ResetPasswordScreen.js`'s two fields) was a plain `secureTextEntry`
+TextInput with no way to reveal what was typed — a real, requested
+parity gap, not a style nitpick (mistyping a password with no way to
+check it before submitting is a genuine usability problem, more so on
+a phone keyboard than a desktop one).
+
+**What it does:** new `mobile/src/components/PasswordInput.js` — a
+drop-in replacement for a bare password TextInput, mirroring the web
+component's contract (forwards every prop through, purely visual
+`isVisible` state that never touches the value itself) but NOT its
+implementation: the web version draws its eye icon as inline SVG,
+which React Native has no equivalent of without adding an icon
+library dependency this app doesn't otherwise need. Uses a plain
+"Show"/"Hide" text toggle instead — unambiguous, needs nothing
+installed, and avoids emoji-eye glyphs rendering inconsistently across
+Android/iOS system fonts. Swapped into all 4 password fields across
+the 3 screens listed above.
+
+**Verification:** no dedicated component test (this project's mobile
+screens generally aren't unit-tested — same stated scope as
+`Captcha.js`/`ResetPasswordScreen.js`'s own tests, or lack thereof,
+in earlier sessions); checked by requiring the new component and all
+3 consumer screens through the project's real Babel/Jest transform to
+confirm they parse and import cleanly, then a full suite run. Mobile
+suite: **58/58 unchanged** — this touched no logic the existing tests
+cover, by design.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
