@@ -291,7 +291,7 @@ export default function CustomerDashboard() {
 
       {activeView === "shop" && (
         <div>
-          <Storefront token={token} onOrderPlaced={() => { loadDeliveries(); setActiveView("orders"); }} />
+          <Storefront token={token} onOrderPlaced={() => { loadDeliveries(); loadNotifications(); setActiveView("orders"); }} />
         </div>
       )}
 
