@@ -104,42 +104,96 @@ comments for exactly what changes in production mode.
 
 ## Deploying It For Real
 
-Want this actually **live** at a URL, not just running on your machine?
-This repo includes a [`render.yaml`](render.yaml) Blueprint —
-[Render](https://render.com)'s free tier will run the backend API, the
-frontend, and a managed Postgres database from one file:
+Want this actually **live** at a URL, always on, not just running on your
+machine? This repo includes a [`render.yaml`](render.yaml) Blueprint —
+[Render](https://render.com) will run the backend API, the frontend, and
+a managed Postgres database from one file, and every plan in it is a
+paid, always-on tier rather than Render's free tier — see "Why paid,
+not free" below for exactly what that buys you and why it matters here
+specifically.
 
 1. Push this repo to your own GitHub account.
 2. On [render.com](https://render.com): **New → Blueprint**, point it at
    your fork. Render reads `render.yaml` and provisions all three
-   services automatically.
+   resources automatically. During this step, Render also prompts you
+   for `SMTP_USERNAME`, `SMTP_PASSWORD`, and `FROM_EMAIL` (marked
+   `sync: false` in the file, so real credentials never sit in Git) —
+   fill these in now to get real password-reset/order emails from the
+   start, or leave them blank and add them later (Environment tab);
+   until then, every email just prints to the backend's log instead of
+   sending, exactly like running with no `.env` locally.
 3. After the first deploy, copy the backend's real `.onrender.com` URL
-   into the frontend service's `VITE_API_BASE_URL` build arg (Environment
-   tab → rebuild), and the frontend's real URL into the backend's
-   `ALLOWED_ORIGINS`/`FRONTEND_URL` (Environment tab → the backend
-   restarts on its own, no rebuild needed for those two). This two-step
-   "deploy once, then wire the two real URLs together" dance is
-   unavoidable — each service's real address only exists after its own
-   first deploy — `render.yaml` has a comment at each spot that needs it.
-4. *(Optional)* Add real credentials for SMTP, Twilio, Razorpay, Google
-   OAuth, or push notifications in the backend service's Environment
-   tab — every one of these already works with zero config (console-
-   logged / honestly disabled instead), so this step turns features on,
-   it doesn't unblock a broken deploy.
+   into the frontend service's `VITE_API_BASE_URL` env var (Environment
+   tab → this triggers a rebuild automatically), and the frontend's real
+   URL into the backend's `ALLOWED_ORIGINS`/`FRONTEND_URL` (Environment
+   tab → the backend restarts on its own, no rebuild needed for those
+   two). This two-step "deploy once, then wire the two real URLs
+   together" dance is unavoidable — each service's real address only
+   exists after its own first deploy — `render.yaml` has a comment at
+   each spot that needs it.
+4. *(Optional)* Add real credentials for SMS/WhatsApp (Twilio), your own
+   Web Push keys instead of the shared built-in default (VAPID),
+   Razorpay, Google Maps, or Sign in with Google in the backend
+   service's Environment tab — every one of these already works with
+   zero config (console-logged / honestly disabled instead), so this
+   step turns a feature on, it doesn't unblock a broken deploy.
 
-**Free-tier honesty:** Render's free web services spin down after 15
-minutes idle and take ~30–60s to wake back up on the next request — fine
-for a portfolio piece someone clicks into occasionally, not an always-on
-demo. The free Postgres instance also expires after 90 days. Both are
-Render platform limits stated plainly here rather than glossed over.
+**Why paid, not free — what "always on" actually requires:** Render's
+free web services spin down after 15 minutes idle and take ~30–60s to
+wake back up on the next request, and its free Postgres expires after a
+limited period. Neither is a bug, both are simply what "free" means on
+Render — but a spin-down doesn't just mean a slow first request: it
+silently drops any open WebSocket connection, which is exactly how this
+app's real-time dispatcher↔agent messaging works, so a free backend
+makes that feature look randomly broken for a reason that has nothing
+to do with the messaging code itself. `render.yaml`'s backend and
+database plans are both set to Render's cheapest **paid** tier
+specifically to avoid both problems — real prices change and are
+Render's to quote, not this file's, but as a rough, current
+(`render.com/pricing`, verify before budgeting) order of magnitude:
+backend ≈ $7/mo, database ≈ $6/mo. The **frontend costs nothing at
+all** even in this always-on setup — it's declared as a Render Static
+Site (`runtime: static`) rather than a second paid Docker web service,
+since it's just the Vite build output serving static files; static
+sites are free and never spin down on Render regardless of plan, so
+paying for a container just to re-serve files a CDN already serves for
+free would be real, avoidable cost for identical behavior.
+
+**Offline sync and real-time messaging need nothing extra once this is
+live.** Both already work purely by talking to whatever `API_BASE_URL`
+they're pointed at — there's no separate "production mode" for either
+to switch into. Once the backend has a stable `https://...onrender.com`
+URL, point the **web app** at it via `VITE_API_BASE_URL` (step 3
+above), and the **mobile app** at it via `mobile/.env`'s
+`EXPO_PUBLIC_API_BASE_URL` (see `mobile/README.md`'s Setup section) —
+from there, an agent's status updates queue and sync exactly as they do
+against `localhost`, and dispatcher↔agent messages arrive over the same
+`wss://` WebSocket connection the app already opens automatically
+(`services/websocket.js` derives `ws://` vs `wss://` from
+`API_BASE_URL`'s own scheme — nothing to configure by hand). The mobile
+app itself isn't something Render hosts at all — it's a phone app, not
+a web service — so "deploying" it just means agents install it (via
+Expo Go or a real build) with that same `.env` value set.
+
+**Mobile push notifications (Expo)** need no backend configuration
+either — no API key, no account (see `backend/app/services/
+expo_push.py`'s own comment on why). The one thing this DOES need that
+has nothing to do with hosting: `npx eas init` once, so the mobile app
+has a real Expo project ID to generate push tokens against — a mobile-
+side setup step, not a deploy step, and unrelated to whether the
+backend is free-tier or paid.
 
 **Railway or Fly.io instead?** Both platforms auto-detect the
-`Dockerfile` already in `backend/` and `frontend/` with no extra config
-file needed — `railway up` (after `railway init`) or `fly launch` from
-each folder gets you most of the way there; you'll still need to set the
-same environment variables `render.yaml` lists (`DATABASE_URL`,
-`JWT_SECRET_KEY`, `ALLOWED_ORIGINS`, `FRONTEND_URL`,
-`VITE_API_BASE_URL`) through that platform's own dashboard/CLI instead.
+`Dockerfile` already in `backend/` (the frontend would need to be
+pointed at its own static-hosting feature instead of a Dockerfile, to
+get the same free-and-always-on behavior `render.yaml` gets from
+Render's native static sites) — `railway up` (after `railway init`) or
+`fly launch` from the backend folder gets you most of the way there;
+you'll still need to set the same environment variables `render.yaml`
+lists (`DATABASE_URL`, `JWT_SECRET_KEY`, `ALLOWED_ORIGINS`,
+`FRONTEND_URL`, `VITE_API_BASE_URL`, `SMTP_*`) through that platform's
+own dashboard/CLI instead, and both platforms' own pricing (not
+Render's) governs what "always on" costs there.
 
 ## Continuous Integration
 

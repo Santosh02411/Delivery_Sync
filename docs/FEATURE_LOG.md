@@ -4314,6 +4314,68 @@ cover, by design.
 
 ---
 
+## render.yaml: always-on deployment + frontend as a free static site
+
+**What was asked:** deploy this live, permanently (not spinning down),
+with email, push, real-time messaging, and offline sync all genuinely
+working the way they do on localhost — and be able to redeploy after
+future changes.
+
+**What was actually true already:** offline sync and real-time
+messaging needed ZERO code changes for this — both already work purely
+by talking to whatever `API_BASE_URL`/`EXPO_PUBLIC_API_BASE_URL` they're
+pointed at, with no separate "production mode." Mobile push (Expo)
+needs no backend config either (`expo_push.py`'s own comment covers
+why) — the one real prerequisite there is `npx eas init`, a one-time
+mobile-side step unrelated to hosting.
+
+**What was genuinely missing:** `render.yaml` used `plan: free`
+everywhere, which — this matters beyond just "slow first request" —
+silently drops any open WebSocket connection when it spins down after
+15 minutes idle, meaning real-time dispatcher↔agent messaging would
+look randomly broken on a free deploy for a reason that has nothing to
+do with the messaging code itself. Email also had no scaffolding for
+prompting real SMTP credentials during Blueprint creation.
+
+**What it does:** backend and database plans changed from `free` to
+Render's cheapest PAID tiers (`0.5c-512mb` backend, `0.1c-256mb`
+database) — genuinely always-on, no spin-down, no database expiry.
+Found in the process: Render renamed its plan IDs at some point after
+this file was first written (`starter`/`standard` → CPU/RAM-based IDs
+like `0.5c-512mb`) — fetched Render's *current*, live Blueprint spec
+and JSON Schema (`render.com/docs/blueprint-spec`,
+`render.com/schema/render.yaml.json`) rather than trust remembered
+naming, and validated the entire rewritten file against that schema
+programmatically (`jsonschema` + `Draft202012Validator`) rather than
+just eyeballing YAML syntax — genuine confirmation it'll be accepted,
+not just that it parses. The frontend service was converted from a
+second paid Docker web service to a Render Static Site
+(`runtime: static`, `staticPublishPath`, a `routes` rewrite rule
+mirroring `nginx.conf`'s SPA fallback, a `headers` rule mirroring its
+asset cache policy) — static sites are free AND never spin down on
+Render regardless of plan, so this isn't a tradeoff, it's strictly
+better for identical behavior: real money saved, not a corner cut.
+Added `SMTP_HOST`/`SMTP_PORT` with sensible defaults plus
+`SMTP_USERNAME`/`SMTP_PASSWORD`/`FROM_EMAIL` as `sync: false` so Render
+prompts for real credentials once, during Blueprint creation, rather
+than the person having to know to go find these in the dashboard
+afterward. `README.md`'s "Deploying It For Real" section rewritten to
+explain all of this plainly — why paid not free, current rough pricing
+(sourced live, stated as Render's to quote not this repo's), and that
+offline sync/real-time/push need no separate production setup at all.
+
+**Verification:** the rewritten `render.yaml` parses as valid YAML AND
+validates with zero errors against Render's own live-fetched JSON
+Schema — the strongest verification available without an actual Render
+account to deploy against (a real deploy is inherently a Render-hosted
+process this sandbox does not have credentials or reach to perform).
+No test suite covers infrastructure config, consistent with this
+project's existing test scope (447 backend + 79 frontend + 58 mobile
+tests, all logic-level, none of them YAML) — neither suite was touched
+or needed re-running this session.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
