@@ -5,12 +5,14 @@ once connectivity returns — designed for delivery agents working in low-networ
 areas (basements, elevators, rural zones, dense buildings).
 
 ## Problem It Solves
+
 Delivery agents lose connectivity constantly during their routes. Existing apps
 either fail silently or block the agent from updating status until signal returns,
 causing delays and lost/duplicate updates. This project solves that with local-first
 storage and a conflict-aware sync engine.
 
 ## Tech Stack
+
 - **Frontend:** React + Vite + IndexedDB (offline-capable client storage)
 - **Backend:** FastAPI
 - **Database:** SQLite (source of truth on server)
@@ -19,6 +21,7 @@ storage and a conflict-aware sync engine.
 - **Deployment:** TBD (Render/Railway — free tier)
 
 ## Project Status
+
 ✅ Phase 1 — Backend schema + API skeleton (done)
 ✅ Phase 2 — Offline-capable React frontend (done)
 ✅ Phase 3 — Sync engine with conflict resolution (done)
@@ -26,6 +29,7 @@ storage and a conflict-aware sync engine.
 🚧 Phase 5 — Final polish, README, demo, deployment
 
 ## Project Structure
+
 ```
 delivery-sync-project/
 ├── backend/           # FastAPI app
@@ -51,6 +55,7 @@ uvicorn main:app --reload
 ```
 
 You should see a message ending in something like:
+
 ```
 Uvicorn running on http://127.0.0.1:8000
 ```
@@ -70,12 +75,13 @@ npm run dev
 ```
 
 You should see a message like:
+
 ```
 VITE ready in ... ms
-➜  Local:   http://localhost:3000/
+➜  Local:   http://localhost:3500/
 ```
 
-Open `http://localhost:3000` in your browser to use the app.
+Open `http://localhost:3500` in your browser to use the app.
 
 ### 3. Using the App
 
@@ -89,6 +95,7 @@ Open `http://localhost:3000` in your browser to use the app.
   also click **"Sync Now"** to trigger it immediately.
 
 ### Common Issues
+
 - **"Failed to fetch" when syncing** → the backend isn't running, or isn't
   reachable at `http://127.0.0.1:8000`. Check the backend terminal is still
   running and `/docs` loads in your browser.
@@ -100,5 +107,6 @@ Open `http://localhost:3000` in your browser to use the app.
   it in interviews.
 
 ## Author
+
 Built by Santy as a portfolio project targeting Python Full Stack / Backend
 Developer / SDE roles.
