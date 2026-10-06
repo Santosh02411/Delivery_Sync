@@ -65,7 +65,7 @@ import os
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3500")
 
 
 def _issue_refresh_token(db: Session, user_id: str, device_info: str = None, ip_address: str = None) -> str:
