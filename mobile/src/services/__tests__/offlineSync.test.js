@@ -32,7 +32,7 @@ describe("describeConflict", () => {
       kept_by: "Rahul K.",
     });
     expect(message).toBe(
-      'Order ORD-1: your change to "picked_up" was overridden — Rahul K. already updated it to "delivered" more recently, so that\'s what was kept.'
+      'Order ORD-1: your change to "picked_up" was overridden — Rahul K. already updated it to "delivered" more recently, so that\'s what was kept.',
     );
   });
 
@@ -65,7 +65,11 @@ describe("runSync", () => {
     getPendingDeliveries.mockResolvedValue(pending);
     global.fetch.mockResolvedValue({
       ok: true,
-      json: async () => ({ resolved_records: [{ id: "1", status: "delivered" }], errors: [], conflicts: [] }),
+      json: async () => ({
+        resolved_records: [{ id: "1", status: "delivered" }],
+        errors: [],
+        conflicts: [],
+      }),
     });
 
     await runSync();
@@ -76,9 +80,12 @@ describe("runSync", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ records: pending }),
-      })
+      }),
     );
-    expect(markAsSynced).toHaveBeenCalledWith("1", { id: "1", status: "delivered" });
+    expect(markAsSynced).toHaveBeenCalledWith("1", {
+      id: "1",
+      status: "delivered",
+    });
   });
 
   it("surfaces conflicts and errors from the backend without treating them as failure", async () => {
@@ -88,7 +95,14 @@ describe("runSync", () => {
       json: async () => ({
         resolved_records: [{ id: "1" }],
         errors: [{ id: "1", error: "validation failed" }],
-        conflicts: [{ order_id: "ORD-1", your_status: "a", kept_status: "b", kept_by: "X" }],
+        conflicts: [
+          {
+            order_id: "ORD-1",
+            your_status: "a",
+            kept_status: "b",
+            kept_by: "X",
+          },
+        ],
       }),
     });
 
@@ -103,10 +117,17 @@ describe("runSync", () => {
     getPendingDeliveries.mockResolvedValue([{ id: "1" }]);
     global.fetch
       .mockRejectedValueOnce(new TypeError("Network request failed"))
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ resolved_records: [{ id: "1" }], errors: [], conflicts: [] }) });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          resolved_records: [{ id: "1" }],
+          errors: [],
+          conflicts: [],
+        }),
+      });
 
     const resultPromise = runSync();
-    await jest.advanceTimersByTimeAsync(3000);
+    await jest.advanceTimersByTimeAsync(3500);
     const result = await resultPromise;
 
     expect(global.fetch).toHaveBeenCalledTimes(2);
@@ -120,12 +141,16 @@ describe("runSync", () => {
     global.fetch.mockRejectedValue(new TypeError("Network request failed"));
 
     const resultPromise = runSync();
-    await jest.advanceTimersByTimeAsync(3000);
-    await jest.advanceTimersByTimeAsync(3000);
+    await jest.advanceTimersByTimeAsync(3500);
+    await jest.advanceTimersByTimeAsync(3500);
     const result = await resultPromise;
 
     expect(global.fetch).toHaveBeenCalledTimes(3);
-    expect(result).toEqual({ success: false, syncedCount: 0, error: "Network request failed" });
+    expect(result).toEqual({
+      success: false,
+      syncedCount: 0,
+      error: "Network request failed",
+    });
     jest.useRealTimers();
   });
 
@@ -135,8 +160,8 @@ describe("runSync", () => {
     global.fetch.mockResolvedValue({ ok: false, json: async () => ({}) });
 
     const resultPromise = runSync();
-    await jest.advanceTimersByTimeAsync(3000);
-    await jest.advanceTimersByTimeAsync(3000);
+    await jest.advanceTimersByTimeAsync(3500);
+    await jest.advanceTimersByTimeAsync(3500);
     const result = await resultPromise;
 
     expect(result.success).toBe(false);
@@ -153,10 +178,12 @@ describe("startAutoSync", () => {
     jest.useFakeTimers();
     global.fetch = jest.fn();
     appStateListeners = [];
-    jest.spyOn(AppState, "addEventListener").mockImplementation((event, handler) => {
-      appStateListeners.push(handler);
-      return { remove: jest.fn() };
-    });
+    jest
+      .spyOn(AppState, "addEventListener")
+      .mockImplementation((event, handler) => {
+        appStateListeners.push(handler);
+        return { remove: jest.fn() };
+      });
   });
 
   afterEach(() => {
@@ -164,7 +191,10 @@ describe("startAutoSync", () => {
   });
 
   it("triggers a sync immediately on startup when connected", async () => {
-    Network.getNetworkStateAsync.mockResolvedValue({ isConnected: true, isInternetReachable: true });
+    Network.getNetworkStateAsync.mockResolvedValue({
+      isConnected: true,
+      isInternetReachable: true,
+    });
     getPendingDeliveries.mockResolvedValue([]);
 
     const stop = startAutoSync();
@@ -175,7 +205,10 @@ describe("startAutoSync", () => {
   });
 
   it("does not sync on startup when not connected", async () => {
-    Network.getNetworkStateAsync.mockResolvedValue({ isConnected: false, isInternetReachable: false });
+    Network.getNetworkStateAsync.mockResolvedValue({
+      isConnected: false,
+      isInternetReachable: false,
+    });
 
     const stop = startAutoSync();
     await jest.runOnlyPendingTimersAsync();
@@ -185,7 +218,10 @@ describe("startAutoSync", () => {
   });
 
   it("triggers a sync when the app becomes active again", async () => {
-    Network.getNetworkStateAsync.mockResolvedValue({ isConnected: true, isInternetReachable: true });
+    Network.getNetworkStateAsync.mockResolvedValue({
+      isConnected: true,
+      isInternetReachable: true,
+    });
     getPendingDeliveries.mockResolvedValue([]);
 
     const stop = startAutoSync();
@@ -201,7 +237,10 @@ describe("startAutoSync", () => {
   });
 
   it("does not trigger a sync when the app goes to background", async () => {
-    Network.getNetworkStateAsync.mockResolvedValue({ isConnected: true, isInternetReachable: true });
+    Network.getNetworkStateAsync.mockResolvedValue({
+      isConnected: true,
+      isInternetReachable: true,
+    });
     getPendingDeliveries.mockResolvedValue([]);
 
     const stop = startAutoSync();
@@ -221,7 +260,10 @@ describe("startAutoSync", () => {
   });
 
   it("returns a cleanup function that removes the AppState listener and stops the interval", async () => {
-    Network.getNetworkStateAsync.mockResolvedValue({ isConnected: true, isInternetReachable: true });
+    Network.getNetworkStateAsync.mockResolvedValue({
+      isConnected: true,
+      isInternetReachable: true,
+    });
     getPendingDeliveries.mockResolvedValue([]);
     const removeSpy = jest.fn();
     AppState.addEventListener.mockReturnValue({ remove: removeSpy });

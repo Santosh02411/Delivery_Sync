@@ -20,7 +20,7 @@ import { getPendingDeliveries, markAsSynced } from "./offlineStore";
 import { API_BASE_URL } from "./api";
 
 const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 3000;
+const RETRY_DELAY_MS = 3500;
 const PERIODIC_SYNC_INTERVAL_MS = 15000; // check every 15 seconds while the app is foregrounded
 
 function wait(ms) {
@@ -31,7 +31,9 @@ function wait(ms) {
  * docstring for why this exists: a discarded offline change should
  * never vanish with no trace anywhere in the interface. */
 export function describeConflict(conflict) {
-  const who = conflict.kept_by ? `${conflict.kept_by} already updated it` : "it was already updated";
+  const who = conflict.kept_by
+    ? `${conflict.kept_by} already updated it`
+    : "it was already updated";
   return `Order ${conflict.order_id}: your change to "${conflict.your_status}" was overridden — ${who} to "${conflict.kept_status}" more recently, so that's what was kept.`;
 }
 
@@ -138,7 +140,10 @@ export function startAutoSync(onSyncComplete) {
   triggerSync();
 
   // 2. Try again whenever the app comes back to the foreground
-  const subscription = AppState.addEventListener("change", handleAppStateChange);
+  const subscription = AppState.addEventListener(
+    "change",
+    handleAppStateChange,
+  );
 
   // 3. Try periodically in the background while foregrounded
   intervalId = setInterval(triggerSync, PERIODIC_SYNC_INTERVAL_MS);
