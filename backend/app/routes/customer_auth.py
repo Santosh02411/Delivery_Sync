@@ -39,7 +39,7 @@ from pydantic import BaseModel
 
 router = APIRouter(prefix="/customer", tags=["customer-auth"])
 
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3500")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
 
 def _issue_customer_refresh_token(db: Session, customer_id: str) -> str:
