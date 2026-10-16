@@ -4505,3 +4505,13 @@ passing, confirming no test hardcodes the old port in an assertion.
 **Why it was needed:**
 
 **What it does:**
+
+
+## Security hardening: authenticated offline sync
+
+`POST /sync` now requires an access token and authorizes every record
+(ownership, tenant, allowed status changes) against the authenticated user
+instead of trusting the payload. See docs/SECURITY_AND_ACCESS.md.
+Touched: `routes/sync.py`, `services/conflict_resolver.py`, web
+`services/api.js`/`syncEngine.js`/`AuthContext.jsx`/`public/sw.js`, mobile
+`services/offlineSync.js`/`api.js`, tests in `test_sync_security.py`.
