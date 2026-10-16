@@ -188,11 +188,18 @@ h1, h2, h3, h4 {
   flex-direction: column;
   padding: 20px 0;
   box-shadow: var(--shadow-md);
-  position: relative;
   z-index: 10;
+  /* Desktop: pinned to the viewport. The page can scroll as long as it
+     likes; the sidebar stays put, and only its menu (.sidebar-nav) scrolls. */
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  align-self: flex-start;
+  overflow: hidden;
 }
 
 .sidebar-brand {
+  flex-shrink: 0;
   font-family: var(--font-display);
   font-size: 17px;
   font-weight: 700;
@@ -201,20 +208,39 @@ h1, h2, h3, h4 {
   letter-spacing: 0.3px;
 }
 
+/* The scrolling menu region between the brand and the footer. */
+.sidebar-nav {
+  flex: 1 1 auto;
+  min-height: 0;            /* required so a flex child can actually shrink and scroll */
+  overflow-y: auto;
+  overscroll-behavior: contain; /* scrolling past the end never scrolls the page behind */
+  padding-bottom: 12px;
+  scrollbar-width: thin;
+}
+
+.sidebar-group {
+  margin-bottom: 14px;
+}
+
+.sidebar-group:last-child {
+  margin-bottom: 0;
+}
+
 .sidebar-section-label {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-muted);
   padding: 0 20px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
+  font-weight: 600;
 }
 
 .sidebar-link {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 20px;
+  padding: 8px 20px;
   color: var(--text-secondary);
   text-decoration: none;
   font-size: 13.5px;
@@ -237,8 +263,9 @@ h1, h2, h3, h4 {
 }
 
 .sidebar-footer {
-  margin-top: auto;
-  padding: 16px 20px 0 20px;
+  flex-shrink: 0;
+  margin-top: 0;
+  padding: 14px 20px 0 20px;
   border-top: 1px solid var(--border-color);
 }
 

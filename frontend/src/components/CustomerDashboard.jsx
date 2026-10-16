@@ -248,18 +248,22 @@ export default function CustomerDashboard() {
 
       <div className={`sidebar ${isMobileNavOpen ? "mobile-open" : ""}`}>
         <div className="sidebar-brand">Delivery Sync</div>
-        <div className="sidebar-section-label">Customer</div>
 
-        {navLinks.map((link) => (
-          <div
-            key={link.key}
-            className={`sidebar-link ${activeView === link.key ? "active" : ""}`}
-            onClick={() => handleNavigate(link.key)}
-          >
-            <span aria-hidden="true">{link.icon}</span>
-            {link.label}
+        <nav className="sidebar-nav" aria-label="Main navigation">
+          <div className="sidebar-group">
+            <div className="sidebar-section-label">Customer</div>
+            {navLinks.map((link) => (
+              <div
+                key={link.key}
+                className={`sidebar-link ${activeView === link.key ? "active" : ""}`}
+                onClick={() => handleNavigate(link.key)}
+              >
+                <span aria-hidden="true">{link.icon}</span>
+                {link.label}
+              </div>
+            ))}
           </div>
-        ))}
+        </nav>
 
         <div className="sidebar-footer">
           <div className="sidebar-user">

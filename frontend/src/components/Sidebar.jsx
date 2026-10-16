@@ -63,70 +63,93 @@ export default function Sidebar({ activeView, onNavigate }) {
     }
   }
 
-  const agentLinks = [
-    { key: "deliveries", label: "My Deliveries", icon: "\u25A4" },
-    { key: "performance", label: "Performance", icon: "\u25CE" },
-    { key: "workforce", label: "My Workforce", icon: "\u25F0" },
-    { key: "fleet", label: "My Vehicle", icon: "\u2691" },
-    { key: "account", label: "My Account", icon: "\u25CB" },
-    { key: "security", label: "Security", icon: "\u26BF" },
+  // Links are grouped under headings so a long menu (admins have ~25
+  // pages) reads as a handful of sections instead of one flat list.
+  const agentGroups = [
+    { label: "Work", links: [
+      { key: "deliveries", label: "My Deliveries", icon: "\u25A4" },
+      { key: "performance", label: "Performance", icon: "\u25CE" },
+      { key: "workforce", label: "My Workforce", icon: "\u25F0" },
+      { key: "fleet", label: "My Vehicle", icon: "\u2691" },
+    ] },
+    { label: "Account", links: [
+      { key: "account", label: "My Account", icon: "\u25CB" },
+      { key: "security", label: "Security", icon: "\u26BF" },
+    ] },
   ];
 
-  const dispatcherLinks = [
-    { key: "dashboard", label: "Dashboard", icon: "\u25A4" },
-    { key: "sla", label: "SLA", icon: "\u23F1" },
-    { key: "warehouses", label: "Warehouses", icon: "\u2b1a" },
-    { key: "fleet", label: "Fleet", icon: "\u2691" },
-    { key: "reconciliation", label: "Finance", icon: "\u20B9" },
-    { key: "rto", label: "RTO", icon: "\u21A9" },
-    { key: "routing", label: "Routing", icon: "\u26F0" },
-    { key: "workforce", label: "Workforce", icon: "\u25F0" },
-    { key: "products", label: "Products", icon: "\u25A3" },
-    { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
-    { key: "support", label: "Support", icon: "\u2753" },
-    { key: "invoicing", label: "Invoicing", icon: "\u20B9" },
-    { key: "account", label: "My Account", icon: "\u25CB" },
-    { key: "security", label: "Security", icon: "\u26BF" },
+  const dispatcherGroups = [
+    { label: "Overview", links: [
+      { key: "dashboard", label: "Dashboard", icon: "\u25A4" },
+    ] },
+    { label: "Operations", links: [
+      { key: "routing", label: "Routing", icon: "\u26F0" },
+      { key: "sla", label: "SLA", icon: "\u23F1" },
+      { key: "rto", label: "RTO", icon: "\u21A9" },
+      { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
+    ] },
+    { label: "Resources", links: [
+      { key: "warehouses", label: "Warehouses", icon: "\u2b1a" },
+      { key: "fleet", label: "Fleet", icon: "\u2691" },
+      { key: "workforce", label: "Workforce", icon: "\u25F0" },
+      { key: "products", label: "Products", icon: "\u25A3" },
+    ] },
+    { label: "Finance & Support", links: [
+      { key: "reconciliation", label: "Finance", icon: "\u20B9" },
+      { key: "invoicing", label: "Invoicing", icon: "\u20B9" },
+      { key: "support", label: "Support", icon: "\u2753" },
+    ] },
+    { label: "Account", links: [
+      { key: "account", label: "My Account", icon: "\u25CB" },
+      { key: "security", label: "Security", icon: "\u26BF" },
+    ] },
   ];
 
-  const adminLinks = [
-    { key: "dashboard", label: "Dashboard", icon: "\u25A4" },
-    { key: "analytics", label: "Analytics", icon: "\u25C8" },
-    { key: "advanced-analytics", label: "Advanced Analytics", icon: "\u25C9" },
-    { key: "sla", label: "SLA", icon: "\u23F1" },
-    { key: "warehouses", label: "Warehouses", icon: "\u2b1a" },
-    { key: "reconciliation", label: "Finance", icon: "\u20B9" },
-    { key: "rto", label: "RTO", icon: "\u21A9" },
-    { key: "routing", label: "Routing", icon: "\u26F0" },
-    { key: "workforce", label: "Workforce", icon: "\u25F0" },
-    { key: "fleet", label: "Fleet", icon: "\u2691" },
-    { key: "products", label: "Products", icon: "\u25A3" },
-    { key: "admin", label: "Manage Users", icon: "\u2699" },
-    { key: "rbac", label: "Custom Roles", icon: "\u26E8" },
-    { key: "zones", label: "Zones", icon: "\u2b21" },
-    { key: "reason-codes", label: "Reason Codes", icon: "\u2691" },
-    { key: "pod-settings", label: "Proof of Delivery", icon: "\u2713" },
-    { key: "notification-templates", label: "Notifications", icon: "\u2709" },
-    { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
-    { key: "support", label: "Support", icon: "\u2753" },
-    { key: "invoicing", label: "Invoicing", icon: "\u20B9" },
-    { key: "api-webhooks", label: "API & Webhooks", icon: "\u2707" },
-    { key: "organization", label: "Organization", icon: "\u2302" },
-    { key: "monitoring", label: "Monitoring", icon: "\u2699" },
-    { key: "audit-log", label: "Audit Log", icon: "\u2637" },
-    { key: "account", label: "My Account", icon: "\u25CB" },
-    { key: "security", label: "Security", icon: "\u26BF" },
+  const adminGroups = [
+    { label: "Overview", links: [
+      { key: "dashboard", label: "Dashboard", icon: "\u25A4" },
+      { key: "analytics", label: "Analytics", icon: "\u25C8" },
+      { key: "advanced-analytics", label: "Advanced Analytics", icon: "\u25C9" },
+    ] },
+    { label: "Operations", links: [
+      { key: "routing", label: "Routing", icon: "\u26F0" },
+      { key: "sla", label: "SLA", icon: "\u23F1" },
+      { key: "rto", label: "RTO", icon: "\u21A9" },
+      { key: "returns", label: "Returns & Exchanges", icon: "\u21BA" },
+      { key: "zones", label: "Zones", icon: "\u2b21" },
+      { key: "reason-codes", label: "Reason Codes", icon: "\u2691" },
+      { key: "pod-settings", label: "Proof of Delivery", icon: "\u2713" },
+    ] },
+    { label: "Resources", links: [
+      { key: "warehouses", label: "Warehouses", icon: "\u2b1a" },
+      { key: "fleet", label: "Fleet", icon: "\u2691" },
+      { key: "workforce", label: "Workforce", icon: "\u25F0" },
+      { key: "products", label: "Products", icon: "\u25A3" },
+    ] },
+    { label: "Finance & Support", links: [
+      { key: "reconciliation", label: "Finance", icon: "\u20B9" },
+      { key: "invoicing", label: "Invoicing", icon: "\u20B9" },
+      { key: "support", label: "Support", icon: "\u2753" },
+      { key: "notification-templates", label: "Notifications", icon: "\u2709" },
+    ] },
+    { label: "Administration", links: [
+      { key: "admin", label: "Manage Users", icon: "\u2699" },
+      { key: "rbac", label: "Custom Roles", icon: "\u26E8" },
+      { key: "organization", label: "Organization", icon: "\u2302" },
+      { key: "api-webhooks", label: "API & Webhooks", icon: "\u2707" },
+    ] },
+    { label: "System & Account", links: [
+      { key: "monitoring", label: "Monitoring", icon: "\u2699" },
+      { key: "audit-log", label: "Audit Log", icon: "\u2637" },
+      { key: "account", label: "My Account", icon: "\u25CB" },
+      { key: "security", label: "Security", icon: "\u26BF" },
+    ] },
   ];
 
-  const links =
-    user.role === "agent" ? agentLinks :
-    user.role === "admin" ? adminLinks :
-    dispatcherLinks;
-
-  const sectionLabel =
-    user.role === "agent" ? "Agent" :
-    user.role === "admin" ? "Admin" :
-    "Dispatch";
+  const groups =
+    user.role === "agent" ? agentGroups :
+    user.role === "admin" ? adminGroups :
+    dispatcherGroups;
 
   function handleNavigate(key) {
     onNavigate(key);
@@ -156,18 +179,28 @@ export default function Sidebar({ activeView, onNavigate }) {
       <div className={`sidebar ${isMobileOpen ? "mobile-open" : ""}`}>
         <div className="sidebar-brand">Delivery Sync</div>
 
-        <div className="sidebar-section-label">{sectionLabel}</div>
-
-        {links.map((link) => (
-          <div
-            key={link.key}
-            className={`sidebar-link ${activeView === link.key ? "active" : ""}`}
-            onClick={() => handleNavigate(link.key)}
-          >
-            <span aria-hidden="true">{link.icon}</span>
-            {link.label}
-          </div>
-        ))}
+        {/* Only THIS part scrolls: the brand above and the user/footer
+            below stay pinned, and the page behind never moves with it. */}
+        <nav className="sidebar-nav" aria-label="Main navigation">
+          {groups.map((group) => (
+            <div className="sidebar-group" key={group.label}>
+              <div className="sidebar-section-label">{group.label}</div>
+              {group.links.map((link) => (
+                <div
+                  key={link.key}
+                  className={`sidebar-link ${activeView === link.key ? "active" : ""}`}
+                  onClick={() => handleNavigate(link.key)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); handleNavigate(link.key); } }}
+                >
+                  <span aria-hidden="true">{link.icon}</span>
+                  {link.label}
+                </div>
+              ))}
+            </div>
+          ))}
+        </nav>
 
         <div className="sidebar-footer">
           <div className="sidebar-user">
