@@ -46,22 +46,48 @@ export function AuthProvider({ children }) {
   }, []);
 
   // Proactive background refresh — see REFRESH_INTERVAL_MS above.
+  // `refreshInFlight` makes sure only ONE refresh runs at a time: refresh
+  // tokens rotate, and presenting an already-used one is treated as theft
+  // (the whole session is revoked), so two overlapping refreshes must never happen.
+  const refreshInFlight = useRef(false);
+  const didInitialRefresh = useRef(false);
+
+  async function refreshSessionNow() {
+    if (refreshInFlight.current || !refreshTokenRef.current) return;
+    refreshInFlight.current = true;
+    try {
+      const data = await refreshTokenRequest(refreshTokenRef.current);
+      persistTokens(data.access_token, data.refresh_token);
+    } catch (err) {
+      // Network failure (offline): keep the session, try again later —
+      // logging out here would wipe an offline agent's session.
+      // A real rejection (expired/revoked refresh token) ends the session.
+      if (navigator.onLine && !(err instanceof TypeError)) {
+        logout();
+      }
+    } finally {
+      refreshInFlight.current = false;
+    }
+  }
+
   useEffect(() => {
     if (!refreshToken) return;
 
-    const intervalId = setInterval(async () => {
-      try {
-        const data = await refreshTokenRequest(refreshTokenRef.current);
-        persistTokens(data.access_token, data.refresh_token);
-      } catch {
-        // Refresh token expired or was revoked server-side — nothing
-        // more this session can do; clear it so the person is prompted
-        // to log in again next time they try an authenticated action.
-        logout();
-      }
-    }, REFRESH_INTERVAL_MS);
+    // The access token only lives 30 minutes, and /sync now requires it.
+    // After the app was closed/asleep longer than that, the stored token
+    // is already expired — so renew once right at startup, and again
+    // whenever connectivity returns, instead of waiting for the 20-minute timer.
+    if (!didInitialRefresh.current) {
+      didInitialRefresh.current = true;
+      refreshSessionNow();
+    }
+    window.addEventListener("online", refreshSessionNow);
+    const intervalId = setInterval(refreshSessionNow, REFRESH_INTERVAL_MS);
 
-    return () => clearInterval(intervalId);
+    return () => {
+      window.removeEventListener("online", refreshSessionNow);
+      clearInterval(intervalId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshToken]);
 

@@ -62,6 +62,13 @@ export async function runSync() {
         conflicts: response.conflicts || [],
       };
     } catch (error) {
+      // 401/403: retrying within seconds can't help (the token is expired
+      // or the account is blocked). Records stay pending; the next
+      // periodic tick picks up whatever fresh token AuthContext has
+      // stored by then. Nothing is lost.
+      if (error.status === 401 || error.status === 403) {
+        return { success: false, syncedCount: 0, error: error.message, authError: true };
+      }
       attempt += 1;
       if (attempt >= MAX_RETRIES) {
         return { success: false, syncedCount: 0, error: error.message };

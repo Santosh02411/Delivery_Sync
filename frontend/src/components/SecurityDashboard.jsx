@@ -11,7 +11,7 @@ const EVENT_LABELS = {
   login_success: "Successful login", login_failed: "Failed login attempt", suspicious_login: "Login from a new location",
   password_changed: "Password changed", password_reset: "Password reset", "2fa_enabled": "Two-factor authentication enabled",
   "2fa_disabled": "Two-factor authentication disabled", session_revoked: "Session revoked", all_sessions_revoked: "Logged out of all devices",
-  account_locked: "Account locked (too many failed attempts)", recovery_codes_generated: "Recovery codes generated", recovery_code_used: "Recovery code used",
+  account_locked: "Account locked (too many failed attempts)", recovery_codes_generated: "Recovery codes generated", recovery_code_used: "Recovery code used", sync_rejected: "Offline sync record refused",
 };
 
 /** Sessions, login history, security events, and recovery codes (Phase 17). Sits alongside TwoFactorSettings on the Security page. */

@@ -98,6 +98,14 @@ export default function AgentDeliveryList() {
     };
   }, []);
 
+  // /sync needs a current access token, and the service worker's background
+  // sync reads it from this shared context — keep it fresh when AuthContext
+  // refreshes the token (the mount effect above only runs once).
+  useEffect(() => {
+    writeSyncContext({ userId: user.id, token, role: user.role, apiBaseUrl: API_BASE_URL });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
   // Reset to page 1 whenever the search query changes, so a new search
   // doesn't leave you stranded on a page that no longer has results
   useEffect(() => {

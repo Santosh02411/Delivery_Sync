@@ -45,6 +45,19 @@ describe("runSync", () => {
     vi.clearAllMocks();
   });
 
+  it("stops immediately on a 401 (no retry loop) and leaves records pending", async () => {
+    getPendingDeliveries.mockResolvedValue([{ id: "1" }]);
+    const authError = new Error("Session expired — sign in again to sync.");
+    authError.status = 401;
+    syncPendingDeliveries.mockRejectedValue(authError);
+
+    const result = await runSync();
+
+    expect(result).toMatchObject({ success: false, authError: true });
+    expect(syncPendingDeliveries).toHaveBeenCalledTimes(1);
+    expect(markAsSynced).not.toHaveBeenCalled();
+  });
+
   it("returns success with syncedCount 0 when there's nothing pending", async () => {
     getPendingDeliveries.mockResolvedValue([]);
     const result = await runSync();

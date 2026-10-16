@@ -209,9 +209,17 @@ async function backgroundSyncDeliveries(context) {
   const pending = all.filter((r) => r.sync_status === "pending");
   if (pending.length === 0) return 0;
 
+  // /sync requires the agent's access token. The context token is the one
+  // written when the app last ran; if it has expired (30 min lifetime) the
+  // server answers 401, this throws, and the browser retries the sync event
+  // later — the records stay pending, and the foreground app (which
+  // refreshes tokens) syncs them as soon as it's opened.
   const response = await fetch(`${context.apiBaseUrl}/sync`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(context.token ? { Authorization: `Bearer ${context.token}` } : {}),
+    },
     body: JSON.stringify({ records: pending }),
   });
   if (!response.ok) throw new Error("Background delivery sync failed");

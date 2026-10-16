@@ -1172,17 +1172,33 @@ export async function resendTwoFactorLoginCode(challengeToken) {
 
 /**
  * Sends a batch of pending records to the server's /sync endpoint.
- * NOTE: this endpoint is intentionally left unauthenticated for now — see
- * docs/SECURITY_AND_ACCESS.md for why, and what a production version would
- * add here.
+ * /sync is AUTHENTICATED: the server takes the agent's identity and
+ * organization from the access token, never from the records. The token
+ * is read from the persisted session at call time (not captured when the
+ * sync loop started) so it's always the latest one AuthContext refreshed.
+ * A 401 throws an Error with `status = 401` so the sync engine can stop
+ * retrying; the records simply stay pending until a fresh token exists.
  */
 export async function syncPendingDeliveries(pendingRecords) {
+  let token = null;
+  try {
+    token = JSON.parse(localStorage.getItem("delivery_sync_auth") || "null")?.token || null;
+  } catch {
+    token = null;
+  }
   const response = await fetch(`${API_BASE_URL}/sync`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ records: pendingRecords }),
   });
-  if (!response.ok) throw new Error("Sync request failed");
+  if (!response.ok) {
+    const error = new Error(response.status === 401 ? "Session expired — sign in again to sync." : "Sync request failed");
+    error.status = response.status;
+    throw error;
+  }
   return response.json();
 }
 
