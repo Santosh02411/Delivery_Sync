@@ -72,10 +72,10 @@ npm run dev
 You should see a message like:
 ```
 VITE ready in ... ms
-➜  Local:   http://localhost:3000/
+➜  Local:   http://localhost:3700/
 ```
 
-Open `http://localhost:3000` in your browser to use the app.
+Open `http://localhost:3700` in your browser to use the app.
 
 ### 3. Using the App
 

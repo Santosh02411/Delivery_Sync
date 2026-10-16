@@ -24,7 +24,7 @@ docker compose up --build
 First run will take a few minutes (pulling base images, installing
 dependencies, building the frontend). Once it's up:
 
-- Frontend: http://localhost:3000
+- Frontend: http://localhost:3700
 - Backend API: http://localhost:8000
 - Postgres: exposed inside the Docker network only, not on your host —
   connect to it directly with `docker compose exec db psql -U
@@ -42,7 +42,7 @@ survives a `down` and is only removed with `docker compose down -v`).
 | Frontend | Vite dev server, hot reload | Built static files via nginx |
 | Backend | `--reload`, `ENVIRONMENT` unset | No reload, `ENVIRONMENT=production` |
 | `/docs` API explorer | On | Off (see main.py) |
-| CORS | Wide open | Locked to `http://localhost:3000` |
+| CORS | Wide open | Locked to `http://localhost:3700` |
 | JWT signing key | Insecure dev fallback (with a warning) | Must be set, or the container won't start |
 
 None of this is Docker-specific behavior — it's all driven by the

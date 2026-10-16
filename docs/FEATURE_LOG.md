@@ -4376,6 +4376,126 @@ or needed re-running this session.
 
 ---
 
+## Org/staff welcome emails + a pre-existing flaky test found while verifying
+
+**What was asked, as three items:** (1) a show/hide eye button on
+password fields, (2) an email sent on creating an organization or a
+new agent/dispatcher joining one, (3) customer emails for order status
+changes (packed/out for delivery/delivered).
+
+**Two of the three already existed** — checked before writing anything,
+rather than assumed: #1 was built in an earlier session
+(`PasswordInput.jsx`/`.js` on both web and mobile). #3 turned out to
+already be fully wired — `notify_customer_of_status_change()` in
+`services/notifications.py` calls `send_status_notification_email()`
+for every status change, `out_for_delivery` and `delivered` included;
+this was built in an earlier session for the in-app notification and
+the email channel was added alongside it at the time, which this
+session's own earlier summary had undersold as in-app-only. Only #2
+was a genuine gap: no email was ever sent on signup beyond the
+generic "verify your email" link — nothing that actually welcomed
+someone or told a new admin their org's invite code.
+
+**What it does:** two new functions in `services/email.py` —
+`send_org_welcome_email()` (to whoever just created a brand new org:
+confirms it, repeats back the invite code to share with their team)
+and `send_staff_welcome_email()` (to whoever just joined an existing
+org via invite code, as agent or dispatcher). A shared
+`_send_welcome_email()` helper in `routes/auth.py` picks the right one
+and is called from BOTH places a signup can actually happen — the
+regular `POST /auth/signup` and the Google OAuth signup path — so
+Google-based signups get the same welcome email, not just password-
+based ones. Deliberately wrapped in try/except (unlike the existing
+`_issue_and_send_verification_email()` call beside it, which lets a
+failure propagate) — a welcome email is best-effort, the same
+reasoning `notify_customer_of_status_change()` already uses for its
+own three channels, so a transient SMTP hiccup shouldn't be able to
+block someone from creating an account.
+
+**2 new tests** (`test_auth.py`): one confirms creating an org sends
+`send_org_welcome_email` with the SAME invite code the signup response
+itself returns (not a mismatched one), one confirms joining an org
+sends `send_staff_welcome_email` (not the org one) with the right org
+name and role. Both monkeypatch the email functions directly on
+`auth_routes`, same pattern `test_oauth.py` already established.
+
+**Found while verifying, unrelated to this change — disclosed rather
+than quietly worked around:** running the full suite in 3 batches (a
+single `pytest tests/` run exceeds this sandbox's tool timeout) turned
+up one consistent failure: `test_monitoring.py::
+test_api_metrics_recorded_across_requests`, which asserts `GET
+/health` appears in `/admin/monitoring/api-metrics`'s
+`slowest_endpoints` list. That list is capped at the top 15 SLOWEST
+endpoints, tracked in a global, in-memory store that's never reset
+between tests (see `get_api_metrics_summary()`'s `top_n: int = 15`
+default in `services/monitoring.py`) — in a big enough batch, enough
+genuinely slower endpoints accumulate from earlier tests that `/health`
+(about as fast as an endpoint gets) falls out of the top 15 by the
+time this test's own two `/health` hits are checked. This is inherently
+order/volume-dependent by design, not a regression: confirmed by
+temporarily disabling this session's new welcome-email calls entirely
+and re-running the exact same batch — it failed identically, proving
+the welcome emails aren't the cause. Not fixed here (it's pre-existing,
+unrelated to what was asked, and a real fix means either resetting
+monitoring state per-test via a fixture or changing what the test
+asserts — a small but separate piece of work) — flagged here so it
+isn't mistaken for something this session broke, the same way earlier
+sessions have flagged other pre-existing issues honestly rather than
+silently stepping around them.
+
+Full backend suite (run in 3 batches to fit this sandbox's tool
+timeout): **449 total (447 + 2 new)** — 112 + 161 (160 passed, 1 the
+pre-existing flaky one above) + 176, all passing individually and in
+every batch except that one test specifically in this one batch
+composition. No frontend or mobile changes this session.
+
+---
+
+## Eye-button diagnosis (stale build, not missing code) + frontend port 3000 → 3700
+
+**Eye button "still not showing":** checked rather than re-built blind
+— `PasswordInput.jsx` already has the eye icon (confirmed earlier this
+session), `LoginPage.jsx` already renders `<PasswordInput>` not a raw
+input, and the CSS it depends on (`.password-input-wrap`/
+`.password-toggle-btn` in `theme.css`) is present and looks correct.
+Conclusion stated plainly rather than guessed: the screenshot was a
+stale build — the running frontend predates this code, most likely
+because the latest zip hadn't been rebuilt/redeployed yet. No code
+changed for this part; nothing was broken to begin with.
+
+**Frontend dev port changed from 3000 to 3700** (explicit user
+request). This exact class of bug — a hardcoded port drifting out of
+sync across files — already bit this project once before (see this
+log's own ~line 1025 entry on `FRONTEND_URL` vs. the real Vite port),
+so this change was done as a full repo-wide sweep rather than just
+`vite.config.js`: `frontend/vite.config.js`'s `server.port`; all
+THREE backend files with their own `FRONTEND_URL` default
+(`routes/auth.py`, `routes/customer_auth.py`,
+`services/notifications.py` — each has its own copy of this constant,
+not a shared one); `docker-compose.yml`'s host-side port mapping
+(`"3000:80"` → `"3700:80"`; the container-internal nginx port stays
+80, unrelated) and its `ALLOWED_ORIGINS`/`FRONTEND_URL` env defaults;
+`backend/.env.example`'s own `FRONTEND_URL` line AND its explanatory
+comment (which itself said "sets it to 3000" — would have been a
+second instance of exactly the stale-docs bug the original ~line 1025
+entry fixed, caught by grepping for the literal string across the
+whole repo rather than trusting a mental list of "files that probably
+mention this"); and the port URLs stated in `README.md`,
+`docs/README.md`, and `docs/DOCKER.md`. Confirmed clean afterward with
+a second repo-wide grep for "3000" — the only remaining hits were
+genuinely unrelated (`RETRY_DELAY_MS = 3000` in two different
+services' retry-backoff logic, a `setInterval(poll, 30000)` polling
+interval, `package-lock.json` dependency hashes, and this log's own
+historical entry, correctly left as a historical record rather than
+"corrected" to match current config).
+
+**Verification:** `vite build` succeeds clean; full frontend suite
+79/79 (unchanged — a dev-server port has no bearing on build output or
+tests); the 4 backend auth/OAuth test files (60 tests) re-run and
+passing, confirming no test hardcodes the old port in an assertion.
+
+---
+
 ## (Template for future entries — copy this structure)
 
 ## Feature Name
