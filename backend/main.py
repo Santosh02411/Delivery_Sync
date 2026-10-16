@@ -24,11 +24,12 @@ load_dotenv()
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 import logging
+import re
 import os
 import time
 
@@ -118,6 +119,37 @@ app.add_middleware(
 UPLOAD_ROOT = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(os.path.join(UPLOAD_ROOT, "products"), exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_ROOT), name="uploads")
+
+
+# ---------- Timestamps: always send UTC with an explicit "Z" ----------
+# Every datetime in the database is naive UTC (datetime.utcnow()), and
+# Pydantic serializes a naive datetime WITHOUT any timezone marker, e.g.
+# "2026-10-16T10:00:00". Browsers (and React Native) parse a marker-less
+# ISO string as the viewer's LOCAL time, so in India (UTC+5:30) every
+# delivery/update/created time displayed 5h30m wrong. Appending "Z" tells
+# every client "this is UTC", so `new Date(value)` converts it to the
+# viewer's real local time correctly — on the web app, the mobile app,
+# the tracking page, and anything else that reads the API.
+_NAIVE_ISO_DATETIME = re.compile(r'("\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?)(")')
+
+
+def mark_naive_datetimes_as_utc(text: str) -> str:
+    """Appends 'Z' to ISO datetime strings that have no UTC offset. Strings
+    that already end in Z / +hh:mm, and date-only values, are left alone."""
+    return _NAIVE_ISO_DATETIME.sub(r"\1Z\2", text)
+
+
+@app.middleware("http")
+async def utc_timestamps_middleware(request: Request, call_next):
+    response = await call_next(request)
+    if not response.headers.get("content-type", "").startswith("application/json"):
+        return response
+    body = b""
+    async for chunk in response.body_iterator:
+        body += chunk
+    fixed = mark_naive_datetimes_as_utc(body.decode("utf-8")).encode("utf-8")
+    headers = {k: v for k, v in response.headers.items() if k.lower() != "content-length"}
+    return Response(content=fixed, status_code=response.status_code, headers=headers, media_type="application/json")
 
 
 @app.middleware("http")

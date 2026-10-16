@@ -30,7 +30,7 @@ from app.services.auth import (
     create_customer_oauth_state_token,
     create_customer_oauth_login_code,
 )
-from app.services.email import send_customer_password_reset_email, send_customer_verification_email
+from app.services.email import send_customer_password_reset_email, send_customer_verification_email, send_customer_welcome_email
 from app.services.captcha import verify_captcha, IS_CONFIGURED as CAPTCHA_CONFIGURED
 from app.services.rate_limiter import limiter
 from app.services import oauth as oauth_svc
@@ -47,6 +47,16 @@ def _issue_customer_refresh_token(db: Session, customer_id: str) -> str:
     db.add(CustomerRefreshTokenDB(customer_id=customer_id, token_hash=hash_refresh_token(raw_token)))
     db.commit()
     return raw_token
+
+
+def _send_customer_welcome(customer: CustomerDB) -> None:
+    """Congratulations email for a brand-new customer account. Best-effort
+    (same reasoning as staff welcome emails in routes/auth.py): an SMTP
+    hiccup must never stop someone from creating an account."""
+    try:
+        send_customer_welcome_email(customer.email, customer.name or customer.email)
+    except Exception as error:  # noqa: BLE001
+        print(f"Welcome email failed for {customer.email}: {error}")
 
 
 def _issue_and_send_customer_verification_email(db: Session, customer: CustomerDB) -> None:
@@ -90,6 +100,7 @@ def customer_signup(request: Request, payload: CustomerSignup, db: Session = Dep
     db.commit()
 
     _issue_and_send_customer_verification_email(db, customer)
+    _send_customer_welcome(customer)
 
     token = create_access_token({"customer_id": customer.id})
     refresh_token = _issue_customer_refresh_token(db, customer.id)
@@ -204,6 +215,7 @@ def customer_google_oauth_callback(code: str | None = None, state: str | None = 
             DeliveryRecordDB.customer_id.is_(None),
         ).update({"customer_id": customer.id})
         db.commit()
+        _send_customer_welcome(customer)
 
     login_code = create_customer_oauth_login_code(customer.id)
     from urllib.parse import quote

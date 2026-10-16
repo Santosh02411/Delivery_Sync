@@ -17,8 +17,10 @@ here at zero cost. Nothing about the calling code changes based on which
 path is used; only this module's internal behavior does.
 """
 
+import html
 import os
 import smtplib
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from app.services import monitoring as monitoring_svc
@@ -28,6 +30,7 @@ SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
 FROM_EMAIL = os.environ.get("FROM_EMAIL", "noreply@deliverysync.local")
+APP_URL = os.environ.get("FRONTEND_URL", "http://localhost:3700")
 
 
 def send_password_reset_email(to_email: str, reset_link: str) -> None:
@@ -70,44 +73,75 @@ def send_customer_verification_email(to_email: str, verify_link: str) -> None:
     _send_email(to_email, subject, body)
 
 
+def _html_email(heading: str, paragraphs: list[str], highlight: str | None = None, button_label: str | None = None, button_url: str | None = None, after: list[str] | None = None) -> str:
+    """Small, dependency-free HTML email (inline CSS only, since email clients
+    ignore stylesheets). All dynamic text is escaped."""
+    e = html.escape
+    body = "".join(f'<p style="margin:0 0 14px;line-height:1.55;">{e(p)}</p>' for p in paragraphs)
+    tail = "".join(f'<p style="margin:0 0 14px;line-height:1.55;">{e(p)}</p>' for p in (after or []))
+    box = (
+        f'<p style="margin:18px 0;padding:14px 18px;background:#eef2ff;border-radius:8px;'
+        f'font-family:monospace;font-size:20px;letter-spacing:2px;text-align:center;">{e(highlight)}</p>'
+        if highlight else ""
+    )
+    button = (
+        f'<p style="margin:22px 0;"><a href="{e(button_url)}" style="background:#4f46e5;color:#ffffff;'
+        f'padding:12px 22px;border-radius:8px;text-decoration:none;font-weight:600;">{e(button_label)}</a></p>'
+        if button_label and button_url else ""
+    )
+    return (
+        '<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937;max-width:560px;margin:0 auto;padding:24px;">'
+        f'<h2 style="margin:0 0 18px;color:#4f46e5;">{e(heading)}</h2>{body}{box}{tail}{button}'
+        '<p style="margin:24px 0 0;color:#6b7280;font-size:12px;">Delivery Sync</p></div>'
+    )
+
+
 def send_org_welcome_email(to_email: str, display_name: str, org_name: str, invite_code: str) -> None:
     """
     Sent once, right after POST /auth/signup (or the Google OAuth
     signup path) creates a BRAND NEW organization — the person who
-    just created it is always its admin (see signup()'s own comment
-    on why). Separate from send_verification_email: that one confirms
-    the person owns this inbox; this one is the actual "you're set up,
-    here's what to do next" welcome message, which is a different job
-    and arrives as a second, distinct email rather than being folded
-    into the verification one.
+    just created it is always its admin. Separate from
+    send_verification_email (that one confirms the inbox is theirs; this
+    one is the congratulatory "you're set up" message).
     """
-    subject = f"Welcome to Delivery Sync — {org_name} is ready"
-    body = (
-        f"Hi {display_name},\n\n"
-        f"Your organization \"{org_name}\" has been created, and you're its admin.\n\n"
-        f"Share this invite code with your team so agents and dispatchers can join "
-        f"\"{org_name}\" themselves from the Sign Up screen:\n\n"
-        f"    {invite_code}\n\n"
-        f"You can find this code again anytime from your account settings."
-    )
-    _send_email(to_email, subject, body)
+    subject = f"Congratulations! Your Delivery Sync account for {org_name} is ready"
+    intro = f"Congratulations, {display_name}! You've successfully created your Delivery Sync account, and your organization \"{org_name}\" is live with you as its admin."
+    invite = "Share this invite code with your team so agents and dispatchers can join your organization from the Sign Up screen:"
+    outro = "You can find this code again anytime in your account settings."
+    body = f"Hi {display_name},\n\n{intro}\n\n{invite}\n\n    {invite_code}\n\n{outro}\n\nLog in: {APP_URL}\n"
+    _send_email(to_email, subject, body, html_body=_html_email(
+        "Congratulations — your account is ready!", [f"Hi {display_name},", intro, invite],
+        highlight=invite_code, after=[outro], button_label="Open Delivery Sync", button_url=APP_URL,
+    ))
 
 
 def send_staff_welcome_email(to_email: str, display_name: str, org_name: str, role: str) -> None:
     """
     Sent once, right after someone JOINS an existing organization via
-    invite code (as opposed to creating one — see
-    send_org_welcome_email above for that case) as an agent or
-    dispatcher.
+    invite code (see send_org_welcome_email for the create-an-org case)
+    as an agent or dispatcher.
     """
     role_label = "a dispatcher" if role == "dispatcher" else "an agent"
-    subject = f"Welcome to {org_name} on Delivery Sync"
-    body = (
-        f"Hi {display_name},\n\n"
-        f"You've joined \"{org_name}\" on Delivery Sync as {role_label}.\n\n"
-        f"You can log in now with the username and password you just created."
-    )
-    _send_email(to_email, subject, body)
+    subject = f"Congratulations! Welcome to {org_name} on Delivery Sync"
+    intro = f"Congratulations, {display_name}! You've successfully created your Delivery Sync account and joined \"{org_name}\" as {role_label}."
+    nxt = "You can log in now with the username and password you just created."
+    body = f"Hi {display_name},\n\n{intro}\n\n{nxt}\n\nLog in: {APP_URL}\n"
+    _send_email(to_email, subject, body, html_body=_html_email(
+        "Congratulations — welcome aboard!", [f"Hi {display_name},", intro, nxt],
+        button_label="Log in to Delivery Sync", button_url=APP_URL,
+    ))
+
+
+def send_customer_welcome_email(to_email: str, display_name: str) -> None:
+    """Sent once, right after a customer account is created (email signup or Google)."""
+    subject = "Congratulations! Your Delivery Sync account is ready"
+    intro = f"Congratulations, {display_name}! You've successfully created your Delivery Sync customer account."
+    nxt = "You can now browse stores, place orders, and track every delivery live from your dashboard."
+    body = f"Hi {display_name},\n\n{intro}\n\n{nxt}\n\nOpen Delivery Sync: {APP_URL}\n"
+    _send_email(to_email, subject, body, html_body=_html_email(
+        "Congratulations — your account is ready!", [f"Hi {display_name},", intro, nxt],
+        button_label="Open Delivery Sync", button_url=APP_URL,
+    ))
 
 
 def send_status_notification_email(to_email: str, order_id: str, status_label: str, tracking_link: str) -> None:
@@ -166,7 +200,7 @@ def send_security_alert_email(to_email: str, event_description: str, ip_address:
     _send_email(to_email, subject, body)
 
 
-def _send_email(to_email: str, subject: str, body: str) -> None:
+def _send_email(to_email: str, subject: str, body: str, html_body: str | None = None) -> None:
     if not SMTP_HOST:
         # No SMTP configured — this is the default, zero-cost path.
         print("=" * 60)
@@ -178,15 +212,27 @@ def _send_email(to_email: str, subject: str, body: str) -> None:
         monitoring_svc.record_notification_sent("email", success=True)
         return
 
-    # SMTP_HOST is configured — actually send a real email.
-    message = MIMEText(body)
+    # SMTP_HOST is configured — actually send a real email. With an HTML
+    # version, send multipart/alternative (plain text first, HTML preferred).
+    if html_body:
+        message = MIMEMultipart("alternative")
+        message.attach(MIMEText(body, "plain", "utf-8"))
+        message.attach(MIMEText(html_body, "html", "utf-8"))
+    else:
+        message = MIMEText(body, "plain", "utf-8")
     message["Subject"] = subject
     message["From"] = FROM_EMAIL
     message["To"] = to_email
 
     try:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        # Port 465 = implicit TLS; anything else (587) = STARTTLS. The
+        # timeout stops a slow/unreachable SMTP server hanging the request.
+        if SMTP_PORT == 465:
+            server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15)
+        else:
+            server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15)
             server.starttls()
+        with server:
             if SMTP_USERNAME and SMTP_PASSWORD:
                 server.login(SMTP_USERNAME, SMTP_PASSWORD)
             server.sendmail(FROM_EMAIL, [to_email], message.as_string())
