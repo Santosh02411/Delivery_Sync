@@ -1,6 +1,47 @@
 """Staff auth: signup (new org vs invite code), login, and the
 admin-self-assignment guard on invite-code signups."""
 
+from app.routes import auth as auth_routes
+
+
+def test_signup_creating_org_sends_welcome_email_with_invite_code(client, admin_signup_payload, monkeypatch):
+    calls = []
+    monkeypatch.setattr(auth_routes, "send_org_welcome_email", lambda *args: calls.append(args))
+
+    resp = client.post("/auth/signup", json=admin_signup_payload)
+    assert resp.status_code == 200
+    invite_code = resp.json()["org_invite_code"]
+
+    assert len(calls) == 1
+    to_email, display_name, org_name, sent_invite_code = calls[0]
+    assert to_email == admin_signup_payload["email"]
+    assert org_name == admin_signup_payload["org_name"]
+    assert sent_invite_code == invite_code  # the SAME code returned in the response, not a different one
+
+
+def test_signup_joining_org_sends_staff_welcome_email_not_org_one(client, admin_signup_payload, monkeypatch):
+    org_calls, staff_calls = [], []
+    monkeypatch.setattr(auth_routes, "send_org_welcome_email", lambda *args: org_calls.append(args))
+    monkeypatch.setattr(auth_routes, "send_staff_welcome_email", lambda *args: staff_calls.append(args))
+
+    signup_resp = client.post("/auth/signup", json=admin_signup_payload)
+    invite_code = signup_resp.json()["org_invite_code"]
+    org_calls.clear()  # only care about the JOIN below, not the org-creation email above
+
+    joiner_payload = {
+        "username": "joiner1", "email": "joiner@example.com", "password": "password123",
+        "display_name": "Joiner One", "role": "dispatcher", "invite_code": invite_code,
+    }
+    resp = client.post("/auth/signup", json=joiner_payload)
+    assert resp.status_code == 200
+
+    assert org_calls == []  # joining never sends the "you created an org" email
+    assert len(staff_calls) == 1
+    to_email, display_name, org_name, role = staff_calls[0]
+    assert to_email == "joiner@example.com"
+    assert org_name == admin_signup_payload["org_name"]
+    assert role == "dispatcher"
+
 
 def test_signup_creates_org_and_returns_token(client, admin_signup_payload):
     resp = client.post("/auth/signup", json=admin_signup_payload)

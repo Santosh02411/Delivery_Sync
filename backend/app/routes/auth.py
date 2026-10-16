@@ -52,6 +52,7 @@ from app.services.auth import (
 from app.services.totp import generate_secret, get_provisioning_uri, verify_code
 from app.services.rate_limiter import limiter
 from app.services.email import send_password_reset_email, send_two_factor_code_email, send_verification_email
+from app.services.email import send_org_welcome_email, send_staff_welcome_email
 from app.services.captcha import verify_captcha, IS_CONFIGURED as CAPTCHA_CONFIGURED
 from app.services import security as security_svc
 from app.services.email import send_security_alert_email
@@ -65,7 +66,7 @@ import os
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3700")
 
 
 def _issue_refresh_token(db: Session, user_id: str, device_info: str = None, ip_address: str = None) -> str:
@@ -89,6 +90,28 @@ def _issue_and_send_verification_email(db: Session, user: UserDB) -> None:
     db.refresh(verification)
     verify_link = f"{FRONTEND_URL}/?verify_email_token={verification.token}"
     send_verification_email(user.email, verify_link)
+
+
+def _send_welcome_email(user: UserDB, org: OrganizationDB, is_new_org: bool, invite_code: str | None) -> None:
+    """
+    Shared by POST /auth/signup and the Google OAuth signup path below
+    — both create a user + org the same two ways (new org vs. joining
+    one via invite code), so both send the matching welcome email.
+    Wrapped in try/except (unlike _issue_and_send_verification_email
+    above, which deliberately lets a failure propagate and fail
+    signup): a welcome email is a nice-to-have, not core correctness,
+    so the same "best-effort, log and move on" reasoning
+    notify_customer_of_status_change() uses for status emails applies
+    here too — nobody should be unable to create an account just
+    because an SMTP server had a bad moment.
+    """
+    try:
+        if is_new_org:
+            send_org_welcome_email(user.email, user.display_name, org.name, invite_code)
+        else:
+            send_staff_welcome_email(user.email, user.display_name, org.name, user.role.value)
+    except Exception as error:  # noqa: BLE001
+        print(f"Welcome email failed for {user.email}: {error}")
 
 
 def generate_invite_code() -> str:
@@ -221,6 +244,7 @@ def signup(request: Request, payload: UserSignup, db: Session = Depends(get_db))
     db.refresh(user)
 
     _issue_and_send_verification_email(db, user)
+    _send_welcome_email(user, org, is_new_org=bool(payload.org_name), invite_code=new_org_invite_code)
 
     token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
     refresh_token = _issue_refresh_token(db, user.id)
@@ -436,6 +460,7 @@ def google_oauth_callback(code: str | None = None, state: str | None = None, err
         db.add(user)
         db.commit()
         db.refresh(user)
+        _send_welcome_email(user, org, is_new_org=bool(org_name), invite_code=new_org_invite_code)
 
     if not user.is_active:
         return _redirect_with_error("This account has been deactivated. Contact your admin.")
