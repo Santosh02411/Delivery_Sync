@@ -75,7 +75,7 @@ app = FastAPI(
 )
 
 # Rate limiting: protects against brute-force login attempts, signup spam,
-# and abuse of the unauthenticated /sync endpoint. Uses in-memory storage
+# and abuse of the /sync endpoint. Uses in-memory storage
 # (no Redis needed) — fine for a single-server deployment; a multi-server
 # production deployment would need a shared store (e.g. Redis-backed
 # limiter) so limits are enforced consistently across all instances.

@@ -6,12 +6,12 @@ See docs/TECHNICAL_ARCHITECTURE.md for the full reasoning and known
 limitations of this approach.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.orm import Session
 from app.models.delivery import DeliveryRecordDB, DeliveryStatus
 from app.models.delivery_history import DeliveryHistoryDB
 from app.models.failed_delivery_reason import FailedDeliveryReasonDB
-from app.models.user import UserDB
+from app.models.user import UserDB, UserRole
 from app.services.history import record_history_entry
 from app.services.delivery_attempts import record_delivery_attempt, ATTEMPT_OUTCOMES
 from app.services.notifications import notify_customer_of_status_change
@@ -51,6 +51,114 @@ def _log_synced_attempt(db: Session, db_record: DeliveryRecordDB, agent_id: str,
     )
 
 
+# ---------------------------------------------------------------------------
+# Authorization for offline-sync records
+# ---------------------------------------------------------------------------
+# /sync requires a valid access token (see routes/sync.py). The caller's
+# identity and organization come ONLY from that token (`actor` below) —
+# agent_id / org_id in the payload are never trusted as identity. Every
+# record in a batch is authorized independently, so one forged or stale
+# record is reported in the response's `errors` and cannot sink, or
+# piggy-back on, the rest of the batch.
+#
+# Rules:
+#   AGENT       may update only deliveries currently assigned to them, in
+#               their own org. Payload agent_id must equal their own id.
+#               May NOT create deliveries (online, only dispatchers can —
+#               POST /deliveries), reassign, cancel, or move a delivery
+#               that is already delivered/cancelled.
+#   DISPATCHER/ may create deliveries for an agent in their own org and
+#   ADMIN       update any delivery in their own org. Sync never changes
+#               an existing delivery's assignment: reassignment goes
+#               through PATCH /deliveries/{id}/assign-agent only.
+#
+# Agents get ONE generic error for "doesn't exist", "other agent's" and
+# "other org's" so the endpoint can't be used to probe which delivery
+# IDs exist elsewhere.
+
+# Statuses an agent may set from the field. `pending` (unassigned pool)
+# and `cancelled` are dispatcher/customer-side states. (An agent CAN move
+# a delivery assigned to them FROM `pending` — ownership is checked first.)
+AGENT_SETTABLE_STATUSES = {
+    DeliveryStatus.picked_up,
+    DeliveryStatus.out_for_delivery,
+    DeliveryStatus.delivered,
+    DeliveryStatus.failed_attempt,
+}
+# An agent can't move a delivery OUT of these (a dispatcher can).
+AGENT_LOCKED_STATUSES = {DeliveryStatus.delivered, DeliveryStatus.cancelled}
+
+# Offline devices can have wrong clocks; tolerate some skew, but never let
+# a record claim to be from the future — last-write-wins would otherwise
+# let one forged far-future timestamp beat every legitimate update.
+MAX_CLOCK_SKEW = timedelta(minutes=15)
+
+
+class SyncAuthorizationError(ValueError):
+    """A record was refused for authorization/validation reasons. Subclasses
+    ValueError so the per-record `except ValueError` in routes/sync.py
+    keeps working; `code` is machine-readable for clients and logs."""
+
+    def __init__(self, message: str, code: str):
+        super().__init__(message)
+        self.code = code
+
+
+_NOT_ASSIGNED_MSG = "This delivery isn't assigned to you."
+
+
+def _authorize_sync_record(db: Session, actor: UserDB, record_data: dict, existing: DeliveryRecordDB | None) -> None:
+    """Raises SyncAuthorizationError unless `actor` may apply this record.
+    Runs BEFORE anything is read back to the caller, so a rejected record
+    never leaks another agent's/org's delivery data in the response."""
+    if actor.role == UserRole.agent:
+        if record_data["agent_id"] != actor.id:
+            raise SyncAuthorizationError(
+                "Record agent_id doesn't match the signed-in user.", "identity_mismatch"
+            )
+        if existing is None or existing.org_id != actor.org_id or existing.agent_id != actor.id:
+            raise SyncAuthorizationError(_NOT_ASSIGNED_MSG, "not_assigned")
+        return
+
+    # dispatcher / admin
+    if existing is not None:
+        if existing.org_id != actor.org_id:
+            raise SyncAuthorizationError("Delivery not found.", "not_found")
+        return
+    target = db.query(UserDB).filter(
+        UserDB.id == record_data["agent_id"], UserDB.org_id == actor.org_id
+    ).first()
+    if not target or target.role != UserRole.agent:
+        raise SyncAuthorizationError(
+            "The selected agent doesn't exist in your organization.", "invalid_agent"
+        )
+
+
+def _check_status_transition(actor: UserDB, old_status, new_status) -> None:
+    """Agents may only make field-realistic moves. Offline queues can skip
+    steps (picked_up -> delivered with nothing in between), so this is an
+    allow-list of settable statuses + locked source states, not a strict
+    state machine. Dispatchers/admins are not restricted."""
+    if actor.role != UserRole.agent or old_status == new_status:
+        return
+    if old_status in AGENT_LOCKED_STATUSES:
+        raise SyncAuthorizationError(
+            f"A delivery that is '{getattr(old_status, 'value', old_status)}' can only be changed by a dispatcher.",
+            "transition_not_allowed",
+        )
+    if new_status not in AGENT_SETTABLE_STATUSES:
+        raise SyncAuthorizationError(
+            f"Agents can't set a delivery to '{getattr(new_status, 'value', new_status)}'.",
+            "transition_not_allowed",
+        )
+
+
+def _clamp_future(dt: datetime) -> datetime:
+    """Naive-UTC datetime -> no later than now (+ nothing) if it's beyond the skew allowance."""
+    now = datetime.utcnow()
+    return now if dt > now + MAX_CLOCK_SKEW else dt
+
+
 def _normalize_to_naive_utc(dt: datetime) -> datetime:
     """
     Browsers send timestamps like '2026-07-22T19:10:46.276Z', which Python
@@ -68,7 +176,7 @@ def _normalize_to_naive_utc(dt: datetime) -> datetime:
     return dt
 
 
-def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB, dict | None]:
+def resolve_and_apply(record_data: dict, db: Session, actor: UserDB) -> tuple[DeliveryRecordDB, dict | None]:
     """
     Given an incoming record from a client's offline sync batch, decide
     whether to insert it, update the existing one, or discard it (because
@@ -84,49 +192,36 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
     silent (previously: the caller had no way to tell "my change was
     applied" apart from "my change was silently dropped").
 
-    Raises ValueError if the record's agent_id doesn't match a real user —
-    the caller (routes/sync.py) catches this per-record so one bad record
-    in a batch can't take down the whole sync request.
+    `actor` is the AUTHENTICATED caller (from the access token), never
+    derived from the payload. Raises ValueError (SyncAuthorizationError for
+    authorization failures) for any record that can't be applied — the
+    caller (routes/sync.py) catches this per-record so one bad record in
+    a batch can't take down the whole sync request.
     """
     # Normalize incoming timestamps immediately so everything downstream
-    # (comparisons AND storage) is consistently naive UTC.
-    record_data["created_at"] = _normalize_to_naive_utc(record_data["created_at"])
-    record_data["updated_at"] = _normalize_to_naive_utc(record_data["updated_at"])
+    # (comparisons AND storage) is consistently naive UTC, and refuse
+    # far-future timestamps (see MAX_CLOCK_SKEW).
+    record_data["created_at"] = _clamp_future(_normalize_to_naive_utc(record_data["created_at"]))
+    record_data["updated_at"] = _clamp_future(_normalize_to_naive_utc(record_data["updated_at"]))
 
     existing = db.query(DeliveryRecordDB).filter(
         DeliveryRecordDB.id == record_data["id"]
     ).first()
 
-    # /sync is intentionally left unauthenticated (see docs/SECURITY_AND_ACCESS.md),
-    # so history entries from this path are attributed to the record's
-    # assigned agent (looked up by ID) rather than a logged-in request user.
-    agent = db.query(UserDB).filter(UserDB.id == record_data["agent_id"]).first()
-    if not agent:
-        raise ValueError(f"No user found matching agent_id '{record_data['agent_id']}'.")
-    agent_name = agent.display_name
+    # SECURITY: identity and tenant come from the authenticated `actor`,
+    # never from the payload. Authorization happens before anything about
+    # the existing record can influence (or be returned in) the response.
+    _authorize_sync_record(db, actor, record_data, existing)
 
-    # SECURITY: org_id is NEVER trusted from the client — since /sync has
-    # no authentication, a client payload could otherwise claim any org_id
-    # it wants. It's always overwritten here with the agent's own real
-    # organization, derived server-side from the trusted DB lookup above.
-    # This makes it impossible for a delivery to end up tagged to a
-    # different organization than the agent it's assigned to, regardless
-    # of what a sync payload claims.
-    record_data["org_id"] = agent.org_id
-
-    # SECURITY (cross-tenant write protection): if a record with this ID
-    # already exists, it must belong to the SAME organization as the
-    # agent making this sync request. Without this check, since /sync has
-    # no authentication, a client could send an existing delivery ID from
-    # a DIFFERENT organization paired with one of its own agent_ids, and
-    # this code would otherwise happily overwrite another company's
-    # delivery data. Treating this as a failed record (not a silent
-    # skip, and not a crash) makes the rejection visible in the sync
-    # response's `errors` list rather than disappearing quietly.
-    if existing and existing.org_id != agent.org_id:
-        raise ValueError(
-            "This delivery ID belongs to a different organization and cannot be modified."
-        )
+    agent_name = actor.display_name
+    # org_id is NEVER trusted from the client — always the actor's own org.
+    record_data["org_id"] = actor.org_id
+    # Sync never reassigns: an existing delivery keeps its current agent.
+    # For a new (dispatcher-created) record, the validated payload agent_id
+    # is the assignee. History is attributed to the real actor either way.
+    if existing is not None:
+        record_data["agent_id"] = existing.agent_id
+    attempt_agent_id = record_data["agent_id"] or actor.id
 
     # reason_code_id isn't a column on DeliveryRecordDB (it lives on the
     # delivery_attempts log instead) — pull it out before constructing/
@@ -145,8 +240,8 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
     # has synced first. This never blocks orgs that haven't opted into
     # any pod_require_* setting.
     if record_data.get("status") == DeliveryStatus.delivered:
-        org = db.query(OrganizationDB).filter(OrganizationDB.id == agent.org_id).first()
-        if org and org_requires_any_pod(org) and not pod_exists_for_delivery(db, record_data["id"], agent.org_id):
+        org = db.query(OrganizationDB).filter(OrganizationDB.id == actor.org_id).first()
+        if org and org_requires_any_pod(org) and not pod_exists_for_delivery(db, record_data["id"], actor.org_id):
             raise ValueError(
                 "Proof of delivery is required before this delivery can be marked as delivered. "
                 "It will sync automatically once proof of delivery has been captured."
@@ -165,7 +260,7 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
         record_history_entry(
             db,
             delivery_id=new_record.id,
-            changed_by_user_id=record_data["agent_id"],
+            changed_by_user_id=actor.id,
             changed_by_display_name=agent_name,
             old_status=None,
             new_status=new_record.status,
@@ -173,7 +268,7 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
             note="Created via offline sync",
         )
         _log_synced_attempt(
-            db, new_record, agent_id=record_data["agent_id"], status=new_record.status,
+            db, new_record, agent_id=attempt_agent_id, status=new_record.status,
             is_partial=record_data.get("is_partial", False), reason_code_id=reason_code_id,
             notes=record_data.get("notes") or record_data.get("partial_notes"),
             attempted_at=new_record.created_at,
@@ -185,7 +280,9 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
     # guaranteed naive UTC, so this comparison is safe.
     incoming_updated_at = record_data["updated_at"]
     if incoming_updated_at > existing.updated_at:
-        # Incoming (client) change is newer — apply it
+        # Incoming (client) change is newer — apply it, but only if the
+        # actor is allowed to make this particular status change.
+        _check_status_transition(actor, existing.status, record_data["status"])
         old_status = existing.status
         existing.status = record_data["status"]
         existing.notes = record_data.get("notes")
@@ -204,7 +301,7 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
             record_history_entry(
                 db,
                 delivery_id=existing.id,
-                changed_by_user_id=record_data["agent_id"],
+                changed_by_user_id=actor.id,
                 changed_by_display_name=agent_name,
                 old_status=old_status,
                 new_status=existing.status,
@@ -231,7 +328,7 @@ def resolve_and_apply(record_data: dict, db: Session) -> tuple[DeliveryRecordDB,
                 # refund/exchange once it syncs back.
                 handle_return_pickup_completion(db, existing)
             _log_synced_attempt(
-                db, existing, agent_id=record_data["agent_id"], status=existing.status,
+                db, existing, agent_id=attempt_agent_id, status=existing.status,
                 is_partial=record_data.get("is_partial", False), reason_code_id=reason_code_id,
                 notes=record_data.get("notes") or record_data.get("partial_notes"),
                 attempted_at=incoming_updated_at,

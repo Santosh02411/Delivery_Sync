@@ -28,6 +28,7 @@ SECURITY_EVENT_TYPES = {
     "password_changed", "password_reset", "2fa_enabled", "2fa_disabled",
     "session_revoked", "all_sessions_revoked", "account_locked",
     "recovery_codes_generated", "recovery_code_used",
+    "sync_rejected",
 }
 
 

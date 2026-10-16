@@ -263,7 +263,7 @@ def test_offline_sync_path_also_enforces_pod_requirement(client, signed_up_admin
             "updated_at": now,
         }]
     }
-    resp = client.post("/sync", json=sync_payload)
+    resp = client.post("/sync", json=sync_payload, headers=agent_headers)
     assert resp.status_code == 200
     body = resp.json()
     assert len(body["errors"]) == 1
@@ -277,7 +277,7 @@ def test_offline_sync_path_also_enforces_pod_requirement(client, signed_up_admin
     )
     assert resp.status_code == 200
 
-    resp = client.post("/sync", json=sync_payload)
+    resp = client.post("/sync", json=sync_payload, headers=agent_headers)
     assert resp.status_code == 200
     body = resp.json()
     assert body["errors"] == []

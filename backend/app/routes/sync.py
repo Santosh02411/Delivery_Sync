@@ -9,14 +9,22 @@ can update its local IndexedDB copy if the server's version won a conflict.
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List
 
 from app.db.session import get_db
 from app.models.delivery import DeliveryRecordOut, DeliveryStatus
-from app.services.conflict_resolver import resolve_and_apply
+from app.models.user import UserDB
+from app.routes.auth import get_current_user
+from app.services.conflict_resolver import resolve_and_apply, SyncAuthorizationError
 from app.services.rate_limiter import limiter
+from app.services.security import record_security_event
 from datetime import datetime
+
+# Upper bound on one batch — an offline agent's backlog is realistically a
+# few dozen records; this just stops a single request from being used to
+# hold a worker/DB connection for an unbounded amount of work.
+MAX_RECORDS_PER_BATCH = 200
 
 router = APIRouter(tags=["sync"])
 
@@ -44,7 +52,7 @@ class SyncRecordIn(BaseModel):
 
     # Failed-delivery reason (see models/failed_delivery_reason.py).
     # NOT hard-enforced here the way update_delivery() enforces it —
-    # /sync is unauthenticated, best-effort, and processes a whole
+    # /sync is best-effort and processes a whole
     # offline batch; rejecting a record over a missing reason code
     # would strand it retrying forever with no way for the agent to
     # fix it until they're back online anyway. If present, it's
@@ -57,7 +65,7 @@ class SyncRecordIn(BaseModel):
 
 
 class SyncRequest(BaseModel):
-    records: List[SyncRecordIn]
+    records: List[SyncRecordIn] = Field(max_length=MAX_RECORDS_PER_BATCH)
 
 
 class SyncResponse(BaseModel):
@@ -68,18 +76,29 @@ class SyncResponse(BaseModel):
 
 @router.post("/sync", response_model=SyncResponse)
 @limiter.limit("30/minute")
-def sync_records(request: Request, payload: SyncRequest, db: Session = Depends(get_db)):
+def sync_records(
+    request: Request,
+    payload: SyncRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
     """
     Accepts a batch of offline records and resolves each one against the
     server's current state. Returns the final resolved version of every
     record so the client can reconcile its local IndexedDB copy.
 
-    Each record is processed independently — same "one bad row shouldn't
-    sink the whole batch" principle as bulk import. A record that fails
-    (e.g. its agent_id doesn't match any real user) is reported in
-    `errors` rather than aborting the request; it simply stays "pending"
-    on the client and gets retried on the next sync attempt, so no data is
-    lost, just delayed.
+    AUTHENTICATED: requires `Authorization: Bearer <access token>` (401
+    otherwise). The caller's identity and organization are taken from
+    that token — `agent_id` / `org_id` in the payload are never trusted
+    as identity. See services/conflict_resolver.py for the per-record
+    rules (agents: only their own assigned deliveries, limited status
+    changes; dispatchers/admins: their own org, no reassignment).
+
+    Each record is authorized and processed independently — same "one bad
+    row shouldn't sink the whole batch" principle as bulk import. A
+    rejected record is reported in `errors` (with a machine-readable
+    `code`) rather than aborting the request; it simply stays "pending"
+    on the client, so no data is lost, just delayed.
 
     A record whose incoming (client-side, offline) change was discarded
     because the server already had a newer one — last-write-wins actually
@@ -88,19 +107,32 @@ def sync_records(request: Request, payload: SyncRequest, db: Session = Depends(g
 
     Rate limited to 30 requests/minute per IP — generous enough for normal
     usage (the frontend auto-syncs at most every 15 seconds, i.e. 4/minute,
-    plus occasional manual "Sync Now" clicks) while still capping abuse of
-    this endpoint, which has no authentication.
+    plus occasional manual "Sync Now" clicks).
     """
     resolved = []
     errors = []
     conflicts = []
+    denied = []  # authorization refusals (not ordinary validation errors), for the audit trail
     for record in payload.records:
         try:
-            final_record, conflict = resolve_and_apply(record.model_dump(), db)
+            final_record, conflict = resolve_and_apply(record.model_dump(), db, current_user)
             resolved.append(final_record)
             if conflict:
                 conflicts.append(conflict)
+        except SyncAuthorizationError as e:
+            db.rollback()
+            errors.append({"id": record.id, "error": str(e), "code": e.code})
+            denied.append(f"{e.code}:{record.id}")
         except ValueError as e:
-            errors.append({"id": record.id, "error": str(e)})
+            db.rollback()
+            errors.append({"id": record.id, "error": str(e), "code": "invalid_record"})
+
+    if denied:
+        # One audit entry per batch (not per record) so a replayed bad
+        # batch can't flood the security log; visible in the Security dashboard.
+        record_security_event(
+            db, current_user.id, current_user.org_id, "sync_rejected",
+            detail=f"{len(denied)} record(s) refused: " + ", ".join(denied[:10]) + (" ..." if len(denied) > 10 else ""),
+        )
 
     return {"resolved_records": resolved, "errors": errors, "conflicts": conflicts}

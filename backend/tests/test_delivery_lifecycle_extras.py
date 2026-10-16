@@ -402,7 +402,7 @@ def test_unassigned_queue_is_also_priority_sorted(client, db_engine, auth_header
 def test_sync_logs_failed_attempt_with_reason_and_partial_delivery(client, db_engine, auth_headers, signed_up_admin):
     org_id = signed_up_admin["user"]["org_id"]
     invite_code = signed_up_admin["org_invite_code"]
-    agent_id, _ = _signup_agent(client, invite_code, "sync_extras_agent")
+    agent_id, agent_headers = _signup_agent(client, invite_code, "sync_extras_agent")
     reason = _create_reason(client, auth_headers, code="SYNC_FAILED", label="Failed via sync")
 
     delivery_id = str(uuid.uuid4())
@@ -413,18 +413,20 @@ def test_sync_logs_failed_attempt_with_reason_and_partial_delivery(client, db_en
         "created_at": datetime.utcnow().isoformat(),
     }
 
-    # First sync creates the record as picked_up.
+    # First sync creates the record as picked_up (dispatcher/admin only —
+    # agents can't create deliveries, online or via /sync).
     resp = client.post("/sync", json={"records": [{
         **base, "status": "picked_up", "updated_at": datetime.utcnow().isoformat(),
-    }]})
+    }]}, headers=auth_headers)
     assert resp.status_code == 200, resp.text
+    assert resp.json()["errors"] == []
 
     # Second sync (later timestamp) marks it failed_attempt with a reason code.
     later = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
     resp = client.post("/sync", json={"records": [{
         **base, "status": "failed_attempt", "updated_at": later, "reason_code_id": reason["id"],
         "notes": "No one home",
-    }]})
+    }]}, headers=agent_headers)
     assert resp.status_code == 200, resp.text
     assert resp.json()["resolved_records"][0]["status"] == "failed_attempt"
 
@@ -439,7 +441,7 @@ def test_sync_logs_failed_attempt_with_reason_and_partial_delivery(client, db_en
     resp = client.post("/sync", json={"records": [{
         **base, "status": "delivered", "updated_at": even_later,
         "is_partial": True, "partial_notes": "Missing one item",
-    }]})
+    }]}, headers=agent_headers)
     assert resp.status_code == 200, resp.text
     resolved = resp.json()["resolved_records"][0]
     assert resolved["status"] == "delivered"
