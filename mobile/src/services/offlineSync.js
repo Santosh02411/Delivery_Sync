@@ -17,7 +17,7 @@
 import * as Network from "expo-network";
 import { AppState } from "react-native";
 import { getPendingDeliveries, markAsSynced } from "./offlineStore";
-import { API_BASE_URL } from "./api";
+import { API_BASE_URL, getAccessToken, refreshAccessToken } from "./api";
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 3000;
@@ -36,21 +36,37 @@ export function describeConflict(conflict) {
 }
 
 /**
- * POST /sync is intentionally unauthenticated on the backend (see
- * backend/app/routes/sync.py's own docstring — each record already
- * carries its own agent_id/org_id from when it was cached, and
- * rejecting a whole offline batch over an expired token would strand
- * real data), so this is a plain fetch with no Authorization header,
- * matching exactly how the web app's api.js:syncPendingDeliveries
- * calls the same endpoint.
+ * POST /sync is AUTHENTICATED: the backend takes the agent's identity and
+ * organization from the access token (never from the records' own
+ * agent_id/org_id) and only accepts updates to deliveries assigned to
+ * that agent. Access tokens last 30 minutes, so after a long offline
+ * stretch the stored one is usually expired: on a 401 this refreshes the
+ * session once and retries. If it still can't authenticate, it throws an
+ * error with `status = 401` — the records stay queued locally (nothing is
+ * lost) and sync resumes after the next successful login/refresh.
  */
-async function syncPendingDeliveries(records) {
-  const response = await fetch(`${API_BASE_URL}/sync`, {
+async function postSync(records, token) {
+  return fetch(`${API_BASE_URL}/sync`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     body: JSON.stringify({ records }),
   });
-  if (!response.ok) throw new Error("Sync request failed");
+}
+
+async function syncPendingDeliveries(records) {
+  let response = await postSync(records, await getAccessToken());
+  if (response.status === 401) {
+    const fresh = await refreshAccessToken();
+    if (fresh) response = await postSync(records, fresh);
+  }
+  if (!response.ok) {
+    const error = new Error(response.status === 401 ? "Session expired — sign in again to sync." : "Sync request failed");
+    error.status = response.status;
+    throw error;
+  }
   return response.json();
 }
 
@@ -87,6 +103,11 @@ export async function runSync() {
         conflicts: response.conflicts || [],
       };
     } catch (error) {
+      // Auth failures can't be fixed by retrying in 3 seconds — records
+      // stay queued locally until a valid session exists again.
+      if (error.status === 401 || error.status === 403) {
+        return { success: false, syncedCount: 0, error: error.message, authError: true };
+      }
       attempt += 1;
       if (attempt >= MAX_RETRIES) {
         return { success: false, syncedCount: 0, error: error.message };

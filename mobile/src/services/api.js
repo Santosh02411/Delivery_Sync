@@ -76,6 +76,39 @@ export async function getRefreshToken() {
   return SecureStore.getItemAsync(REFRESH_TOKEN_KEY);
 }
 
+let refreshInFlight = null;
+
+/**
+ * Trades the stored refresh token for a new access/refresh pair
+ * (POST /auth/refresh) and saves both. Single-flight: refresh tokens
+ * rotate and a reused one revokes the whole session, so concurrent
+ * callers share one request. Returns the new access token, or null if it
+ * couldn't be refreshed (offline, or the session was revoked/expired).
+ */
+export async function refreshAccessToken() {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const refreshToken = await getRefreshToken();
+      if (!refreshToken) return null;
+      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }),
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      await saveTokens(data.access_token, data.refresh_token);
+      return data.access_token;
+    } catch {
+      return null;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
 export async function clearTokens() {
   await SecureStore.deleteItemAsync(TOKEN_KEY);
   await SecureStore.deleteItemAsync(REFRESH_TOKEN_KEY);

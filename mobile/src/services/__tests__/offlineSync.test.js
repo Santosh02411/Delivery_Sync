@@ -16,11 +16,14 @@ jest.mock("expo-network", () => ({
 }));
 jest.mock("../api", () => ({
   API_BASE_URL: "http://test-server",
+  getAccessToken: jest.fn(),
+  refreshAccessToken: jest.fn(),
 }));
 
 import { AppState } from "react-native";
 import * as Network from "expo-network";
 import { getPendingDeliveries, markAsSynced } from "../offlineStore";
+import { getAccessToken, refreshAccessToken } from "../api";
 import { describeConflict, runSync, startAutoSync } from "../offlineSync";
 
 describe("describeConflict", () => {
@@ -60,9 +63,10 @@ describe("runSync", () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it("POSTs pending records to /sync with no Authorization header (matches the backend's unauthenticated endpoint)", async () => {
+  it("POSTs pending records to /sync with the access token as a Bearer header", async () => {
     const pending = [{ id: "1" }];
     getPendingDeliveries.mockResolvedValue(pending);
+    getAccessToken.mockResolvedValue("tok-1");
     global.fetch.mockResolvedValue({
       ok: true,
       json: async () => ({ resolved_records: [{ id: "1", status: "delivered" }], errors: [], conflicts: [] }),
@@ -74,11 +78,39 @@ describe("runSync", () => {
       "http://test-server/sync",
       expect.objectContaining({
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: "Bearer tok-1" },
         body: JSON.stringify({ records: pending }),
       })
     );
     expect(markAsSynced).toHaveBeenCalledWith("1", { id: "1", status: "delivered" });
+  });
+
+  it("on a 401 refreshes the session once and retries with the new token", async () => {
+    getPendingDeliveries.mockResolvedValue([{ id: "1" }]);
+    getAccessToken.mockResolvedValue("expired");
+    refreshAccessToken.mockResolvedValue("fresh");
+    global.fetch
+      .mockResolvedValueOnce({ ok: false, status: 401, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ resolved_records: [{ id: "1" }], errors: [], conflicts: [] }) });
+
+    const result = await runSync();
+
+    expect(result.success).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch.mock.calls[1][1].headers.Authorization).toBe("Bearer fresh");
+  });
+
+  it("keeps records queued and stops retrying when auth can't be restored", async () => {
+    getPendingDeliveries.mockResolvedValue([{ id: "1" }]);
+    getAccessToken.mockResolvedValue("expired");
+    refreshAccessToken.mockResolvedValue(null);
+    global.fetch.mockResolvedValue({ ok: false, status: 401, json: async () => ({}) });
+
+    const result = await runSync();
+
+    expect(result).toMatchObject({ success: false, authError: true });
+    expect(global.fetch).toHaveBeenCalledTimes(1); // no 3x retry loop
+    expect(markAsSynced).not.toHaveBeenCalled();
   });
 
   it("surfaces conflicts and errors from the backend without treating them as failure", async () => {
