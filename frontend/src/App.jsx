@@ -3,7 +3,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import { CustomerAuthProvider, useCustomerAuth } from "./context/CustomerAuthContext";
 import { ToastProvider, useToast } from "./context/ToastContext";
 import { ThemeProvider } from "./context/ThemeContext";
-import { resendVerificationRequest, customerResendVerificationRequest } from "./services/authApi";
+import { resendVerificationRequest, verifyEmailRequest } from "./services/authApi";
 import ConnectivityBanner from "./components/ConnectivityBanner";
 import VerificationBanner from "./components/VerificationBanner";
 import Sidebar from "./components/Sidebar";
@@ -13,7 +13,6 @@ import LoginPage from "./components/LoginPage";
 import SignupPage from "./components/SignupPage";
 import ForgotPasswordPage from "./components/ForgotPasswordPage";
 import ResetPasswordPage from "./components/ResetPasswordPage";
-import VerifyEmailPage from "./components/VerifyEmailPage";
 import TrackingPage from "./components/TrackingPage";
 import CustomerDashboard from "./components/CustomerDashboard";
 
@@ -64,7 +63,7 @@ function LazyPageFallback() {
 }
 
 function StaffDashboard({ user }) {
-  const { token } = useAuth();
+  const { token, updateUser } = useAuth();
   const [activeView, setActiveView] = useState(null);
   const currentView = activeView || (user.role === "agent" ? "deliveries" : "dashboard");
 
@@ -75,7 +74,11 @@ function StaffDashboard({ user }) {
         <ConnectivityBanner />
         <div style={{ marginTop: "20px" }}>
           {!user.email_verified && (
-            <VerificationBanner onResend={() => resendVerificationRequest(token)} />
+            <VerificationBanner
+              onResend={() => resendVerificationRequest(token)}
+              onVerify={(code) => verifyEmailRequest(token, code)}
+              onVerified={() => updateUser({ email_verified: true })}
+            />
           )}
           {user.role === "agent" && currentView === "deliveries" && <AgentDeliveryList />}
           {(user.role === "dispatcher" || user.role === "admin") && currentView === "dashboard" && (
@@ -176,8 +179,6 @@ function RootRouter() {
   const urlParams = new URLSearchParams(window.location.search);
   const resetToken = urlParams.get("reset_token");
   const customerResetToken = urlParams.get("customer_reset_token");
-  const verifyEmailToken = urlParams.get("verify_email_token");
-  const verifyCustomerEmailToken = urlParams.get("verify_customer_email_token");
   const trackId = urlParams.get("track");
   const oauthCode = urlParams.get("oauth_code");
   const oauthError = urlParams.get("oauth_error");
@@ -193,7 +194,7 @@ function RootRouter() {
   // oauth_error to surface as a toast. Runs once per page load (the
   // ref guard) since the URL param itself is cleared right after, via
   // replaceState — same "strip the token from the URL once used"
-  // pattern as ResetPasswordPage/VerifyEmailPage elsewhere in this
+  // pattern as ResetPasswordPage elsewhere in this
   // file. Staff and customer params are distinct (oauth_* vs
   // customer_oauth_*) since only one of the two login flows can be
   // relevant to any single redirect, but both land on this same root
@@ -225,19 +226,6 @@ function RootRouter() {
       <ResetPasswordPage
         token={resetToken || customerResetToken}
         accountType={customerResetToken ? "customer" : "staff"}
-        onDone={() => {
-          window.history.replaceState({}, "", window.location.pathname);
-          window.location.reload();
-        }}
-      />
-    );
-  }
-
-  if (verifyEmailToken || verifyCustomerEmailToken) {
-    return (
-      <VerifyEmailPage
-        token={verifyEmailToken || verifyCustomerEmailToken}
-        accountType={verifyCustomerEmailToken ? "customer" : "staff"}
         onDone={() => {
           window.history.replaceState({}, "", window.location.pathname);
           window.location.reload();

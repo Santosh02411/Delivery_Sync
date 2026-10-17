@@ -832,6 +832,17 @@ export async function changeMyStaffPassword(token, currentPassword, newPassword)
   return data;
 }
 
+export async function deleteMyStaffAccount(token, { password, confirm } = {}) {
+  const response = await fetch(`${API_BASE_URL}/auth/me`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+    body: JSON.stringify({ password: password || null, confirm: confirm || null }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Couldn't delete your account.");
+  return data;
+}
+
 export async function setMyStaffPassword(token, newPassword) {
   const response = await fetch(`${API_BASE_URL}/auth/me/set-password`, {
     method: "POST",

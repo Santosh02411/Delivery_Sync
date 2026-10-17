@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { updateMyStaffProfile, changeMyStaffPassword, setMyStaffPassword } from "../services/api";
+import { updateMyStaffProfile, changeMyStaffPassword, setMyStaffPassword, deleteMyStaffAccount } from "../services/api";
 import PasswordInput from "./PasswordInput";
 
 /**
@@ -19,7 +19,7 @@ import PasswordInput from "./PasswordInput";
  * user might visit independently.
  */
 export default function AccountSettings() {
-  const { token, user, updateUser } = useAuth();
+  const { token, user, updateUser, logout } = useAuth();
 
   const [displayName, setDisplayName] = useState(user.display_name);
   const [email, setEmail] = useState(user.email);
@@ -37,6 +37,28 @@ export default function AccountSettings() {
   const [isSettingPassword, setIsSettingPassword] = useState(false);
   const [setPasswordFormError, setSetPasswordFormError] = useState(null);
   const [setPasswordFormSuccess, setSetPasswordFormSuccess] = useState(null);
+
+  const [showDelete, setShowDelete] = useState(false);
+  const [deletePassword, setDeletePassword] = useState("");
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState(null);
+  // Google-only accounts have no password to re-enter, so they type their username instead.
+  const needsPassword = user.has_usable_password !== false;
+
+  async function handleDeleteAccount(e) {
+    e.preventDefault();
+    setDeleteError(null);
+    if (!window.confirm("This permanently deletes your account. This can't be undone. Continue?")) return;
+    setIsDeleting(true);
+    try {
+      await deleteMyStaffAccount(token, needsPassword ? { password: deletePassword } : { confirm: deleteConfirmText });
+      logout();
+    } catch (err) {
+      setDeleteError(err.message);
+      setIsDeleting(false);
+    }
+  }
 
   async function handleSaveProfile(e) {
     e.preventDefault();
@@ -191,6 +213,55 @@ export default function AccountSettings() {
             </form>
           </div>
         )}
+
+        <div className="card" style={{ borderColor: "var(--danger)" }}>
+          <strong style={{ fontSize: "13.5px", color: "var(--danger)" }}>Delete Account</strong>
+          <p style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "4px", marginBottom: "12px" }}>
+            Permanently deletes your account and sign-in data. Past deliveries and records your
+            organization keeps will show "Deleted User" instead of your name. This can't be undone.
+          </p>
+          {!showDelete ? (
+            <button className="btn" style={{ color: "var(--danger)" }} onClick={() => setShowDelete(true)}>
+              Delete my account…
+            </button>
+          ) : (
+            <form onSubmit={handleDeleteAccount}>
+              {needsPassword ? (
+                <div className="auth-field">
+                  <label htmlFor="account-delete-password">Confirm with your password</label>
+                  <PasswordInput
+                    id="account-delete-password"
+                    className="input"
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    required
+                  />
+                </div>
+              ) : (
+                <div className="auth-field">
+                  <label htmlFor="account-delete-confirm">Type your username ({user.username}) to confirm</label>
+                  <input
+                    id="account-delete-confirm"
+                    className="input"
+                    type="text"
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    required
+                  />
+                </div>
+              )}
+              {deleteError && <p role="alert" style={{ color: "var(--danger)", fontSize: "12px" }}>{deleteError}</p>}
+              <div style={{ display: "flex", gap: "8px" }}>
+                <button type="submit" className="btn btn-primary" style={{ backgroundColor: "var(--danger)" }} disabled={isDeleting}>
+                  {isDeleting ? "Deleting..." : "Permanently delete"}
+                </button>
+                <button type="button" className="btn" onClick={() => { setShowDelete(false); setDeleteError(null); }} disabled={isDeleting}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       </div>
     </div>
   );

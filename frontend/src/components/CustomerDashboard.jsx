@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useTheme } from "../context/ThemeContext";
-import { customerResendVerificationRequest } from "../services/authApi";
+import { customerResendVerificationRequest, customerVerifyEmailRequest } from "../services/authApi";
 import VerificationBanner from "./VerificationBanner";
 import {
   fetchMyCustomerDeliveries,
@@ -290,7 +290,11 @@ export default function CustomerDashboard() {
       <div className="main-content">
 
       {!customer.email_verified && (
-        <VerificationBanner onResend={() => customerResendVerificationRequest(token)} />
+        <VerificationBanner
+          onResend={() => customerResendVerificationRequest(token)}
+          onVerify={(code) => customerVerifyEmailRequest(token, code)}
+          onVerified={() => updateCustomer({ email_verified: true })}
+        />
       )}
 
       {activeView === "shop" && (

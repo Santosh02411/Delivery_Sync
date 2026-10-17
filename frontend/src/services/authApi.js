@@ -106,11 +106,12 @@ export async function logoutRequest(refreshToken) {
   }
 }
 
-export async function verifyEmailRequest(token) {
+export async function verifyEmailRequest(token, code) {
+  // Verification is by one-time code: it only works for the signed-in account.
   const response = await fetch(`${API_BASE_URL}/auth/verify-email`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token }),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ code }),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Verification failed.");
@@ -123,7 +124,7 @@ export async function resendVerificationRequest(token) {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "Failed to resend verification email.");
+  if (!response.ok) throw new Error(data.detail || "Failed to send a new code.");
   return data; // { message }
 }
 
@@ -176,11 +177,11 @@ export async function customerLogoutRequest(refreshToken) {
   }
 }
 
-export async function customerVerifyEmailRequest(token) {
+export async function customerVerifyEmailRequest(token, code) {
   const response = await fetch(`${API_BASE_URL}/customer/verify-email`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token }),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ code }),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Verification failed.");
@@ -193,7 +194,7 @@ export async function customerResendVerificationRequest(token) {
     headers: { Authorization: `Bearer ${token}` },
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || "Failed to resend verification email.");
+  if (!response.ok) throw new Error(data.detail || "Failed to send a new code.");
   return data; // { message }
 }
 
