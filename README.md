@@ -119,7 +119,7 @@ Then edit the new `.env` files and **restart** `uvicorn` / `npm run dev`
 
 Every new account (admin, dispatcher, agent **and customer**) gets a
 "Congratulations, your account is ready" email at the address it signed up
-with, in addition to the verification email. Without SMTP settings the app
+with, in addition to the 6-digit verification code email. Without SMTP settings the app
 does **not** send anything: it prints the email in the backend console
 instead (that's the zero-config default). To deliver to real inboxes, set
 these in `backend/.env` and restart the backend:

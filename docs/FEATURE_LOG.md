@@ -4515,3 +4515,21 @@ instead of trusting the payload. See docs/SECURITY_AND_ACCESS.md.
 Touched: `routes/sync.py`, `services/conflict_resolver.py`, web
 `services/api.js`/`syncEngine.js`/`AuthContext.jsx`/`public/sw.js`, mobile
 `services/offlineSync.js`/`api.js`, tests in `test_sync_security.py`.
+
+## Email verification by one-time code (OTP) + staff "delete my account"
+
+- Verification is now a 6-digit code emailed to the person and typed into the app
+  (banner above the dashboard; auto-submits on the 6th digit; 30s resend cooldown),
+  for staff and customers. Replaces the "click the link" flow. Codes are hashed,
+  expire in 10 minutes, are single-use, only the newest works, and are burned after
+  5 wrong guesses. Service: `services/email_verification.py`; endpoints
+  `POST /auth/verify-email` and `POST /customer/verify-email` (login required, body `{code}`).
+  The old link-token endpoints and `VerifyEmailPage` were removed.
+- `DELETE /auth/me`: staff can delete their own account (password re-entry, or username
+  for Google-only accounts). Personal/auth data is erased, kept business records show
+  "Deleted User", the row is anonymized + deactivated. Blocked for an agent with deliveries
+  in progress and for the only admin of an org that still has other active users; a sole
+  admin working alone can delete, which closes the org. UI: My Account > Delete Account.
+  (Customers already had this under Privacy.)
+- Tests: `test_email_verification.py`, `test_staff_account_deletion.py`,
+  `VerificationBanner.test.jsx`.
