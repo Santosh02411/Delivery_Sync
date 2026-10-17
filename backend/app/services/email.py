@@ -19,18 +19,70 @@ path is used; only this module's internal behavior does.
 
 import html
 import os
+import re
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
 from app.services import monitoring as monitoring_svc
 
-SMTP_HOST = os.environ.get("SMTP_HOST")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
-FROM_EMAIL = os.environ.get("FROM_EMAIL", "noreply@deliverysync.local")
-APP_URL = os.environ.get("FRONTEND_URL", "http://localhost:3700")
+def _env(name: str, default: str | None = None) -> str | None:
+    """Reads an env var, trimming whitespace and any wrapping quotes — a stray
+    space or '"' in .env is the most common reason a correct-looking setting fails."""
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    value = value.strip().strip('"').strip("'").strip()
+    return value or default
+
+
+def _port(raw: str | None) -> int:
+    """'587', ' 587 ' and '587 # comment' all mean 587."""
+    match = re.match(r"\s*(\d+)", raw or "")
+    return int(match.group(1)) if match else 587
+
+
+SMTP_HOST = _env("SMTP_HOST")
+SMTP_PORT = _port(os.environ.get("SMTP_PORT"))
+SMTP_USERNAME = _env("SMTP_USERNAME")
+# Gmail shows app passwords as four groups ("abcd efgh ijkl mnop"); the spaces
+# are only for readability, so they're removed here.
+SMTP_PASSWORD = re.sub(r"\s+", "", _env("SMTP_PASSWORD") or "") or None
+# From address defaults to the login account: Gmail rewrites/rejects a From
+# that isn't the authenticated account, so "noreply@deliverysync.local" would never work.
+FROM_EMAIL = _env("FROM_EMAIL") or SMTP_USERNAME or "noreply@deliverysync.local"
+APP_URL = _env("FRONTEND_URL", "http://localhost:3700")
+SMTP_DEBUG = (_env("SMTP_DEBUG", "") or "").lower() in ("1", "true", "yes")
+
+
+def email_config_problems() -> list[str]:
+    """Human-readable problems with the current SMTP settings (empty list = looks fine)."""
+    problems = []
+    if not SMTP_HOST:
+        return ["SMTP_HOST is not set, so emails are only printed in this console, never sent."]
+    if not SMTP_USERNAME or not SMTP_PASSWORD:
+        problems.append("SMTP_USERNAME / SMTP_PASSWORD are missing.")
+    if "gmail" in SMTP_HOST.lower():
+        if SMTP_PASSWORD and not re.fullmatch(r"[A-Za-z]{16}", SMTP_PASSWORD):
+            problems.append(
+                f"SMTP_PASSWORD has {len(SMTP_PASSWORD)} characters, but a Gmail app password is exactly 16 letters. "
+                "Use an App Password (not your normal Gmail password) and keep the line clean: "
+                "SMTP_PASSWORD=abcdefghijklmnop with nothing after it."
+            )
+        if SMTP_USERNAME and FROM_EMAIL.lower() != SMTP_USERNAME.lower():
+            problems.append("FROM_EMAIL should be the same address as SMTP_USERNAME for Gmail.")
+    return problems
+
+
+def describe_email_config() -> str:
+    if not SMTP_HOST:
+        return "Email: SMTP not configured — emails are printed here instead of sent."
+    problems = email_config_problems()
+    base = f"Email: SMTP {SMTP_HOST}:{SMTP_PORT} as {SMTP_USERNAME or '(no user)'}, from {FROM_EMAIL}."
+    return base + ("  WARNING: " + " ".join(problems) if problems else "  Looks configured.")
+
+
+print(describe_email_config())  # shows once at startup, so a missing/misread .env is obvious
 
 
 def send_password_reset_email(to_email: str, reset_link: str) -> None:
@@ -233,10 +285,31 @@ def _send_email(to_email: str, subject: str, body: str, html_body: str | None = 
             server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15)
             server.starttls()
         with server:
+            if SMTP_DEBUG:
+                server.set_debuglevel(1)
             if SMTP_USERNAME and SMTP_PASSWORD:
                 server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.sendmail(FROM_EMAIL, [to_email], message.as_string())
+            refused = server.sendmail(FROM_EMAIL, [to_email], message.as_string())
+        if refused:
+            raise smtplib.SMTPRecipientsRefused(refused)
         monitoring_svc.record_notification_sent("email", success=True)
-    except Exception:
+    except Exception as error:
         monitoring_svc.record_notification_sent("email", success=False)
+        print(f"EMAIL SEND FAILED to {to_email}: {type(error).__name__}: {error}")
+        print(f"  Hint: {_smtp_hint(error)}")
         raise
+
+
+def _smtp_hint(error: Exception) -> str:
+    if isinstance(error, smtplib.SMTPAuthenticationError):
+        return ("Login was rejected. For Gmail you must use a 16-letter App Password "
+                "(Google Account > Security > 2-Step Verification > App passwords), not your normal password, "
+                "and SMTP_USERNAME must be that same Gmail address.")
+    if isinstance(error, (TimeoutError, ConnectionError, OSError)):
+        return ("Couldn't reach the SMTP server. Check SMTP_HOST/SMTP_PORT (587 or 465), your internet "
+                "connection, and that a firewall/antivirus isn't blocking outgoing SMTP.")
+    if isinstance(error, smtplib.SMTPRecipientsRefused):
+        return "The recipient address was refused by the server."
+    if isinstance(error, smtplib.SMTPSenderRefused):
+        return "The From address was refused. Set FROM_EMAIL to the same address as SMTP_USERNAME."
+    return "Run `python send_test_email.py you@example.com --debug` in the backend folder to see the full SMTP conversation."

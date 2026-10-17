@@ -55,3 +55,23 @@ def test_welcome_email_content_is_congratulatory_html_and_plain(monkeypatch):
     to, subject, body, html_body = sent[0]
     assert to == "c@example.com" and "Congratulations" in subject and "Congratulations" in body
     assert "<script>" not in html_body and "&lt;script&gt;" in html_body  # escaped
+
+
+def test_smtp_settings_are_forgiving_about_common_env_mistakes(monkeypatch):
+    from app.services import email as email_svc
+
+    assert email_svc._port("587") == 587
+    assert email_svc._port(" 587   # 465 also works") == 587
+    assert email_svc._port(None) == 587
+
+    monkeypatch.setattr(email_svc, "SMTP_HOST", "smtp.gmail.com")
+    monkeypatch.setattr(email_svc, "SMTP_USERNAME", "me@gmail.com")
+    monkeypatch.setattr(email_svc, "FROM_EMAIL", "me@gmail.com")
+    monkeypatch.setattr(email_svc, "SMTP_PASSWORD", "abcdefghijklmnop")
+    assert email_svc.email_config_problems() == []
+
+    monkeypatch.setattr(email_svc, "SMTP_PASSWORD", "abcdefghijklmnop(real)")  # junk left on the line
+    assert any("16 letters" in p for p in email_svc.email_config_problems())
+
+    monkeypatch.setattr(email_svc, "SMTP_HOST", None)
+    assert "SMTP_HOST is not set" in email_svc.email_config_problems()[0]
