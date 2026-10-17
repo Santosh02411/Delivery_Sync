@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.customer import CustomerDB, CustomerSignup, CustomerLogin, CustomerTokenResponse, CustomerOut, CustomerProfileUpdate, CustomerPasswordChange, CustomerSetPassword
 from app.models.customer_password_reset import CustomerPasswordResetTokenDB, CustomerForgotPasswordRequest, CustomerResetPasswordRequest
-from app.models.customer_email_verification import CustomerEmailVerificationTokenDB, CustomerVerifyEmailRequest
+from app.models.customer_email_verification import CustomerVerifyEmailRequest
+from app.services import email_verification as email_verification_svc
 from app.models.customer_refresh_token import CustomerRefreshTokenDB, CustomerRefreshTokenRequest, CustomerRefreshTokenResponse
 from app.models.delivery import DeliveryRecordDB
 from app.services.auth import (
@@ -60,12 +61,9 @@ def _send_customer_welcome(customer: CustomerDB) -> None:
 
 
 def _issue_and_send_customer_verification_email(db: Session, customer: CustomerDB) -> None:
-    verification = CustomerEmailVerificationTokenDB(customer_id=customer.id)
-    db.add(verification)
-    db.commit()
-    db.refresh(verification)
-    verify_link = f"{FRONTEND_URL}/?verify_customer_email_token={verification.token}"
-    send_customer_verification_email(customer.email, verify_link)
+    """Emails a fresh 6-digit verification code (see services/email_verification.py)."""
+    code = email_verification_svc.issue_code(db, customer.id, email_verification_svc.CUSTOMER_PURPOSE)
+    send_customer_verification_email(customer.email, code)
 
 
 @router.post("/signup", response_model=CustomerTokenResponse)
@@ -326,27 +324,22 @@ def get_current_customer(
 
 
 @router.post("/verify-email")
-def verify_customer_email(payload: CustomerVerifyEmailRequest, db: Session = Depends(get_db)):
-    """Mirrors routes/auth.py's /auth/verify-email — same non-blocking design, see that docstring."""
-    verification = db.query(CustomerEmailVerificationTokenDB).filter(
-        CustomerEmailVerificationTokenDB.token == payload.token
-    ).first()
-
-    if not verification:
-        raise HTTPException(status_code=400, detail="This verification link is invalid.")
-    if verification.used:
-        raise HTTPException(status_code=400, detail="This verification link has already been used.")
-    if verification.expires_at < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="This verification link has expired. Request a new one.")
-
-    customer = db.query(CustomerDB).filter(CustomerDB.id == verification.customer_id).first()
-    if not customer:
-        raise HTTPException(status_code=400, detail="This verification link is invalid.")
-
-    customer.email_verified = True
-    verification.used = True
+@limiter.limit("10/minute")
+def verify_customer_email(
+    request: Request,
+    payload: CustomerVerifyEmailRequest,
+    current_customer: CustomerDB = Depends(get_current_customer),
+    db: Session = Depends(get_db),
+):
+    """Mirrors routes/auth.py's /auth/verify-email — same OTP design (10-minute, single-use, 5 attempts)."""
+    if current_customer.email_verified:
+        return {"message": "This account's email is already verified."}
+    try:
+        email_verification_svc.check_code(db, current_customer.id, email_verification_svc.CUSTOMER_PURPOSE, payload.code)
+    except email_verification_svc.VerificationCodeError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    current_customer.email_verified = True
     db.commit()
-
     return {"message": "Email verified."}
 
 
@@ -356,7 +349,7 @@ def resend_customer_verification(request: Request, current_customer: CustomerDB 
     if current_customer.email_verified:
         return {"message": "This account's email is already verified."}
     _issue_and_send_customer_verification_email(db, current_customer)
-    return {"message": "Verification email sent."}
+    return {"message": "A new verification code was sent to your email."}
 
 
 @router.post("/refresh-token", response_model=CustomerRefreshTokenResponse)

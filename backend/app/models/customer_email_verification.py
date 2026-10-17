@@ -1,4 +1,7 @@
 """
+LEGACY NOTE: verification now uses one-time codes (services/email_verification.py);
+this link-token table is no longer written to or read.
+
 Email verification tokens for CUSTOMER accounts — mirrors
 models/email_verification.py's staff version exactly. Kept as its own
 table for the same reason customer_password_reset.py is separate from
@@ -35,4 +38,4 @@ class CustomerEmailVerificationTokenDB(Base):
 
 
 class CustomerVerifyEmailRequest(BaseModel):
-    token: str
+    code: str  # the 6-digit code from the email (verification is by one-time code now, not a link)

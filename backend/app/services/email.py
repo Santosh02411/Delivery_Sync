@@ -105,24 +105,31 @@ def send_customer_password_reset_email(to_email: str, reset_link: str) -> None:
     _send_email(to_email, subject, body)
 
 
-def send_verification_email(to_email: str, verify_link: str) -> None:
-    subject = "Verify your Delivery Sync email address"
+def _send_verification_code(to_email: str, code: str, who: str) -> None:
+    subject = f"Your Delivery Sync verification code: {code}"
     body = (
-        f"Please confirm this is your email address by clicking the link below "
-        f"(expires in 48 hours):\n{verify_link}\n\n"
-        f"If you didn't create a Delivery Sync account, you can safely ignore this email."
+        f"Your Delivery Sync verification code is:\n\n    {code}\n\n"
+        f"Enter it in the app to verify your email address. It expires in 10 minutes and works once.\n"
+        f"Never share this code with anyone.\n\n"
+        f"If you didn't create a Delivery Sync {who}, you can safely ignore this email."
     )
-    _send_email(to_email, subject, body)
+    _send_email(to_email, subject, body, html_body=_html_email(
+        "Verify your email address",
+        ["Enter this code in the app to verify your email address:"],
+        highlight=code,
+        after=["It expires in 10 minutes and can be used once. Never share this code with anyone.",
+               f"If you didn't create a Delivery Sync {who}, you can safely ignore this email."],
+    ))
 
 
-def send_customer_verification_email(to_email: str, verify_link: str) -> None:
-    subject = "Verify your Delivery Sync account email"
-    body = (
-        f"Please confirm this is your email address by clicking the link below "
-        f"(expires in 48 hours):\n{verify_link}\n\n"
-        f"If you didn't create a Delivery Sync account, you can safely ignore this email."
-    )
-    _send_email(to_email, subject, body)
+def send_verification_email(to_email: str, code: str) -> None:
+    """Staff: emails the 6-digit verification code (OTP)."""
+    _send_verification_code(to_email, code, "account")
+
+
+def send_customer_verification_email(to_email: str, code: str) -> None:
+    """Customer: emails the 6-digit verification code (OTP)."""
+    _send_verification_code(to_email, code, "account")
 
 
 def _html_email(heading: str, paragraphs: list[str], highlight: str | None = None, button_label: str | None = None, button_url: str | None = None, after: list[str] | None = None) -> str:

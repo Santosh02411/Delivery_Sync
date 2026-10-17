@@ -1,160 +1,162 @@
 """
-Tests for email verification — routes/auth.py's /verify-email and
-/resend-verification (staff), and their customer equivalents in
-routes/customer_auth.py. Covers: a fresh signup is unverified, a valid
-token verifies it, invalid/expired/reused tokens are rejected, resend
-works (and short-circuits if already verified), and — the core design
-choice — verification does NOT block login.
+Tests for email verification by ONE-TIME CODE (OTP) — routes/auth.py's
+/verify-email + /resend-verification (staff) and the customer equivalents
+in routes/customer_auth.py, backed by services/email_verification.py.
+
+Covers: a fresh signup is unverified and can still log in; the emailed
+6-digit code verifies; wrong/expired/reused codes are refused; a code is
+burned after 5 wrong guesses; only the newest code works; codes are bound
+to the signed-in account and can't cross between staff and customers.
 """
 
 from datetime import datetime, timedelta
 
+import pytest
 from sqlalchemy.orm import sessionmaker
 
-from app.models.email_verification import EmailVerificationTokenDB
-from app.models.customer_email_verification import CustomerEmailVerificationTokenDB
+from app.models.email_otp import EmailOtpDB
 
 
 def _session_for(db_engine):
     return sessionmaker(autocommit=False, autoflush=False, bind=db_engine)()
 
 
+@pytest.fixture()
+def sent_codes(monkeypatch):
+    """Captures every emailed verification code. List this fixture FIRST in a
+    test's arguments so it's active before the signup fixtures run."""
+    from app.routes import auth as auth_routes, customer_auth
+
+    codes = []
+    monkeypatch.setattr(auth_routes, "send_verification_email", lambda to, code: codes.append(code))
+    monkeypatch.setattr(customer_auth, "send_customer_verification_email", lambda to, code: codes.append(code))
+    return codes
+
+
 def test_staff_signup_is_unverified_and_login_still_works(client, admin_signup_payload):
     resp = client.post("/auth/signup", json=admin_signup_payload)
     assert resp.status_code == 200, resp.text
     assert resp.json()["user"]["email_verified"] is False
-
-    # Verification does not block login.
-    resp = client.post(
-        "/auth/login",
-        json={"username": admin_signup_payload["username"], "password": admin_signup_payload["password"]},
-    )
+    resp = client.post("/auth/login", json={"username": admin_signup_payload["username"], "password": admin_signup_payload["password"]})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["user"]["email_verified"] is False
+    assert resp.json()["user"]["email_verified"] is False  # verification never blocks login
 
 
-def test_staff_verify_email_full_cycle(client, db_engine, signed_up_admin, auth_headers):
-    user_id = signed_up_admin["user"]["id"]
+def test_signup_emails_a_six_digit_code(sent_codes, client, signed_up_admin):
+    assert len(sent_codes) == 1
+    assert len(sent_codes[0]) == 6 and sent_codes[0].isdigit()
 
+
+def test_staff_verify_email_full_cycle(sent_codes, client, signed_up_admin, auth_headers):
+    code = sent_codes[-1]
+    resp = client.post("/auth/verify-email", json={"code": code}, headers=auth_headers)
+    assert resp.status_code == 200, resp.text
+    assert client.get("/auth/me", headers=auth_headers).json()["email_verified"] is True
+
+
+def test_staff_code_requires_login_and_is_single_use(sent_codes, client, signed_up_admin, auth_headers):
+    code = sent_codes[-1]
+    assert client.post("/auth/verify-email", json={"code": code}).status_code == 401  # not signed in
+    assert client.post("/auth/verify-email", json={"code": code}, headers=auth_headers).status_code == 200
+    # Already verified: a second call is a harmless no-op, and the code is spent.
+    again = client.post("/auth/verify-email", json={"code": code}, headers=auth_headers)
+    assert again.status_code == 200 and "already verified" in again.json()["message"].lower()
+
+
+def test_wrong_code_is_rejected_and_counts_attempts(sent_codes, client, signed_up_admin, auth_headers):
+    real = sent_codes[-1]
+    wrong = "000000" if real != "000000" else "111111"
+    resp = client.post("/auth/verify-email", json={"code": wrong}, headers=auth_headers)
+    assert resp.status_code == 400
+    assert "4 attempts left" in resp.json()["detail"]
+    assert client.get("/auth/me", headers=auth_headers).json()["email_verified"] is False
+
+
+def test_code_is_burned_after_five_wrong_guesses(sent_codes, client, signed_up_admin, auth_headers):
+    real = sent_codes[-1]
+    wrong = "000000" if real != "000000" else "111111"
+    for _ in range(5):
+        assert client.post("/auth/verify-email", json={"code": wrong}, headers=auth_headers).status_code == 400
+    # Even the CORRECT code no longer works — a new one must be requested.
+    resp = client.post("/auth/verify-email", json={"code": real}, headers=auth_headers)
+    assert resp.status_code == 400
+    assert client.post("/auth/resend-verification", headers=auth_headers).status_code == 200
+    assert client.post("/auth/verify-email", json={"code": sent_codes[-1]}, headers=auth_headers).status_code == 200
+
+
+def test_expired_code_is_rejected(sent_codes, client, db_engine, signed_up_admin, auth_headers):
     db = _session_for(db_engine)
     try:
-        token_row = (
-            db.query(EmailVerificationTokenDB)
-            .filter(EmailVerificationTokenDB.user_id == user_id)
-            .order_by(EmailVerificationTokenDB.created_at.desc())
-            .first()
+        db.query(EmailOtpDB).filter(EmailOtpDB.user_id == signed_up_admin["user"]["id"]).update(
+            {"expires_at": datetime.utcnow() - timedelta(minutes=1)}
         )
-        assert token_row is not None
-        token = token_row.token
-    finally:
-        db.close()
-
-    resp = client.post("/auth/verify-email", json={"token": token})
-    assert resp.status_code == 200, resp.text
-
-    resp = client.get("/auth/me", headers=auth_headers)
-    assert resp.json()["email_verified"] is True
-
-    # Reusing the same token fails.
-    resp = client.post("/auth/verify-email", json={"token": token})
-    assert resp.status_code == 400
-
-
-def test_staff_verify_email_rejects_invalid_and_expired_tokens(client, db_engine, signed_up_admin):
-    resp = client.post("/auth/verify-email", json={"token": "not-a-real-token"})
-    assert resp.status_code == 400
-
-    db = _session_for(db_engine)
-    try:
-        expired = EmailVerificationTokenDB(
-            user_id=signed_up_admin["user"]["id"],
-            expires_at=datetime.utcnow() - timedelta(hours=1),
-        )
-        db.add(expired)
         db.commit()
-        db.refresh(expired)
-        expired_token = expired.token
     finally:
         db.close()
-
-    resp = client.post("/auth/verify-email", json={"token": expired_token})
-    assert resp.status_code == 400
-    assert "expired" in resp.json()["detail"].lower()
+    resp = client.post("/auth/verify-email", json={"code": sent_codes[-1]}, headers=auth_headers)
+    assert resp.status_code == 400 and "expired" in resp.json()["detail"].lower()
 
 
-def test_staff_resend_verification(client, auth_headers, db_engine, signed_up_admin):
-    resp = client.post("/auth/resend-verification", headers=auth_headers)
-    assert resp.status_code == 200, resp.text
-    assert "sent" in resp.json()["message"].lower()
+def test_resend_invalidates_the_older_code(sent_codes, client, signed_up_admin, auth_headers):
+    first = sent_codes[-1]
+    assert client.post("/auth/resend-verification", headers=auth_headers).status_code == 200
+    second = sent_codes[-1]
+    if first != second:  # (1-in-a-million collision otherwise)
+        assert client.post("/auth/verify-email", json={"code": first}, headers=auth_headers).status_code == 400
+    assert client.post("/auth/verify-email", json={"code": second}, headers=auth_headers).status_code == 200
 
-    # Two tokens now exist for this user (signup's + the resend's).
+
+def test_code_is_stored_hashed_never_plain(sent_codes, client, db_engine, signed_up_admin):
     db = _session_for(db_engine)
     try:
-        count = db.query(EmailVerificationTokenDB).filter(
-            EmailVerificationTokenDB.user_id == signed_up_admin["user"]["id"]
-        ).count()
-        assert count == 2
+        rows = db.query(EmailOtpDB).filter(EmailOtpDB.user_id == signed_up_admin["user"]["id"]).all()
+        assert rows and all(r.code_hash != sent_codes[-1] and sent_codes[-1] not in r.code_hash for r in rows)
     finally:
         db.close()
 
 
-def test_staff_resend_verification_short_circuits_if_already_verified(client, db_engine, signed_up_admin, auth_headers):
-    db = _session_for(db_engine)
-    try:
-        token_row = db.query(EmailVerificationTokenDB).filter(
-            EmailVerificationTokenDB.user_id == signed_up_admin["user"]["id"]
-        ).first()
-        token = token_row.token
-    finally:
-        db.close()
-
-    client.post("/auth/verify-email", json={"token": token})
-
+def test_resend_short_circuits_if_already_verified(sent_codes, client, signed_up_admin, auth_headers):
+    client.post("/auth/verify-email", json={"code": sent_codes[-1]}, headers=auth_headers)
     resp = client.post("/auth/resend-verification", headers=auth_headers)
-    assert resp.status_code == 200
-    assert "already verified" in resp.json()["message"].lower()
+    assert resp.status_code == 200 and "already verified" in resp.json()["message"].lower()
 
 
 def test_resend_verification_requires_auth(client):
-    resp = client.post("/auth/resend-verification")
-    assert resp.status_code == 401
+    assert client.post("/auth/resend-verification").status_code == 401
 
 
 def test_customer_signup_is_unverified_and_login_still_works(client, customer_signup_payload):
     resp = client.post("/customer/signup", json=customer_signup_payload)
     assert resp.status_code == 200, resp.text
     assert resp.json()["customer"]["email_verified"] is False
+    resp = client.post("/customer/login", json={"email": customer_signup_payload["email"], "password": customer_signup_payload["password"]})
+    assert resp.status_code == 200 and resp.json()["customer"]["email_verified"] is False
 
-    resp = client.post(
-        "/customer/login",
-        json={"email": customer_signup_payload["email"], "password": customer_signup_payload["password"]},
-    )
+
+def test_customer_verify_email_full_cycle(sent_codes, client, signed_up_customer, customer_auth_headers):
+    code = sent_codes[-1]
+    resp = client.post("/customer/verify-email", json={"code": code}, headers=customer_auth_headers)
     assert resp.status_code == 200, resp.text
-    assert resp.json()["customer"]["email_verified"] is False
+    assert client.get("/customer/me", headers=customer_auth_headers).json()["email_verified"] is True
 
 
-def test_customer_verify_email_full_cycle(client, db_engine, signed_up_customer, customer_auth_headers):
-    customer_id = signed_up_customer["customer"]["id"]
-
-    db = _session_for(db_engine)
-    try:
-        token_row = (
-            db.query(CustomerEmailVerificationTokenDB)
-            .filter(CustomerEmailVerificationTokenDB.customer_id == customer_id)
-            .first()
-        )
-        token = token_row.token
-    finally:
-        db.close()
-
-    resp = client.post("/customer/verify-email", json={"token": token})
-    assert resp.status_code == 200, resp.text
-
-    resp = client.get("/customer/me", headers=customer_auth_headers)
-    assert resp.json()["email_verified"] is True
+def test_customer_wrong_code_and_auth_required(sent_codes, client, signed_up_customer, customer_auth_headers):
+    real = sent_codes[-1]
+    wrong = "000000" if real != "000000" else "111111"
+    assert client.post("/customer/verify-email", json={"code": wrong}, headers=customer_auth_headers).status_code == 400
+    assert client.post("/customer/verify-email", json={"code": real}).status_code == 401
 
 
-def test_customer_resend_verification(client, customer_auth_headers):
+def test_customer_resend_verification(sent_codes, client, signed_up_customer, customer_auth_headers):
+    before = len(sent_codes)
     resp = client.post("/customer/resend-verification", headers=customer_auth_headers)
     assert resp.status_code == 200, resp.text
-    assert "sent" in resp.json()["message"].lower()
+    assert len(sent_codes) == before + 1
+
+
+def test_staff_and_customer_codes_are_not_interchangeable(sent_codes, client, signed_up_admin, auth_headers, signed_up_customer, customer_auth_headers):
+    staff_code = sent_codes[0]
+    customer_code = sent_codes[1]
+    if staff_code != customer_code:
+        assert client.post("/customer/verify-email", json={"code": staff_code}, headers=customer_auth_headers).status_code == 400
+        assert client.post("/auth/verify-email", json={"code": customer_code}, headers=auth_headers).status_code == 400

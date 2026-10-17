@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.user import (
     UserDB,
+    UserRole,
     UserSignup,
     UserLogin,
     UserOut,
@@ -32,7 +33,7 @@ from app.models.user import (
 from app.models.organization import OrganizationDB
 from app.models.password_reset import PasswordResetTokenDB, ForgotPasswordRequest, ResetPasswordRequest
 from app.models.email_otp import EmailOtpDB, EMAIL_OTP_EXPIRY_MINUTES, generate_numeric_code, mask_email
-from app.models.email_verification import EmailVerificationTokenDB, VerifyEmailRequest, VERIFICATION_TOKEN_EXPIRY_HOURS
+from app.models.email_verification import VerifyEmailRequest
 from app.models.refresh_token import RefreshTokenDB, RefreshTokenRequest, RefreshTokenResponse
 from app.models.security import (
     LoginHistoryDB, SecurityEventDB, SessionOut, LoginHistoryOut, SecurityEventOut,
@@ -55,6 +56,7 @@ from app.services.email import send_password_reset_email, send_two_factor_code_e
 from app.services.email import send_org_welcome_email, send_staff_welcome_email
 from app.services.captcha import verify_captcha, IS_CONFIGURED as CAPTCHA_CONFIGURED
 from app.services import security as security_svc
+from app.services import email_verification as email_verification_svc
 from app.services.email import send_security_alert_email
 from app.services import oauth as oauth_svc
 from app.services import demo_seed as demo_seed_svc
@@ -84,12 +86,9 @@ def _issue_refresh_token(db: Session, user_id: str, device_info: str = None, ip_
 
 
 def _issue_and_send_verification_email(db: Session, user: UserDB) -> None:
-    verification = EmailVerificationTokenDB(user_id=user.id)
-    db.add(verification)
-    db.commit()
-    db.refresh(verification)
-    verify_link = f"{FRONTEND_URL}/?verify_email_token={verification.token}"
-    send_verification_email(user.email, verify_link)
+    """Emails a fresh 6-digit verification code (see services/email_verification.py)."""
+    code = email_verification_svc.issue_code(db, user.id, email_verification_svc.STAFF_PURPOSE)
+    send_verification_email(user.email, code)
 
 
 def _send_welcome_email(user: UserDB, org: OrganizationDB, is_new_org: bool, invite_code: str | None) -> None:
@@ -695,30 +694,6 @@ def reset_password(request: Request, payload: ResetPasswordRequest, db: Session 
 # wants one — the same trade-off many real products make (Slack,
 # GitHub, etc. all let you use the product before verifying).
 
-@router.post("/verify-email")
-def verify_email(payload: VerifyEmailRequest, db: Session = Depends(get_db)):
-    verification = db.query(EmailVerificationTokenDB).filter(
-        EmailVerificationTokenDB.token == payload.token
-    ).first()
-
-    if not verification:
-        raise HTTPException(status_code=400, detail="This verification link is invalid.")
-    if verification.used:
-        raise HTTPException(status_code=400, detail="This verification link has already been used.")
-    if verification.expires_at < datetime.utcnow():
-        raise HTTPException(status_code=400, detail="This verification link has expired. Request a new one.")
-
-    user = db.query(UserDB).filter(UserDB.id == verification.user_id).first()
-    if not user:
-        raise HTTPException(status_code=400, detail="This verification link is invalid.")
-
-    user.email_verified = True
-    verification.used = True
-    db.commit()
-
-    return {"message": "Email verified."}
-
-
 def get_current_user(
     authorization: str = Header(None), db: Session = Depends(get_db)
 ) -> UserDB:
@@ -746,13 +721,39 @@ def get_current_user(
     return user
 
 
+@router.post("/verify-email")
+@limiter.limit("10/minute")
+def verify_email(
+    request: Request,
+    payload: VerifyEmailRequest,
+    current_user: UserDB = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Confirms the signed-in user's email with the 6-digit code we emailed
+    them. The code only works for the account that is logged in (no
+    token-in-a-link that anyone holding the email could redeem), expires
+    after 10 minutes, is single-use, and is burned after 5 wrong guesses.
+    Verification still doesn't gate login — see the note above.
+    """
+    if current_user.email_verified:
+        return {"message": "This account's email is already verified."}
+    try:
+        email_verification_svc.check_code(db, current_user.id, email_verification_svc.STAFF_PURPOSE, payload.code)
+    except email_verification_svc.VerificationCodeError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    current_user.email_verified = True
+    db.commit()
+    return {"message": "Email verified."}
+
+
 @router.post("/resend-verification")
 @limiter.limit("3/minute")
 def resend_verification(request: Request, current_user: UserDB = Depends(get_current_user), db: Session = Depends(get_db)):
     if current_user.email_verified:
         return {"message": "This account's email is already verified."}
     _issue_and_send_verification_email(db, current_user)
-    return {"message": "Verification email sent."}
+    return {"message": "A new verification code was sent to your email."}
 
 
 # ---------- Refresh tokens ----------
@@ -928,6 +929,135 @@ def set_my_password(
         "A password was added to your account — you can now log in with it as well as Google Sign-In.",
     )
     return {"message": "Password set. You can now log in with it, in addition to Google Sign-In."}
+
+
+# ---------- Delete my account (staff) ----------
+
+class DeleteMyAccountRequest(BaseModel):
+    password: str | None = None   # required if the account has a password
+    confirm: str | None = None    # OAuth-only accounts (no password): type your username instead
+
+
+DELETED_NAME = "Deleted User"
+
+
+@router.delete("/me")
+def delete_my_account(
+    payload: DeleteMyAccountRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(get_current_user),
+):
+    """
+    Permanently deletes the signed-in staff member's account (admin,
+    dispatcher or agent). Mirrors the customer "delete account" in
+    routes/customer_privacy.py:
+
+    - Re-entering the password is required (an open session alone isn't
+      enough). Google-only accounts, which have no password, must type
+      their username instead.
+    - PERSONAL data is erased: sign-in sessions, reset/verification codes,
+      2FA secret + recovery codes, push registrations, login/security
+      history, live and historical GPS location.
+    - Business records the organization legitimately keeps (past
+      deliveries, payroll/attendance, audit log, chat) are kept but
+      de-identified: the account row stays as an anonymous, permanently
+      deactivated "Deleted User" so nothing that references it breaks, and
+      every stored copy of the person's name on those records is replaced.
+    - Safety rules: an agent with deliveries still in progress can't
+      delete (a dispatcher must reassign them first), and the only admin
+      of an organization that still has other active people can't delete
+      (the org would be left with nobody in charge). A sole admin working
+      alone can delete, which also closes the organization.
+    """
+    if current_user.has_usable_password:
+        if not payload.password or not verify_password(payload.password, current_user.hashed_password):
+            raise HTTPException(status_code=401, detail="Incorrect password.")
+    else:
+        if (payload.confirm or "").strip().lower() != current_user.username.lower():
+            raise HTTPException(status_code=400, detail="Type your username to confirm deleting your account.")
+
+    from app.models.delivery import DeliveryRecordDB, DeliveryStatus
+
+    uid, org_id = current_user.id, current_user.org_id
+
+    if current_user.role == UserRole.agent:
+        active = db.query(DeliveryRecordDB).filter(
+            DeliveryRecordDB.agent_id == uid,
+            DeliveryRecordDB.status.in_([DeliveryStatus.picked_up, DeliveryStatus.out_for_delivery]),
+        ).count()
+        if active:
+            raise HTTPException(
+                status_code=400,
+                detail=f"You still have {active} delivery(ies) in progress. Ask your dispatcher to reassign or close them first.",
+            )
+
+    others = db.query(UserDB).filter(UserDB.org_id == org_id, UserDB.is_active == True, UserDB.id != uid)  # noqa: E712
+    closes_org = False
+    if current_user.role == UserRole.admin:
+        if others.filter(UserDB.role == UserRole.admin).count() == 0:
+            if others.count() > 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="You're the only admin of this organization and other people still use it. "
+                           "Deactivate the other users first (Manage Users), then delete your account.",
+                )
+            closes_org = True
+
+    from app.models.expo_push_token import ExpoPushTokenDB
+    from app.models.push_subscription import PushSubscriptionDB
+    from app.models.agent_location import AgentLocationDB
+    from app.models.location_history import AgentLocationHistoryDB
+    from app.models.email_verification import EmailVerificationTokenDB
+    from app.models.password_reset import PasswordResetTokenDB as _ResetTokens
+    from app.models.security import PasswordHistoryDB, RecoveryCodeDB
+    from app.models.delivery_history import DeliveryHistoryDB
+    from app.models.action_log import ActionLogDB
+    from app.models.delivery_message import DeliveryMessageDB
+    from app.models.support_ticket import SupportTicketMessageDB
+
+    # 1. Erase personal / authentication data outright.
+    for model in (RefreshTokenDB, _ResetTokens, EmailOtpDB, EmailVerificationTokenDB, ExpoPushTokenDB,
+                  PushSubscriptionDB, LoginHistoryDB, SecurityEventDB, PasswordHistoryDB, RecoveryCodeDB):
+        db.query(model).filter(model.user_id == uid).delete(synchronize_session=False)
+    db.query(AgentLocationDB).filter(AgentLocationDB.agent_id == uid).delete(synchronize_session=False)
+    db.query(AgentLocationHistoryDB).filter(AgentLocationHistoryDB.agent_id == uid).delete(synchronize_session=False)
+
+    # 2. Replace the person's name on records the org keeps.
+    db.query(DeliveryHistoryDB).filter(DeliveryHistoryDB.changed_by_user_id == uid).update(
+        {"changed_by_display_name": DELETED_NAME}, synchronize_session=False)
+    db.query(ActionLogDB).filter(ActionLogDB.actor_user_id == uid).update(
+        {"actor_display_name": DELETED_NAME}, synchronize_session=False)
+    db.query(DeliveryMessageDB).filter(DeliveryMessageDB.sender_id == uid).update(
+        {"sender_display_name": DELETED_NAME}, synchronize_session=False)
+    db.query(SupportTicketMessageDB).filter(
+        SupportTicketMessageDB.sender_id == uid, SupportTicketMessageDB.sender_type == "staff"
+    ).update({"sender_display_name": DELETED_NAME}, synchronize_session=False)
+
+    # 3. De-identify and permanently deactivate the account row itself.
+    short = uid[:8]
+    current_user.username = f"deleted-{short}"
+    current_user.email = f"deleted-{short}@deleted.local"
+    current_user.display_name = DELETED_NAME
+    current_user.hashed_password = hash_password(secrets.token_urlsafe(32))  # nobody knows it
+    current_user.has_usable_password = False
+    current_user.is_active = False
+    current_user.email_verified = False
+    current_user.totp_enabled = False
+    current_user.totp_secret = None
+    current_user.oauth_provider = None
+    current_user.oauth_subject_id = None
+    current_user.area_name = current_user.area_latitude = current_user.area_longitude = None
+
+    if closes_org:
+        org = db.query(OrganizationDB).filter(OrganizationDB.id == org_id).first()
+        if org:
+            org.invite_code = f"CLOSED-{secrets.token_hex(6)}"  # nobody can join an organization with no admin
+            org.is_suspended = True
+            org.suspended_at = datetime.utcnow()
+            org.suspended_reason = "Closed by its owner."
+
+    db.commit()
+    return {"success": True, "message": "Your account has been deleted."}
 
 
 # ---------- Two-factor auth: setup / enable / disable (staff, logged in) ----------

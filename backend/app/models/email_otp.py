@@ -12,11 +12,11 @@ so hashing it is a cheap extra guard against anyone with raw DB access
 being able to log in as someone else during that code's short window.
 """
 
-import random
+import secrets
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import Column, String, DateTime, Boolean
+from sqlalchemy import Column, String, DateTime, Boolean, Integer
 
 from app.db.session import Base
 
@@ -29,18 +29,21 @@ class EmailOtpDB(Base):
     id = Column(String, primary_key=True, index=True, default=lambda: str(uuid.uuid4()))
     user_id = Column(String, index=True, nullable=False)
     code_hash = Column(String, nullable=False)
-    purpose = Column(String, nullable=False)  # "enable_2fa" or "login"
+    purpose = Column(String, nullable=False)  # "enable_2fa", "login", "verify_email" (staff) or "customer_verify_email"
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     expires_at = Column(
         DateTime, nullable=False,
         default=lambda: datetime.utcnow() + timedelta(minutes=EMAIL_OTP_EXPIRY_MINUTES),
     )
     used = Column(Boolean, nullable=False, default=False)
+    # Wrong guesses so far; the code is burned after MAX_OTP_ATTEMPTS so a
+    # 6-digit code can't be brute-forced within its 10-minute lifetime.
+    attempts = Column(Integer, nullable=False, default=0)
 
 
 def generate_numeric_code() -> str:
     """A random 6-digit code, zero-padded (e.g. '004821') so it's always exactly 6 characters."""
-    return f"{random.randint(0, 999999):06d}"
+    return f"{secrets.randbelow(1_000_000):06d}"  # CSPRNG, not random.*
 
 
 def mask_email(email: str) -> str:

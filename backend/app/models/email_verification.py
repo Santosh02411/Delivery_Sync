@@ -1,4 +1,7 @@
 """
+LEGACY NOTE: verification now uses one-time codes (services/email_verification.py);
+this link-token table is no longer written to or read.
+
 Email verification tokens for STAFF accounts (UserDB) — a link-based,
 single-use token emailed at signup (and on request via
 POST /auth/resend-verification) to confirm the address actually
@@ -41,4 +44,4 @@ class EmailVerificationTokenDB(Base):
 
 
 class VerifyEmailRequest(BaseModel):
-    token: str
+    code: str  # the 6-digit code from the email (verification is by one-time code now, not a link)
