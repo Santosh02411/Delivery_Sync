@@ -3,7 +3,7 @@
 #
 #   docker compose up --build
 #
-# Then visit http://localhost:3000. This is the "real" production-
+# Then visit http://localhost:3700. This is the "real" production-
 # shaped setup — a real database instead of a SQLite file, the frontend
 # served as static files instead of Vite's dev server, and the backend
 # running in ENVIRONMENT=production (see main.py / services/auth.py for
@@ -49,8 +49,13 @@ services:
       # setup; replace it before deploying anywhere real, the same way
       # you would any other secret.
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-please-change-this-to-a-real-random-secret}
-      ALLOWED_ORIGINS: http://localhost:3000
-      FRONTEND_URL: http://localhost:3000
+      ALLOWED_ORIGINS: http://localhost:3700
+      FRONTEND_URL: http://localhost:3700
+      # Sign in with Google: put these in a .env file next to this
+      # compose file (repo root); empty = feature honestly disabled.
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8000/auth/oauth/google/callback}
       # Every optional integration (SMTP, Twilio, Razorpay, VAPID,
       # Google Maps) still follows the same "real if set, safe
       # fallback otherwise" pattern in Docker as it does locally — set
@@ -72,7 +77,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "3000:80"
+      - "3700:80"
 
 volumes:
   postgres_data:

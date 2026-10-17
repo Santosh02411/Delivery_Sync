@@ -85,7 +85,107 @@ cd frontend
 npm install
 npm run dev
 ```
-Runs at `http://localhost:3000`.
+Runs at `http://localhost:3700`.
+
+### Configuration (`.env` files)
+
+The repo ships only **`.env.example`** templates. The real `.env` files are
+**not** in the repo (they hold secrets), so you create them yourself by
+copying the templates. The app runs with zero config, so this step is
+optional until you want a specific feature (Google sign-in, real email,
+payments, ...).
+
+| File to create | Copy from | Must live next to | Read by |
+|---|---|---|---|
+| `backend/.env` | `backend/.env.example` | `backend/main.py` | FastAPI (via python-dotenv) |
+| `frontend/.env` | `frontend/.env.example` | `frontend/vite.config.js` | Vite (only `VITE_*` vars) |
+| `mobile/.env` | `mobile/.env.example` | `mobile/app.json` | Expo |
+
+```bash
+# macOS / Linux / Git Bash
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+
+# Windows PowerShell
+Copy-Item backend\.env.example backend\.env
+Copy-Item frontend\.env.example frontend\.env
+```
+
+Then edit the new `.env` files and **restart** `uvicorn` / `npm run dev`
+(env vars are only read at startup). Never commit `.env` (it is in
+`.gitignore`); `.env.example` is the only one that belongs in Git.
+
+#### Real emails (welcome / verification / password reset)
+
+Every new account (admin, dispatcher, agent **and customer**) gets a
+"Congratulations, your account is ready" email at the address it signed up
+with, in addition to the verification email. Without SMTP settings the app
+does **not** send anything: it prints the email in the backend console
+instead (that's the zero-config default). To deliver to real inboxes, set
+these in `backend/.env` and restart the backend:
+
+```env
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587                      # 465 also works (implicit TLS)
+SMTP_USERNAME=youraddress@gmail.com
+SMTP_PASSWORD=your-16-character-app-password
+FROM_EMAIL=youraddress@gmail.com
+FRONTEND_URL=http://localhost:3700 # used for the "Log in" button/links in emails
+```
+
+For Gmail: turn on 2-Step Verification, then create an **App password**
+(Google Account → Security → App passwords) and use that 16-character value
+as `SMTP_PASSWORD` (not your normal password). If a send fails, signup still
+succeeds and the error is printed in the backend log.
+
+**Not receiving emails? Check these, in order:**
+
+1. **Restart the backend completely** (stop it, start it again). `uvicorn --reload`
+   does not watch `.env`, so edits are only picked up on a fresh start. On startup
+   the console prints one line, `Email: SMTP smtp.gmail.com:587 as ... Looks configured.`
+   If it says "not configured", the `.env` isn't being read (it must be at `backend/.env`,
+   next to `main.py`).
+2. **Run the test script** from the `backend` folder; it prints Gmail's exact reply:
+   ```bash
+   python send_test_email.py you@example.com
+   python send_test_email.py you@example.com --debug   # full SMTP conversation
+   ```
+3. **Keep the password line clean**: `SMTP_PASSWORD=abcdefghijklmnop`. Spaces inside the
+   16 letters are fine (they're ignored), but nothing else may follow it on that line,
+   not even a note in brackets. It must be an App Password, not your Gmail password.
+4. `SMTP_USERNAME` and `FROM_EMAIL` should both be the same Gmail address.
+5. Check the recipient's **Spam** folder, and the backend console for a line starting
+   `EMAIL SEND FAILED` (it includes a hint). A failed *welcome* email never blocks signup.
+
+#### Enabling "Sign in with Google"
+
+Until you set the credentials, the button is still visible, but clicking
+it shows: *"Google sign-in isn't configured for this deployment. Set
+GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to enable it."* To turn it on:
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) →
+   create/select a project → **APIs & Services → OAuth consent screen**
+   (configure it; add yourself as a test user while in "Testing" mode).
+2. **Credentials → Create Credentials → OAuth client ID** → type **Web
+   application**.
+3. Under **Authorized redirect URIs** add **both** (exact match, including
+   port and no trailing slash):
+   - `http://localhost:8000/auth/oauth/google/callback` (staff)
+   - `http://localhost:8000/customer/oauth/google/callback` (customer)
+4. Copy the Client ID and secret into `backend/.env`:
+   ```env
+   GOOGLE_CLIENT_ID=1234567890-abc.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=GOCSPX-your-secret
+   GOOGLE_REDIRECT_URI=http://localhost:8000/auth/oauth/google/callback
+   FRONTEND_URL=http://localhost:3700
+   ```
+5. Restart the backend and try again.
+
+For a deployed site, use your real backend URL for the redirect URIs and
+`GOOGLE_REDIRECT_URI`, and set the same variables in your host's
+environment settings (e.g. Render's Environment tab). With Docker, put the
+`GOOGLE_*` values in a `.env` file **in the repo root** (next to
+`docker-compose.yml`); compose passes them to the backend.
 
 > **If you're pulling a fresh copy of this project after previously
 > running an older version:** delete `backend/database.db` before
@@ -99,7 +199,7 @@ instead of SQLite, the frontend served as static files behind nginx,
 ```bash
 docker compose up --build
 ```
-then visit `http://localhost:3000` — see `docker-compose.yml`'s own
+then visit `http://localhost:3700` — see `docker-compose.yml`'s own
 comments for exactly what changes in production mode.
 
 ## Deploying It For Real

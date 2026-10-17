@@ -1,0 +1,27 @@
+name,price,description,category,image_url,stock_quantity,cost_price,is_active
+Basmati Rice 5kg,649,"Aged long-grain basmati, ideal for biryani and pulao",Grocery,,60,520,yes
+Sona Masoori Rice 10kg,585,Everyday medium-grain rice,Grocery,,45,470,yes
+Toor Dal 1kg,159.50,"Unpolished, protein-rich split pigeon peas",Grocery,,80,128,yes
+Moong Dal 1kg,139,"Washed yellow moong dal, cooks quickly",Grocery,,70,112,yes
+Whole Wheat Atta 5kg,245,Stone-ground chakki atta,Grocery,,90,198,yes
+Refined Sunflower Oil 1L,132,"Light cooking oil, rich in vitamin E",Grocery,,120,108,yes
+Cold Pressed Groundnut Oil 1L,289,"Traditional wood-pressed, no preservatives",Grocery,,35,235,yes
+Iodised Salt 1kg,24,Free-flowing table salt,Grocery,,200,16,yes
+Sugar 1kg,48,Fine crystal sugar,Grocery,,150,40,yes
+Tata Tea Premium 500g,265,"Strong, aromatic CTC tea leaves",Beverages,,55,214,yes
+Filter Coffee Powder 250g,199,"80% coffee, 20% chicory blend",Beverages,,40,152,yes
+Amul Full Cream Milk 1L,68,"Fresh pasteurised milk, 3-day shelf life",Dairy,,100,60,yes
+Amul Butter 500g,285,Salted table butter,Dairy,,50,248,yes
+Fresh Paneer 200g,95,"Soft, fresh cottage cheese",Dairy,,30,74,yes
+Farm Eggs (Tray of 30),189,"Brown eggs, farm fresh",Dairy,,25,160,yes
+Tomatoes 1kg,42,"Firm, ripe country tomatoes",Fruits & Vegetables,,,30,yes
+Onions 2kg,70,"Red onions, hand-sorted",Fruits & Vegetables,,,52,yes
+Bananas (Dozen),58,"Robusta bananas, ready to eat",Fruits & Vegetables,,,44,yes
+Parle-G Biscuits Family Pack,50,"Classic glucose biscuits, 800g",Snacks,,180,42,yes
+Haldiram's Aloo Bhujia 400g,110,Crispy spiced potato noodles,Snacks,,75,86,yes
+Maggi 2-Minute Noodles (12 pack),168,"Masala flavour, family pack",Snacks,,65,138,yes
+Surf Excel Matic Liquid 2L,449,Front-load and top-load washing liquid,Household,,28,362,yes
+Vim Dishwash Gel 750ml,149,"Lemon fragrance, cuts grease fast",Household,,60,118,yes
+Dettol Hand Wash Refill 750ml,125,Original antibacterial hand wash,Personal Care,,52,98,yes
+"Colgate MaxFresh Toothpaste 150g, Pack of 2",140,"Cooling crystals, fresh breath all day",Personal Care,,85,108,yes
+Alphonso Mango Box 3kg,899,Seasonal - hidden until the new stock arrives,Fruits & Vegetables,,0,720,no
