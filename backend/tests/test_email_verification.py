@@ -28,8 +28,8 @@ def sent_codes(monkeypatch):
     from app.routes import auth as auth_routes, customer_auth
 
     codes = []
-    monkeypatch.setattr(auth_routes, "send_verification_email", lambda to, code: codes.append(code))
-    monkeypatch.setattr(customer_auth, "send_customer_verification_email", lambda to, code: codes.append(code))
+    monkeypatch.setattr(auth_routes, "send_verification_email", lambda to, code, welcome=None: codes.append(code))
+    monkeypatch.setattr(customer_auth, "send_customer_verification_email", lambda to, code, welcome=None: codes.append(code))
     return codes
 
 

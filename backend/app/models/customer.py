@@ -46,6 +46,13 @@ class CustomerDB(Base):
     oauth_subject_id = Column(String, nullable=True, index=True)
     has_usable_password = Column(Boolean, nullable=False, default=True)
 
+    # Two-factor authentication — same design as UserDB's (see models/user.py):
+    # "totp" = authenticator app (QR scan), "email" = a code emailed at login.
+    # Applies to password login; "Sign in with Google" relies on Google's own security.
+    totp_secret = Column(String, nullable=True)
+    totp_enabled = Column(Boolean, nullable=False, default=False)
+    two_factor_method = Column(String, nullable=False, default="totp")
+
 
 class CustomerSignup(BaseModel):
     email: str
@@ -66,6 +73,8 @@ class CustomerOut(BaseModel):
     email_verified: bool = False
     oauth_provider: Optional[str] = None
     has_usable_password: bool = True
+    totp_enabled: bool = False
+    two_factor_method: str = "totp"
 
     class Config:
         from_attributes = True
@@ -101,3 +110,29 @@ class CustomerTokenResponse(BaseModel):
     refresh_token: Optional[str] = None
     token_type: str = "bearer"
     customer: CustomerOut
+
+
+class CustomerLoginResult(BaseModel):
+    """POST /customer/login: either a normal session (access_token + customer)
+    or, when 2FA is on, only requires_2fa + challenge_token (see LoginResult in models/user.py)."""
+    access_token: Optional[str] = None
+    refresh_token: Optional[str] = None
+    token_type: str = "bearer"
+    customer: Optional[CustomerOut] = None
+    requires_2fa: bool = False
+    challenge_token: Optional[str] = None
+    two_factor_method: Optional[str] = None
+    masked_email: Optional[str] = None
+
+
+class CustomerTwoFactorCode(BaseModel):
+    code: str
+
+
+class CustomerTwoFactorLoginVerify(BaseModel):
+    challenge_token: str
+    code: str
+
+
+class CustomerTwoFactorDisable(BaseModel):
+    password: str

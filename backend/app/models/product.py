@@ -9,7 +9,7 @@ from datetime import datetime
 
 from sqlalchemy import Column, String, DateTime, Float, Boolean, Integer
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Any, List, Optional
 
 from app.db.session import Base
 
@@ -86,3 +86,42 @@ class ProductOut(BaseModel):
 
 class ProductImageUploadOut(BaseModel):
     image_url: str
+
+
+# ---------- Bulk import (CSV) ----------
+
+class BulkProductRow(BaseModel):
+    """One CSV row, as the browser read it. Every field is deliberately loose (any JSON
+    type): the server parses and validates each one so a typo like price "abc" is reported
+    against that ONE row, instead of a 422 that rejects the whole file."""
+    name: Optional[Any] = None
+    price: Optional[Any] = None
+    description: Optional[Any] = None
+    category: Optional[Any] = None
+    image_url: Optional[Any] = None
+    is_active: Optional[Any] = None
+    stock_quantity: Optional[Any] = None
+    cost_price: Optional[Any] = None
+
+
+class BulkProductImportRequest(BaseModel):
+    rows: List[BulkProductRow] = Field(max_length=1000)
+    # False (default): a product whose name already exists is skipped and reported.
+    # True: it's updated with the values in the file (handy for refreshing prices/stock).
+    update_existing: bool = False
+
+
+class BulkProductRowResult(BaseModel):
+    row_number: int
+    name: str
+    success: bool
+    action: Optional[str] = None  # "created" | "updated"
+    error: Optional[str] = None
+    product_id: Optional[str] = None
+
+
+class BulkProductImportResponse(BaseModel):
+    results: List[BulkProductRowResult]
+    created_count: int
+    updated_count: int
+    failure_count: int

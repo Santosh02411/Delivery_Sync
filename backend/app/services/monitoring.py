@@ -134,13 +134,18 @@ def get_api_metrics_summary(top_n: int = 15) -> dict:
 
 # ---------- Notification metrics (in-memory) ----------
 
-def record_notification_sent(channel: str, success: bool) -> None:
+def record_notification_sent(channel: str, success: bool, error: str | None = None) -> None:
+    """`error` (failures only) is kept as the channel's `last_error` so the
+    Monitoring page can show WHY emails/SMS aren't going out, without anyone
+    having to read the server console."""
     with _metrics_lock:
         entry = NOTIFICATION_METRICS[channel]
         if success:
             entry["sent"] += 1
         else:
             entry["failed"] += 1
+            if error:
+                entry["last_error"] = error[:300]
 
 
 def get_notification_metrics_summary() -> dict:

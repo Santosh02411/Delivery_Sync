@@ -123,7 +123,12 @@ def test_notification_metrics_email_channel_increments(client, auth_headers):
     resp = client.post("/auth/me/change-password", json={"current_password": "correct-horse-battery", "new_password": "monitoring-test-pw-1"}, headers=auth_headers)
     assert resp.status_code == 200  # this sends a real security-alert email via services/email.py
     resp = client.get("/admin/monitoring/notification-metrics", headers=auth_headers)
-    assert resp.json().get("email", {}).get("sent", 0) >= 1
+    email = resp.json().get("email", {})
+    # With no SMTP configured (the test default) nothing reaches an inbox, so it's counted as
+    # "failed" with an explanation; with SMTP configured it's counted as "sent".
+    assert email.get("sent", 0) + email.get("failed", 0) >= 1
+    if email.get("failed", 0) and not email.get("sent", 0):
+        assert "SMTP_HOST" in email["last_error"]
 
 
 # ---------- Backups ----------

@@ -188,7 +188,8 @@ def export_my_data(
 
 
 class DeleteAccountRequest(BaseModel):
-    password: str
+    password: str | None = None  # required for accounts that have a password
+    confirm: str | None = None   # Google-only accounts (no password): type your email address instead
 
 
 @router.delete("/account")
@@ -206,8 +207,12 @@ def delete_my_account(
     review records are anonymized and retained for the store's own
     transaction records, not deleted.
     """
-    if not verify_password(payload.password, current_customer.hashed_password):
-        raise HTTPException(status_code=401, detail="Incorrect password.")
+    if current_customer.has_usable_password:
+        if not payload.password or not verify_password(payload.password, current_customer.hashed_password):
+            raise HTTPException(status_code=401, detail="Incorrect password.")
+    elif (payload.confirm or "").strip().lower() != current_customer.email.lower():
+        # A Google-only account has no password to re-enter, so it confirms by typing its email.
+        raise HTTPException(status_code=400, detail="Type your email address to confirm deleting your account.")
 
     customer_id = current_customer.id
     anonymized_email = f"deleted-user-{customer_id[:8]}@deleted.local"
@@ -217,6 +222,13 @@ def delete_my_account(
     db.query(CustomerAddressDB).filter(CustomerAddressDB.customer_id == customer_id).delete()
     db.query(CustomerNotificationDB).filter(CustomerNotificationDB.customer_id == customer_id).delete()
     db.query(PushSubscriptionDB).filter(PushSubscriptionDB.customer_id == customer_id).delete()
+    # Sign-in / security data: sessions, one-time codes (verification + 2FA), recovery codes.
+    from app.models.customer_refresh_token import CustomerRefreshTokenDB
+    from app.models.email_otp import EmailOtpDB
+    from app.models.security import RecoveryCodeDB
+    db.query(CustomerRefreshTokenDB).filter(CustomerRefreshTokenDB.customer_id == customer_id).delete()
+    db.query(EmailOtpDB).filter(EmailOtpDB.user_id == customer_id).delete()
+    db.query(RecoveryCodeDB).filter(RecoveryCodeDB.user_id == customer_id).delete()
 
     # Transaction/financial records: anonymize contact details rather
     # than delete the record itself (see module docstring).

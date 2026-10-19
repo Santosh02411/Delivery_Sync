@@ -14,7 +14,10 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.db.session import get_db
-from app.models.product import ProductDB, ProductCreate, ProductUpdate, ProductOut, ProductImageUploadOut
+from app.models.product import (
+    ProductDB, ProductCreate, ProductUpdate, ProductOut, ProductImageUploadOut,
+    BulkProductImportRequest, BulkProductImportResponse, BulkProductRowResult,
+)
 from app.models.product_review import ProductReviewDB
 from app.models.user import UserDB
 from app.models.organization import OrganizationDB, StoreVisibilityUpdate, StorePricingUpdate, StoreSlotSettingsUpdate, StoreProfileUpdate, OrganizationOut
@@ -112,6 +115,162 @@ async def upload_product_image(
         f.write(contents)
 
     return ProductImageUploadOut(image_url=f"/uploads/products/{filename}")
+
+
+# ---------- Bulk import from CSV ----------
+
+_TRUE_WORDS = {"true", "yes", "y", "1", "active"}
+_FALSE_WORDS = {"false", "no", "n", "0", "inactive"}
+MAX_NAME_LENGTH = 200
+MAX_TEXT_LENGTH = 2000
+
+
+def _blank(value) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _parse_number(value, label: str, *, integer: bool = False) -> float | int:
+    """Accepts '12', '12.50', '₹1,299.00', 'Rs. 499' — what people actually type in spreadsheets."""
+    if isinstance(value, bool):
+        raise ValueError(f"{label} must be a number.")
+    if isinstance(value, (int, float)):
+        number = value
+    else:
+        cleaned = str(value).strip().replace(",", "").replace("₹", "").replace("$", "")
+        cleaned = cleaned.lower().replace("rs.", "").replace("rs", "").strip()
+        try:
+            number = float(cleaned)
+        except ValueError:
+            raise ValueError(f"{label} \"{value}\" isn't a number.")
+    if number != number or number in (float("inf"), float("-inf")):
+        raise ValueError(f"{label} must be a finite number.")
+    if number < 0:
+        raise ValueError(f"{label} can't be negative.")
+    if integer:
+        if int(number) != number:
+            raise ValueError(f"{label} must be a whole number.")
+        return int(number)
+    return float(number)
+
+
+def _parse_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    word = str(value).strip().lower()
+    if word in _TRUE_WORDS:
+        return True
+    if word in _FALSE_WORDS:
+        return False
+    raise ValueError(f"is_active \"{value}\" should be yes/no, true/false or 1/0.")
+
+
+def _clean_text(value, label: str, max_length: int) -> str | None:
+    if _blank(value):
+        return None
+    text = str(value).strip()
+    if len(text) > max_length:
+        raise ValueError(f"{label} is too long (max {max_length} characters).")
+    return text
+
+
+def _clean_image_url(value) -> str | None:
+    url = _clean_text(value, "image_url", 1000)
+    if url is None:
+        return None
+    # Only real web links or images already uploaded to this server — never javascript:/data: URLs.
+    if not (url.lower().startswith(("http://", "https://")) or url.startswith("/uploads/")):
+        raise ValueError("image_url must start with http://, https:// or /uploads/.")
+    return url
+
+
+def _parse_product_row(row) -> dict:
+    """Validates one CSV row; returns clean fields (only the ones the row actually provided)
+    or raises ValueError with a message meant for the person who wrote the CSV."""
+    fields: dict = {}
+    name = _clean_text(row.name, "name", MAX_NAME_LENGTH)
+    if name is None:
+        raise ValueError("name is required.")
+    fields["name"] = name
+    if _blank(row.price):
+        raise ValueError("price is required.")
+    fields["price"] = _parse_number(row.price, "price")
+    if not _blank(row.description):
+        fields["description"] = _clean_text(row.description, "description", MAX_TEXT_LENGTH)
+    if not _blank(row.category):
+        fields["category"] = _clean_text(row.category, "category", 100)
+    if not _blank(row.image_url):
+        fields["image_url"] = _clean_image_url(row.image_url)
+    if not _blank(row.is_active):
+        fields["is_active"] = _parse_bool(row.is_active)
+    if not _blank(row.stock_quantity):
+        fields["stock_quantity"] = _parse_number(row.stock_quantity, "stock_quantity", integer=True)
+    if not _blank(row.cost_price):
+        fields["cost_price"] = _parse_number(row.cost_price, "cost_price")
+    return fields
+
+
+@router.post("/bulk-import", response_model=BulkProductImportResponse)
+def bulk_import_products(
+    payload: BulkProductImportRequest,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_dispatcher),
+):
+    """
+    Create (or, with update_existing, refresh) many products from a CSV at once.
+
+    Same philosophy as the delivery bulk import: every row is validated and saved on its
+    own, so one typo in row 47 of a 300-row file is reported against row 47 while the other
+    299 still go through. Products are matched by NAME within your organization
+    (case-insensitive); a duplicate name — whether it already exists or appears twice in the
+    same file — is skipped unless `update_existing` is on, in which case the existing product
+    is updated with whatever columns the row filled in (blank cells leave the old value alone).
+    """
+    existing = {
+        p.name.strip().lower(): p
+        for p in db.query(ProductDB).filter(ProductDB.org_id == current_user.org_id).all()
+    }
+    results: List[BulkProductRowResult] = []
+    created = updated = failed = 0
+    now = datetime.utcnow()
+
+    for index, row in enumerate(payload.rows, start=1):
+        label = str(row.name).strip() if not _blank(row.name) else ""
+        try:
+            fields = _parse_product_row(row)
+            key = fields["name"].lower()
+            match = existing.get(key)
+            if match and not payload.update_existing:
+                raise ValueError(f"A product named \"{fields['name']}\" already exists (turn on \"update existing\" to change it).")
+            if match:
+                for column, value in fields.items():
+                    setattr(match, column, value)
+                db.commit()
+                results.append(BulkProductRowResult(row_number=index, name=fields["name"], success=True, action="updated", product_id=match.id))
+                updated += 1
+            else:
+                product = ProductDB(
+                    id=str(uuid.uuid4()), org_id=current_user.org_id, created_at=now,
+                    is_active=fields.pop("is_active", True), **fields,
+                )
+                db.add(product)
+                db.commit()
+                existing[key] = product  # a second row with the same name in this file is now a duplicate
+                results.append(BulkProductRowResult(row_number=index, name=product.name, success=True, action="created", product_id=product.id))
+                created += 1
+        except ValueError as error:
+            db.rollback()
+            results.append(BulkProductRowResult(row_number=index, name=label, success=False, error=str(error)))
+            failed += 1
+
+    if created or updated:
+        record_action(
+            db, org_id=current_user.org_id,
+            actor_user_id=current_user.id, actor_display_name=current_user.display_name,
+            action="product.bulk_import", entity_type="product", entity_id=None,
+            entity_label=f"{created + updated} products",
+            summary=f"Imported products from CSV: {created} created, {updated} updated, {failed} failed",
+        )
+    return BulkProductImportResponse(results=results, created_count=created, updated_count=updated, failure_count=failed)
 
 
 @router.post("/", response_model=ProductOut)

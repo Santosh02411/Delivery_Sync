@@ -92,6 +92,15 @@ def create_two_factor_challenge_token(user_id: str) -> str:
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
+def create_customer_two_factor_challenge_token(customer_id: str) -> str:
+    """Customer twin of create_two_factor_challenge_token. Uses a DIFFERENT
+    claim name (pending_2fa_customer_id), so a customer challenge can never
+    be redeemed at the staff /auth/2fa/verify-login (which requires
+    pending_2fa_user_id) or vice versa."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=TWO_FACTOR_CHALLENGE_EXPIRE_MINUTES)
+    return jwt.encode({"pending_2fa_customer_id": customer_id, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
+
+
 def decode_access_token(token: str) -> dict | None:
     """Returns the decoded token payload, or None if invalid/expired."""
     try:

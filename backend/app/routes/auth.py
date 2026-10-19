@@ -85,10 +85,11 @@ def _issue_refresh_token(db: Session, user_id: str, device_info: str = None, ip_
     return raw_token
 
 
-def _issue_and_send_verification_email(db: Session, user: UserDB) -> None:
-    """Emails a fresh 6-digit verification code (see services/email_verification.py)."""
+def _issue_and_send_verification_email(db: Session, user: UserDB, welcome: dict | None = None) -> None:
+    """Emails a fresh 6-digit verification code (see services/email_verification.py).
+    At signup, `welcome` makes it the combined "Congratulations + your code" email."""
     code = email_verification_svc.issue_code(db, user.id, email_verification_svc.STAFF_PURPOSE)
-    send_verification_email(user.email, code)
+    send_verification_email(user.email, code, welcome=welcome)
 
 
 def _send_welcome_email(user: UserDB, org: OrganizationDB, is_new_org: bool, invite_code: str | None) -> None:
@@ -242,8 +243,12 @@ def signup(request: Request, payload: UserSignup, db: Session = Depends(get_db))
     db.commit()
     db.refresh(user)
 
-    _issue_and_send_verification_email(db, user)
-    _send_welcome_email(user, org, is_new_org=bool(payload.org_name), invite_code=new_org_invite_code)
+    # ONE email that both congratulates and carries the verification code. (Sending a separate
+    # welcome email right after it is exactly what failed to arrive for some mail providers.)
+    _issue_and_send_verification_email(db, user, welcome={
+        "name": user.display_name, "org_name": org.name, "role": user.role.value,
+        "is_new_org": bool(payload.org_name), "invite_code": new_org_invite_code,
+    })
 
     token = create_access_token({"sub": user.id, "role": user.role.value, "org_id": user.org_id})
     refresh_token = _issue_refresh_token(db, user.id)
