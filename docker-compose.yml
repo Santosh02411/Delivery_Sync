@@ -56,7 +56,15 @@ services:
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8000/auth/oauth/google/callback}
-      # Every optional integration (SMTP, Twilio, Razorpay, VAPID,
+      # Real emails (welcome / verification codes / password reset). Put
+      # these in a .env file next to this compose file (repo root) — the
+      # backend/.env file is NOT read inside the container.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      FROM_EMAIL: ${FROM_EMAIL:-}
+      # Every other optional integration (Twilio, Razorpay, VAPID,
       # Google Maps) still follows the same "real if set, safe
       # fallback otherwise" pattern in Docker as it does locally — set
       # these here (or in a .env file docker compose reads

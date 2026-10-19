@@ -154,8 +154,30 @@ succeeds and the error is printed in the backend log.
    16 letters are fine (they're ignored), but nothing else may follow it on that line,
    not even a note in brackets. It must be an App Password, not your Gmail password.
 4. `SMTP_USERNAME` and `FROM_EMAIL` should both be the same Gmail address.
-5. Check the recipient's **Spam** folder, and the backend console for a line starting
+5. As an admin, open **Monitoring > Notification Delivery**: it shows the last email problem
+   in plain words (for example "Login was rejected..." or "SMTP_HOST isn't set").
+6. Check the recipient's **Spam** folder, and the backend console for a line starting
    `EMAIL SEND FAILED` (it includes a hint). A failed *welcome* email never blocks signup.
+
+**Emails landing in Spam instead of the inbox?** Whether Gmail files a message under
+Primary, Promotions or Spam is decided by Gmail's own filters; no app can force it. What the
+app does to help: a real sender name ("Delivery Sync", change with `FROM_NAME`), standard
+headers (Date, Message-ID, Reply-To, "auto-generated"), a plain-text copy beside the HTML, and
+calm subject lines (no exclamation marks). What you can do:
+
+1. In Gmail, open one of the emails, click **Report not spam**, then **Add the sender to your
+   contacts**. This trains *your* account, so later emails go to the inbox.
+2. For real users, a personal Gmail address is the weak point: mail from it has no domain
+   authentication of its own. The lasting fix is a **domain you own** plus a transactional
+   email service that sets up SPF and DKIM for it (Brevo, Resend, Amazon SES, Mailgun or
+   SendGrid all have free tiers and give you SMTP details). Then set `SMTP_HOST`,
+   `SMTP_USERNAME`, `SMTP_PASSWORD` to their values and `FROM_EMAIL` to an address on your
+   domain, e.g. `no-reply@yourdomain.com`. No code change is needed.
+3. Don't expect the "Primary" tab for system emails even then: Gmail tends to put automated mail
+   there only when the recipient interacts with it (opens, replies, stars).
+
+**Sample data:** `sample-data/sample_products.csv` has 26 ready-to-import products
+(Products > Import from CSV).
 
 #### Enabling "Sign in with Google"
 
