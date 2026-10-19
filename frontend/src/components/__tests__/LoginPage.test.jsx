@@ -5,13 +5,14 @@ import userEvent from "@testing-library/user-event";
 const staffLogin = vi.fn();
 const completeTwoFactorLogin = vi.fn();
 const customerLogin = vi.fn();
+const completeCustomerTwoFactorLogin = vi.fn();
 const demoLogin = vi.fn();
 
 vi.mock("../../context/AuthContext", () => ({
   useAuth: () => ({ login: staffLogin, completeTwoFactorLogin, demoLogin }),
 }));
 vi.mock("../../context/CustomerAuthContext", () => ({
-  useCustomerAuth: () => ({ login: customerLogin }),
+  useCustomerAuth: () => ({ login: customerLogin, completeTwoFactorLogin: completeCustomerTwoFactorLogin }),
 }));
 vi.mock("../../context/ThemeContext", () => ({
   useTheme: () => ({ theme: "dark", toggleTheme: vi.fn() }),
@@ -22,6 +23,7 @@ vi.mock("../../services/api", () => ({
 vi.mock("../../services/authApi", () => ({
   getGoogleOAuthLoginUrl: vi.fn(),
   getCustomerGoogleOAuthLoginUrl: vi.fn(),
+  customerResendTwoFactorLoginCode: vi.fn(),
 }));
 
 import LoginPage from "../LoginPage";
@@ -115,6 +117,41 @@ describe("LoginPage", () => {
 
     expect(customerLogin).toHaveBeenCalledWith("customer@example.com", "correct-horse");
     expect(staffLogin).not.toHaveBeenCalled();
+  });
+
+  it("asks a customer with 2FA on for their code, then finishes login through the customer context", async () => {
+    const user = userEvent.setup();
+    customerLogin.mockResolvedValue({ requires_2fa: true, challenge_token: "chal-1", two_factor_method: "totp", masked_email: null });
+    completeCustomerTwoFactorLogin.mockResolvedValue({});
+    render(<LoginPage onSwitchToSignup={() => {}} onForgotPassword={() => {}} />);
+
+    await user.selectOptions(screen.getByRole("combobox"), "customer");
+    await user.type(screen.getByLabelText(/email/i), "customer@example.com");
+    await user.type(document.querySelector('input[type="password"]'), "correct-horse");
+    await user.click(screen.getByRole("button", { name: /log in/i }));
+
+    await user.type(await screen.findByLabelText(/6-digit code/i), "123456");
+    await user.click(screen.getByRole("button", { name: /verify & log in/i }));
+
+    expect(completeCustomerTwoFactorLogin).toHaveBeenCalledWith("chal-1", "123456");
+    expect(completeTwoFactorLogin).not.toHaveBeenCalled(); // not the staff path
+  });
+
+  it("lets someone use a recovery code instead of the 6-digit code", async () => {
+    const user = userEvent.setup();
+    staffLogin.mockResolvedValue({ requires_2fa: true, challenge_token: "chal-2", two_factor_method: "totp", masked_email: null });
+    completeTwoFactorLogin.mockResolvedValue({});
+    render(<LoginPage onSwitchToSignup={() => {}} onForgotPassword={() => {}} />);
+
+    await user.type(screen.getByLabelText(/username/i), "dispatcher1");
+    await user.type(document.querySelector('input[type="password"]'), "correct-horse");
+    await user.click(screen.getByRole("button", { name: /log in/i }));
+
+    await user.click(await screen.findByRole("button", { name: /recovery code/i }));
+    await user.type(screen.getByLabelText(/^recovery code$/i), "a1b2c3d4-e5f6a7b8");
+    await user.click(screen.getByRole("button", { name: /verify & log in/i }));
+
+    expect(completeTwoFactorLogin).toHaveBeenCalledWith("chal-2", "a1b2c3d4-e5f6a7b8");
   });
 
   it("calls onForgotPassword with the current account type when clicked", async () => {

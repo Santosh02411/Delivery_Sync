@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from "react";
-import { customerRefreshTokenRequest, customerLogoutRequest, exchangeCustomerOAuthLoginCode } from "../services/authApi";
+import { customerRefreshTokenRequest, customerLogoutRequest, exchangeCustomerOAuthLoginCode, customerVerifyTwoFactorLoginRequest } from "../services/authApi";
 
 const CustomerAuthContext = createContext(null);
 const STORAGE_KEY = "delivery_sync_customer_auth";
@@ -91,6 +91,22 @@ export function CustomerAuthProvider({ children }) {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "Login failed.");
+    if (data.requires_2fa) {
+      // Password was right but this account has 2FA on: hand back the challenge so
+      // LoginPage can ask for the code, instead of storing a session that doesn't exist yet.
+      return {
+        requires_2fa: true,
+        challenge_token: data.challenge_token,
+        two_factor_method: data.two_factor_method,
+        masked_email: data.masked_email,
+      };
+    }
+    persistSession(data.access_token, data.refresh_token, data.customer);
+    return data.customer;
+  }
+
+  async function completeTwoFactorLogin(challengeToken, code) {
+    const data = await customerVerifyTwoFactorLoginRequest(challengeToken, code);
     persistSession(data.access_token, data.refresh_token, data.customer);
     return data.customer;
   }
@@ -126,7 +142,7 @@ export function CustomerAuthProvider({ children }) {
   }
 
   return (
-    <CustomerAuthContext.Provider value={{ customer, token, isLoading, signup, login, completeOAuthLogin, logout, updateCustomer }}>
+    <CustomerAuthContext.Provider value={{ customer, token, isLoading, signup, login, completeTwoFactorLogin, completeOAuthLogin, logout, updateCustomer }}>
       {children}
     </CustomerAuthContext.Provider>
   );

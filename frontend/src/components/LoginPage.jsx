@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { resendTwoFactorLoginCode } from "../services/api";
+import { customerResendTwoFactorLoginCode } from "../services/authApi";
 import { getGoogleOAuthLoginUrl, getCustomerGoogleOAuthLoginUrl } from "../services/authApi";
 import PasswordInput from "./PasswordInput";
 import GoogleIcon from "./GoogleIcon";
@@ -10,7 +11,7 @@ import "../styles/auth.css";
 
 export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
   const { login: staffLogin, completeTwoFactorLogin, demoLogin } = useAuth();
-  const { login: customerLogin } = useCustomerAuth();
+  const { login: customerLogin, completeTwoFactorLogin: completeCustomerTwoFactorLogin } = useCustomerAuth();
   const { theme, toggleTheme } = useTheme();
 
   const [accountType, setAccountType] = useState("staff"); // "staff" | "customer"
@@ -27,6 +28,8 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
   const [twoFactorMethod, setTwoFactorMethod] = useState(null); // "totp" | "email"
   const [maskedEmail, setMaskedEmail] = useState(null);
   const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [twoFactorAccountType, setTwoFactorAccountType] = useState("staff"); // which login started the challenge
+  const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const [isResending, setIsResending] = useState(false);
   const [resendMessage, setResendMessage] = useState("");
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
@@ -66,9 +69,16 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
           setTwoFactorChallenge(result.challenge_token);
           setTwoFactorMethod(result.two_factor_method);
           setMaskedEmail(result.masked_email);
+          setTwoFactorAccountType("staff");
         }
       } else {
-        await customerLogin(identifier, password);
+        const result = await customerLogin(identifier, password);
+        if (result && result.requires_2fa) {
+          setTwoFactorChallenge(result.challenge_token);
+          setTwoFactorMethod(result.two_factor_method);
+          setMaskedEmail(result.masked_email);
+          setTwoFactorAccountType("customer");
+        }
       }
     } catch (err) {
       setError(err.message);
@@ -82,7 +92,8 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
     setError("");
     setIsSubmitting(true);
     try {
-      await completeTwoFactorLogin(twoFactorChallenge, twoFactorCode.trim());
+      const complete = twoFactorAccountType === "customer" ? completeCustomerTwoFactorLogin : completeTwoFactorLogin;
+      await complete(twoFactorChallenge, twoFactorCode.trim());
     } catch (err) {
       setError(err.message);
     } finally {
@@ -95,7 +106,7 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
     setResendMessage("");
     setIsResending(true);
     try {
-      await resendTwoFactorLoginCode(twoFactorChallenge);
+      await (twoFactorAccountType === "customer" ? customerResendTwoFactorLoginCode : resendTwoFactorLoginCode)(twoFactorChallenge);
       setResendMessage("A new code is on its way to your inbox.");
     } catch (err) {
       setError(err.message);
@@ -124,15 +135,16 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
           )}
           <form onSubmit={handleTwoFactorSubmit}>
             <div className="auth-field">
-              <label htmlFor="login-2fa-code">6-digit code</label>
+              <label htmlFor="login-2fa-code">{useRecoveryCode ? "Recovery code" : "6-digit code"}</label>
               <input
                 id="login-2fa-code"
                 type="text"
-                inputMode="numeric"
+                inputMode={useRecoveryCode ? "text" : "numeric"}
                 autoComplete="one-time-code"
-                maxLength={6}
+                maxLength={useRecoveryCode ? 40 : 6}
+                placeholder={useRecoveryCode ? "xxxxxxxx-xxxxxxxx" : undefined}
                 value={twoFactorCode}
-                onChange={(e) => setTwoFactorCode(e.target.value.replace(/\D/g, ""))}
+                onChange={(e) => setTwoFactorCode(useRecoveryCode ? e.target.value : e.target.value.replace(/\D/g, ""))}
                 required
                 autoFocus
               />
@@ -143,10 +155,20 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
               <p style={{ fontSize: "12px", color: "var(--status-delivered)" }}>{resendMessage}</p>
             )}
 
-            <button type="submit" className="auth-submit-btn" disabled={isSubmitting || twoFactorCode.length !== 6}>
+            <button type="submit" className="auth-submit-btn" disabled={isSubmitting || twoFactorCode.length < (useRecoveryCode ? 8 : 6)}>
               {isSubmitting ? "Verifying..." : "Verify & Log in"}
             </button>
           </form>
+
+          <p className="auth-switch-text">
+            <button
+              type="button"
+              className="auth-switch-link"
+              onClick={() => { setUseRecoveryCode((v) => !v); setTwoFactorCode(""); setError(""); }}
+            >
+              {useRecoveryCode ? "Use my 6-digit code instead" : "Lost your device? Use a recovery code"}
+            </button>
+          </p>
 
           {twoFactorMethod === "email" && (
             <p className="auth-switch-text">
@@ -164,6 +186,7 @@ export default function LoginPage({ onSwitchToSignup, onForgotPassword }) {
                 setTwoFactorMethod(null);
                 setMaskedEmail(null);
                 setTwoFactorCode("");
+                setUseRecoveryCode(false);
                 setResendMessage("");
                 setError("");
               }}

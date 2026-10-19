@@ -245,3 +245,26 @@ export async function exchangeCustomerOAuthLoginCode(code) {
   }
   return data; // { access_token, refresh_token, customer }
 }
+
+
+export async function customerVerifyTwoFactorLoginRequest(challengeToken, code) {
+  const response = await fetch(`${API_BASE_URL}/customer/2fa/verify-login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ challenge_token: challengeToken, code }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Verification failed.");
+  return data; // { access_token, refresh_token, customer }
+}
+
+export async function customerResendTwoFactorLoginCode(challengeToken) {
+  const response = await fetch(`${API_BASE_URL}/customer/2fa/resend-code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ challenge_token: challengeToken, code: "" }),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Couldn't send a new code.");
+  return data;
+}

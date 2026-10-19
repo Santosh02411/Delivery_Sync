@@ -121,6 +121,21 @@ export async function bulkImportDeliveries(token, rows) {
   return data;
 }
 
+export async function bulkImportProducts(token, rows, updateExisting = false) {
+  const response = await fetch(`${API_BASE_URL}/admin/products/bulk-import`, {
+    method: "POST",
+    headers: authHeaders(token),
+    body: JSON.stringify({ rows, update_existing: updateExisting }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    // 422 = too many rows etc.; surface FastAPI's message in a readable way
+    const detail = Array.isArray(data.detail) ? data.detail.map((d) => d.msg).join("; ") : data.detail;
+    throw new Error(detail || "Product import failed");
+  }
+  return data; // { results, created_count, updated_count, failure_count }
+}
+
 /**
  * Downloads the CSV export and triggers a browser "Save File" prompt.
  *
@@ -1093,11 +1108,12 @@ export async function exportCustomerData(token) {
   return response.blob();
 }
 
-export async function deleteCustomerAccount(token, password) {
+export async function deleteCustomerAccount(token, { password, confirm } = {}) {
+  // Accounts with a password re-enter it; Google-only accounts (no password) type their email instead.
   const response = await fetch(`${API_BASE_URL}/customer/account`, {
     method: "DELETE",
     headers: authHeaders(token),
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ password: password || null, confirm: confirm || null }),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.detail || "Failed to delete your account");
@@ -2727,3 +2743,27 @@ export async function verifyBackup(token, filename) {
   if (!response.ok) throw new Error(data.detail || "Failed to verify backup");
   return data;
 }
+
+
+// ---------- Two-factor authentication (customers) ----------
+// Same shape as the staff functions above, so TwoFactorSettings can drive either.
+
+async function customerTwoFactorCall(path, token, { method = "POST", body, fallback }) {
+  const response = await fetch(`${API_BASE_URL}/customer/2fa/${path}`, {
+    method,
+    headers: authHeaders(token),
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || fallback);
+  return data;
+}
+
+export const customerTwoFactorApi = {
+  fetchStatus: (token) => customerTwoFactorCall("status", token, { method: "GET", fallback: "Failed to load two-factor status" }),
+  setup: (token) => customerTwoFactorCall("setup", token, { fallback: "Failed to start two-factor setup" }),
+  enable: (token, code) => customerTwoFactorCall("enable", token, { body: { code }, fallback: "Failed to turn on two-factor authentication" }),
+  setupEmail: (token) => customerTwoFactorCall("setup-email", token, { fallback: "Failed to send the code" }),
+  enableEmail: (token, code) => customerTwoFactorCall("enable-email", token, { body: { code }, fallback: "Failed to turn on two-factor authentication" }),
+  disable: (token, password) => customerTwoFactorCall("disable", token, { body: { password }, fallback: "Failed to turn off two-factor authentication" }),
+};

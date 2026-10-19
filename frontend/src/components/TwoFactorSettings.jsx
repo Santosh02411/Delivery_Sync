@@ -34,9 +34,29 @@ import PasswordInput from "./PasswordInput";
  * scanned app, or the freshly-sent email) does. This means an abandoned
  * setup attempt can't accidentally lock the account out.
  */
-export default function TwoFactorSettings() {
-  const { token, updateUser } = useAuth();
+const STAFF_TWO_FACTOR_API = {
+  fetchStatus: fetchTwoFactorStatus,
+  setup: setupTwoFactor,
+  enable: enableTwoFactor,
+  setupEmail: setupEmailTwoFactor,
+  enableEmail: enableEmailTwoFactor,
+  disable: disableTwoFactor,
+};
+
+/**
+ * Props are optional and default to the signed-in STAFF account. The customer
+ * Security page passes its own `api` (customerTwoFactorApi), `token` and
+ * `updateAccount`, so staff and customers share one UI for the same feature.
+ */
+export default function TwoFactorSettings({ api = STAFF_TWO_FACTOR_API, token: tokenProp, updateAccount }) {
+  const staffAuth = useAuth();
+  const token = tokenProp ?? staffAuth.token;
+  const updateUser = updateAccount ?? staffAuth.updateUser;
   const { showToast } = useToast();
+
+  // The 8 one-time recovery codes are returned ONCE when 2FA is turned on;
+  // show them until the person confirms they've saved them.
+  const [recoveryCodes, setRecoveryCodes] = useState(null);
 
   const [status, setStatus] = useState(null); // { totp_enabled, two_factor_method }
   const [isLoading, setIsLoading] = useState(true);
@@ -60,7 +80,7 @@ export default function TwoFactorSettings() {
   async function load() {
     setIsLoading(true);
     try {
-      const data = await fetchTwoFactorStatus(token);
+      const data = await api.fetchStatus(token);
       setStatus(data);
     } catch (err) {
       showToast(err.message, "error");
@@ -78,7 +98,7 @@ export default function TwoFactorSettings() {
 
   async function handleStartTotpSetup() {
     try {
-      const data = await setupTwoFactor(token);
+      const data = await api.setup(token);
       setTotpSetupData(data);
       setSettingUpMethod("totp");
       setConfirmCode("");
@@ -89,7 +109,7 @@ export default function TwoFactorSettings() {
 
   async function handleStartEmailSetup() {
     try {
-      const data = await setupEmailTwoFactor(token);
+      const data = await api.setupEmail(token);
       setEmailMaskedAddress(data.masked_email);
       setSettingUpMethod("email");
       setConfirmCode("");
@@ -102,11 +122,10 @@ export default function TwoFactorSettings() {
     e.preventDefault();
     setIsConfirming(true);
     try {
-      if (settingUpMethod === "totp") {
-        await enableTwoFactor(token, confirmCode);
-      } else {
-        await enableEmailTwoFactor(token, confirmCode);
-      }
+      const result = settingUpMethod === "totp"
+        ? await api.enable(token, confirmCode)
+        : await api.enableEmail(token, confirmCode);
+      if (result && result.recovery_codes) setRecoveryCodes(result.recovery_codes);
       showToast("Two-factor authentication is now on.", "success");
       const enabledMethod = settingUpMethod;
       resetSetupState();
@@ -123,7 +142,7 @@ export default function TwoFactorSettings() {
     e.preventDefault();
     setIsDisabling(true);
     try {
-      await disableTwoFactor(token, disablePassword);
+      await api.disable(token, disablePassword);
       showToast("Two-factor authentication is now off.", "success");
       setShowDisableForm(false);
       setDisablePassword("");
@@ -141,6 +160,25 @@ export default function TwoFactorSettings() {
   return (
     <div>
       <h2 className="page-title">Security</h2>
+
+      {recoveryCodes && (
+        <div className="card" style={{ maxWidth: "500px", marginBottom: "16px", borderColor: "var(--status-delivered)" }}>
+          <strong style={{ fontSize: "14px" }}>Save your recovery codes</strong>
+          <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", margin: "6px 0 10px" }}>
+            If you lose your phone or can't get the code, each of these signs you in <strong>once</strong>.
+            This is the only time they're shown — store them somewhere safe.
+          </p>
+          <div className="mono" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 16px", fontSize: "13px", marginBottom: "12px" }}>
+            {recoveryCodes.map((c) => <span key={c}>{c}</span>)}
+          </div>
+          <div style={{ display: "flex", gap: "8px" }}>
+            <button className="btn" onClick={() => navigator.clipboard && navigator.clipboard.writeText(recoveryCodes.join("\n"))}>
+              Copy
+            </button>
+            <button className="btn btn-primary" onClick={() => setRecoveryCodes(null)}>I've saved them</button>
+          </div>
+        </div>
+      )}
 
       <div className="card" style={{ maxWidth: "500px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "8px" }}>

@@ -3,6 +3,8 @@ import { useCustomerAuth } from "../context/CustomerAuthContext";
 import { useTheme } from "../context/ThemeContext";
 import { customerResendVerificationRequest, customerVerifyEmailRequest } from "../services/authApi";
 import VerificationBanner from "./VerificationBanner";
+import DeleteAccountCard from "./DeleteAccountCard";
+import TwoFactorSettings from "./TwoFactorSettings";
 import {
   fetchMyCustomerDeliveries,
   fetchMyCustomerDeliveryHistory,
@@ -24,6 +26,7 @@ import {
   subscribeToPush,
   exportCustomerData,
   deleteCustomerAccount,
+  customerTwoFactorApi,
   deleteCustomerNotification,
   clearCustomerNotifications,
   fetchMyCustomerProfile,
@@ -219,7 +222,8 @@ export default function CustomerDashboard() {
     { key: "addresses", label: "Addresses", icon: "\u2691" },
     { key: "support", label: "Support", icon: "\u2753" },
     { key: "invoices", label: "Invoices", icon: "\u2637" },
-    { key: "privacy", label: "Privacy", icon: "\u26BF" },
+    { key: "privacy", label: "Privacy & Data", icon: "\u26BF" },
+    { key: "security", label: "Security (2FA)", icon: "\u26BF" },
     { key: "profile", label: "Profile", icon: "\u25C9" },
   ];
 
@@ -329,13 +333,19 @@ export default function CustomerDashboard() {
 
       {activeView === "privacy" && (
         <div>
-          <PrivacyPanel token={token} onAccountDeleted={logout} />
+          <PrivacyPanel token={token} customer={customer} onAccountDeleted={logout} />
+        </div>
+      )}
+
+      {activeView === "security" && (
+        <div>
+          <TwoFactorSettings api={customerTwoFactorApi} token={token} updateAccount={updateCustomer} />
         </div>
       )}
 
       {activeView === "profile" && (
         <div>
-          <ProfilePanel token={token} customer={customer} />
+          <ProfilePanel token={token} customer={customer} onAccountDeleted={logout} />
         </div>
       )}
 
@@ -472,7 +482,7 @@ export default function CustomerDashboard() {
   );
 }
 
-function ProfilePanel({ token, customer }) {
+function ProfilePanel({ token, customer, onAccountDeleted }) {
   const { updateCustomer } = useCustomerAuth();
 
   const [name, setName] = useState(customer.name);
@@ -602,17 +612,24 @@ function ProfilePanel({ token, customer }) {
           </form>
         </div>
       )}
+
+      <DeleteAccountCard
+        needsPassword={customer.has_usable_password !== false}
+        confirmValue={customer.email}
+        description="Permanently deletes your account, saved addresses, cart, and notifications. Past orders are kept by the store(s) you ordered from in anonymized form."
+        onDelete={async ({ password, confirm }) => {
+          await deleteCustomerAccount(token, { password, confirm });
+          onAccountDeleted();
+        }}
+      />
     </div>
   );
 }
 
-function PrivacyPanel({ token, onAccountDeleted }) {
+function PrivacyPanel({ token, customer, onAccountDeleted }) {
   const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState(null);
 
-  const [showDeleteForm, setShowDeleteForm] = useState(false);
-  const [deletePassword, setDeletePassword] = useState("");
-  const [isDeleting, setIsDeleting] = useState(false);
 
   async function handleExport() {
     setError(null);
@@ -634,21 +651,9 @@ function PrivacyPanel({ token, onAccountDeleted }) {
     }
   }
 
-  async function handleDelete(e) {
-    e.preventDefault();
-    setError(null);
-    setIsDeleting(true);
-    try {
-      await deleteCustomerAccount(token, deletePassword);
-      onAccountDeleted();
-    } catch (err) {
-      setError(err.message);
-      setIsDeleting(false);
-    }
-  }
-
   return (
-    <div className="card" style={{ maxWidth: "500px" }}>
+    <>
+    <div className="card" style={{ maxWidth: "500px", marginBottom: "16px" }}>
       <strong style={{ fontSize: "13.5px" }}>Your Data & Privacy</strong>
 
       <div style={{ marginTop: "14px" }}>
@@ -660,58 +665,20 @@ function PrivacyPanel({ token, onAccountDeleted }) {
         <button className="btn" onClick={handleExport} disabled={isExporting}>
           {isExporting ? "Preparing download..." : "⬇ Download my data"}
         </button>
+        {error && <p style={{ color: "var(--danger)", fontSize: "12px", marginTop: "8px" }}>{error}</p>}
       </div>
 
-      <div style={{ marginTop: "20px", paddingTop: "16px", borderTop: "1px solid var(--border-color)" }}>
-        <div style={{ fontSize: "13px", fontWeight: 600, marginBottom: "4px", color: "var(--danger)" }}>Delete account</div>
-        <p style={{ fontSize: "12.5px", color: "var(--text-secondary)", marginBottom: "8px" }}>
-          Permanently deletes your account, saved addresses, cart, and notifications.
-          Past orders are kept by the store(s) you ordered from in anonymized form,
-          for their own transaction records.
-        </p>
-
-        {!showDeleteForm && (
-          <button className="btn-danger-outline" onClick={() => setShowDeleteForm(true)}>
-            Delete my account
-          </button>
-        )}
-
-        {showDeleteForm && (
-          <form onSubmit={handleDelete}>
-            <div className="auth-field">
-              <label>Confirm your password to delete your account</label>
-              <PasswordInput
-                className="input"
-                value={deletePassword}
-                onChange={(e) => setDeletePassword(e.target.value)}
-                style={{ width: "100%" }}
-                required
-                autoFocus
-              />
-            </div>
-            {error && <p style={{ color: "var(--danger)", fontSize: "12px" }}>{error}</p>}
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button type="submit" className="btn-danger-outline" disabled={isDeleting}>
-                {isDeleting ? "Deleting..." : "Permanently delete my account"}
-              </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  setShowDeleteForm(false);
-                  setDeletePassword("");
-                  setError(null);
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        )}
-
-        {!showDeleteForm && error && <p style={{ color: "var(--danger)", fontSize: "12px", marginTop: "8px" }}>{error}</p>}
-      </div>
     </div>
+    <DeleteAccountCard
+      needsPassword={customer.has_usable_password !== false}
+      confirmValue={customer.email}
+      description="Permanently deletes your account, saved addresses, cart, and notifications. Past orders are kept by the store(s) you ordered from in anonymized form, for their own transaction records."
+      onDelete={async ({ password, confirm }) => {
+        await deleteCustomerAccount(token, { password, confirm });
+        onAccountDeleted();
+      }}
+    />
+    </>
   );
 }
 

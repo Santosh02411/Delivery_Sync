@@ -130,9 +130,14 @@ export default function MonitoringDashboard() {
             <strong style={{ display: "block", marginBottom: "8px" }}>Notification Delivery</strong>
             {Object.keys(notificationMetrics).length === 0 && <div style={{ color: "var(--text-muted)", fontSize: "13px" }}>No notifications sent yet.</div>}
             {Object.entries(notificationMetrics).map(([channel, stats]) => (
-              <div key={channel} style={{ display: "flex", justifyContent: "space-between", fontSize: "13px", padding: "4px 0" }}>
-                <span style={{ textTransform: "capitalize" }}>{channel}</span>
-                <span>{stats.sent} sent{stats.failed > 0 ? `, ${stats.failed} failed` : ""}</span>
+              <div key={channel} style={{ fontSize: "13px", padding: "4px 0" }}>
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ textTransform: "capitalize" }}>{channel}</span>
+                  <span>{stats.sent} sent{stats.failed > 0 ? `, ${stats.failed} failed` : ""}</span>
+                </div>
+                {stats.last_error && (
+                  <div style={{ color: "var(--danger)", fontSize: "12px", marginTop: "2px" }}>Last problem: {stats.last_error}</div>
+                )}
               </div>
             ))}
           </div>

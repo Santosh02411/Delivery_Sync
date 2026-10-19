@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
+import ProductImportPanel from "./ProductImportPanel";
 import {
   fetchMyProducts,
   createProduct,
@@ -65,6 +66,7 @@ export default function ProductManager() {
   const [couponMaxUses, setCouponMaxUses] = useState("");
   const [couponError, setCouponError] = useState(null);
   const [isAdding, setIsAdding] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
@@ -549,9 +551,18 @@ export default function ProductManager() {
 
       {error && <p style={{ color: "var(--danger)" }}>{error}</p>}
 
-      <button className="btn btn-primary" style={{ marginBottom: "16px" }} onClick={() => setIsAdding(!isAdding)}>
-        {isAdding ? "Cancel" : "+ Add Product"}
-      </button>
+      <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "16px" }}>
+        <button className="btn btn-primary" onClick={() => setIsAdding(!isAdding)}>
+          {isAdding ? "Cancel" : "+ Add Product"}
+        </button>
+        <button className="btn" onClick={() => setIsImporting(!isImporting)}>
+          {isImporting ? "Close import" : "⬆ Import from CSV"}
+        </button>
+      </div>
+
+      {isImporting && (
+        <ProductImportPanel onImportComplete={load} onClose={() => setIsImporting(false)} />
+      )}
 
       {isAdding && (
         <form onSubmit={handleAdd} className="card" style={{ maxWidth: "420px", marginBottom: "20px" }}>
