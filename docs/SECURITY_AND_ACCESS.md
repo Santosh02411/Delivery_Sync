@@ -65,3 +65,17 @@ from the payload. It now requires `Authorization: Bearer <access token>`.
   simply retries later if it has expired.
 
 Tests: `backend/tests/test_sync_security.py`.
+
+## Customer two-factor authentication and account deletion
+
+- **Customers have 2FA now**, same design as staff: an authenticator app (scan the QR code
+  with Google Authenticator / Microsoft Authenticator / Authy) or a 6-digit code emailed at
+  login, 8 one-time recovery codes (shown once, usable from the login screen), and the
+  password is required to turn it off. Endpoints: `/customer/2fa/*`; login returns
+  `requires_2fa` + a short-lived `challenge_token` (distinct claim from staff's, so the two
+  can't be swapped). UI: customer sidebar > **Security (2FA)**.
+- 2FA protects *password* logins. "Sign in with Google" relies on Google's own security, and
+  Google-only accounts (no password) can't enable it until they add a password in Profile.
+- **Delete account** for customers is on both **Profile** and **Privacy & Data**. Accounts
+  with a password re-enter it; Google-only accounts type their email. Sessions, one-time codes
+  and recovery codes are erased with the account.

@@ -4533,3 +4533,19 @@ Touched: `routes/sync.py`, `services/conflict_resolver.py`, web
   (Customers already had this under Privacy.)
 - Tests: `test_email_verification.py`, `test_staff_account_deletion.py`,
   `VerificationBanner.test.jsx`.
+
+## Bulk product import from CSV; signup greeting now rides on the verification email
+
+- **Products > Import from CSV** (admin/dispatcher): download a template, pick a CSV
+  (`name`, `price` required; `description`, `category`, `image_url`, `stock_quantity`,
+  `cost_price`, `is_active` optional; common header names like "Product Name", "MRP", "Qty"
+  are recognised), preview, then import up to 1,000 products. Each row is validated on its
+  own, so bad rows are listed with a reason while good rows still import. Products match by
+  name (case-insensitive, per organization); duplicates are skipped, or updated if "Update
+  products that already exist" is ticked (blank cells keep old values). `POST
+  /admin/products/bulk-import`; tests in `test_product_bulk_import.py` and
+  `ProductImportPanel.test.jsx`.
+- Email/password signups now get ONE email that both congratulates and carries the 6-digit
+  code, instead of two emails sent back-to-back (the second wasn't arriving for some mail
+  providers). Google sign-ups still get a stand-alone welcome email. SMTP sending also
+  retries once on a temporary (4xx) error.
