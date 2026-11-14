@@ -5,11 +5,12 @@ lives separately in routes/stores.py, which only ever exposes active
 products from orgs that opted into is_public_store.
 """
 
-import os
+import asyncio
+import logging
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -24,22 +25,22 @@ from app.models.organization import OrganizationDB, StoreVisibilityUpdate, Store
 from app.routes.deliveries import require_dispatcher
 from app.routes.admin import require_admin
 from app.services.action_log import record_action
+from app.services.image_upload import ImageRejected, MAX_IMAGE_BYTES, read_upload_bounded, sanitize_image
+from app.services.object_storage import get_image_store
+from app.services.rate_limiter import limiter
 
 router = APIRouter(prefix="/admin/products", tags=["products"])
 
-# Where uploaded product images actually live on disk. Mounted at the
-# `/uploads` URL path in main.py, so a file saved here at
-# `<UPLOAD_DIR>/<name>.jpg` is publicly reachable at `/uploads/products/<name>.jpg`.
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads", "products")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+logger = logging.getLogger(__name__)
 
-ALLOWED_IMAGE_TYPES = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "image/gif": ".gif",
-}
-MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB — generous for a product photo, small enough to not eat disk/bandwidth
+# Uploaded images are validated and sanitized by services/image_upload.py and stored by
+# services/object_storage.py (local disk or S3-compatible storage, chosen by UPLOAD_STORAGE).
+# The request body is size-limited BEFORE it is parsed by services/upload_limits.py (installed in
+# main.py), because the framework reads the whole body before this route runs. See docs/UPLOADS_AND_STORAGE.md.
+
+# Decoding an image is CPU/memory heavy: at most this many at once, so a burst of uploads can't exhaust
+# the server's memory (the rest wait their turn).
+_decode_slots = asyncio.Semaphore(2)
 
 
 def _attach_review_stats(db: Session, products: List[ProductDB]) -> List[ProductOut]:
@@ -84,37 +85,48 @@ def list_my_products(
 
 
 @router.post("/upload-image", response_model=ProductImageUploadOut)
+@limiter.limit("60/minute")
 async def upload_product_image(
+    request: Request,
     file: UploadFile = File(...),
     current_user: UserDB = Depends(require_dispatcher),
 ):
     """
-    Real file upload: takes the actual image bytes (multipart/form-data),
-    validates type/size, and saves it to disk under a random filename —
-    returning the URL to plug straight into a product's image_url field.
-    This replaces the old flow where image_url was just a free-text box
-    the dispatcher had to paste an external link into.
+    Real file upload: takes the actual image bytes (multipart/form-data), proves they ARE a JPEG, PNG,
+    WebP or GIF, stores a cleaned copy under a random name, and returns the URL to plug straight into a
+    product's image_url field.
+
+    What is NOT trusted: the declared Content-Type, the file name, and the file's size claims. The body is
+    read in small chunks and refused the moment it passes the limit (413); the format is decided from the
+    file's bytes; dimensions are checked from the header before any pixel is decoded (so a tiny file that
+    expands to gigapixels is refused); the image is fully decoded (corrupt/truncated files are refused),
+    and JPEG/PNG/WebP are re-encoded, which drops EXIF/GPS metadata and any appended script. Details in
+    services/image_upload.py.
     """
-    content_type = (file.content_type or "").lower()
-    extension = ALLOWED_IMAGE_TYPES.get(content_type)
-    if not extension:
-        raise HTTPException(
-            status_code=400,
-            detail="Unsupported file type. Upload a JPEG, PNG, WebP, or GIF image.",
-        )
+    try:
+        data = await read_upload_bounded(file.read, MAX_IMAGE_BYTES)
+    except ImageRejected as error:
+        raise HTTPException(status_code=error.status, detail=error.message)
+    finally:
+        await file.close()
 
-    contents = await file.read()
-    if len(contents) > MAX_IMAGE_BYTES:
-        raise HTTPException(status_code=400, detail="Image is too large — max 5 MB.")
-    if len(contents) == 0:
-        raise HTTPException(status_code=400, detail="That file is empty.")
+    declared = (file.content_type or "").lower()
+    async with _decode_slots:
+        try:
+            image = await asyncio.to_thread(sanitize_image, data)  # CPU-bound: keep it off the event loop
+        except ImageRejected as error:
+            raise HTTPException(status_code=error.status, detail=error.message)
+    if declared and declared != image.content_type:
+        # Not an error (a mislabelled but genuine image is harmless; the stored type is the detected one) — just worth knowing.
+        logger.info("Upload declared as %s was detected as %s.", declared, image.content_type)
 
-    filename = f"{uuid.uuid4()}{extension}"
-    filepath = os.path.join(UPLOAD_DIR, filename)
-    with open(filepath, "wb") as f:
-        f.write(contents)
+    try:
+        url = await asyncio.to_thread(get_image_store().save, image.data, image.extension, image.content_type)
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not store an uploaded product image.")
+        raise HTTPException(status_code=503, detail="Couldn't save the image right now. Please try again.")
 
-    return ProductImageUploadOut(image_url=f"/uploads/products/{filename}")
+    return ProductImageUploadOut(image_url=url)
 
 
 # ---------- Bulk import from CSV ----------
@@ -351,16 +363,10 @@ def delete_product(
     if not product:
         raise HTTPException(status_code=404, detail="Product not found.")
 
-    # Best-effort cleanup of the uploaded file on disk — a missing/
-    # external file (or one already deleted) should never block the
-    # actual product deletion.
-    if product.image_url and product.image_url.startswith("/uploads/products/"):
-        old_path = os.path.join(UPLOAD_DIR, os.path.basename(product.image_url))
-        try:
-            if os.path.isfile(old_path):
-                os.remove(old_path)
-        except OSError:
-            pass
+    # Best-effort cleanup of the stored image (disk or object storage). It only ever acts on URLs this
+    # app's own store produced — an external link, or a crafted path, is ignored — and a failure here
+    # must never block deleting the product itself.
+    get_image_store().delete(product.image_url)
 
     product_name = product.name
     db.delete(product)

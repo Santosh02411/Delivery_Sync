@@ -13,7 +13,8 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, String, DateTime, Integer, Boolean, Enum as SqlEnum
+from sqlalchemy import Column, String, DateTime, Integer, Boolean, Enum as SqlEnum, event, inspect
+from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -191,6 +192,22 @@ class DeliveryRecordDB(Base):
     sla_status = Column(String, nullable=False, default="not_applicable")
     sla_breach_notified = Column(Boolean, nullable=False, default=False)
 
+    # Server-managed VERSION — the authority for "which business state wins".
+    # It goes up by exactly ONE per saved change of this row (per database transaction), whichever code
+    # path made it (agent sync, online PATCH, dispatcher assign/cancel, customer cancel, RTO...) — see
+    # the before_flush listener at the bottom of this file. SQLAlchemy's version_id_col additionally
+    # makes every UPDATE conditional on the version that was read ("... WHERE version = <read>"), and a
+    # write whose copy is out of date raises StaleDataError instead of silently overwriting, so two
+    # concurrent requests can't clobber each other either.
+    # Clients remember the version they READ and send it back as `base_version`; if it no longer matches,
+    # something changed since they looked and the change is reconciled or rejected by
+    # services/delivery_policy.py — NOT by comparing timestamps. Timestamps (updated_at etc.) only
+    # describe WHEN things happened.
+    version = Column(Integer, nullable=False, default=1)
+    # version_id_generator=False: we set the new number ourselves (once per transaction, below) rather
+    # than letting SQLAlchemy add one on every flush.
+    __mapper_args__ = {"version_id_col": version, "version_id_generator": False}
+
 
 # ---------- Pydantic Schemas (API request/response shapes) ----------
 
@@ -246,6 +263,11 @@ class DeliveryRecordUpdate(BaseModel):
     is_partial: bool = False
     partial_notes: Optional[str] = None
 
+    # The `version` of the record this edit was based on (what the client last read). If it no longer
+    # matches the server's, the update is reconciled or rejected with a structured 409 instead of
+    # blindly overwriting. Optional online for backwards compatibility; REQUIRED on POST /sync.
+    base_version: Optional[int] = Field(default=None, ge=0)
+
 
 class DeliveryRecordOut(BaseModel):
     """Shape returned by the API to clients."""
@@ -278,6 +300,41 @@ class DeliveryRecordOut(BaseModel):
     partial_notes: Optional[str] = None
     sla_target_at: Optional[datetime] = None
     sla_status: str = "not_applicable"
+    # Server-managed; clients send it back as `base_version` with their next change (see DeliveryRecordDB.version).
+    version: int = 1
 
     class Config:
         from_attributes = True  # allows conversion from SQLAlchemy objects
+
+
+# ---------- Server-managed version: +1 per saved change ----------
+
+@event.listens_for(Session, "before_flush")
+def _bump_delivery_version(session, flush_context, instances):
+    """
+    Called by SQLAlchemy just before it writes pending changes. Every DeliveryRecordDB that is being
+    changed gets version + 1 — but only ONCE per transaction: a request that modifies a delivery,
+    runs a query (which triggers an automatic flush) and modifies it again still ends up exactly one
+    version higher, so "version N" means "the Nth saved change", which clients and tests can rely on.
+    """
+    already_bumped = session.info.setdefault("_delivery_versions_bumped", set())
+
+    for obj in session.new:
+        if isinstance(obj, DeliveryRecordDB) and obj.version is None:
+            obj.version = 1
+
+    for obj in session.dirty:
+        if not isinstance(obj, DeliveryRecordDB) or obj.id in already_bumped:
+            continue
+        if not session.is_modified(obj, include_collections=False):
+            continue
+        if inspect(obj).attrs.version.history.has_changes():
+            continue  # the code set `version` explicitly; respect it
+        obj.version = (obj.version or 0) + 1
+        already_bumped.add(obj.id)
+
+
+@event.listens_for(Session, "after_commit")
+@event.listens_for(Session, "after_rollback")
+def _reset_version_tracking(session):
+    session.info.pop("_delivery_versions_bumped", None)

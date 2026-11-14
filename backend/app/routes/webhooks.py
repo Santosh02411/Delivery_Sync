@@ -22,6 +22,7 @@ from app.models.webhook import (
 )
 from app.routes.auth import get_current_user
 from app.services.webhooks import replay_delivery
+from app.services.url_safety import validate_webhook_url, UnsafeUrlError
 from app.services.action_log import record_action
 
 router = APIRouter(prefix="/admin", tags=["api-keys-and-webhooks"])
@@ -113,6 +114,16 @@ def revoke_api_key(key_id: str, db: Session = Depends(get_db), current_user: Use
 # Webhooks
 # =========================================================================
 
+def _validated_url_or_400(url: str) -> str:
+    """SSRF guard for the save path: https only (by default), no credentials, and no private / loopback /
+    link-local / metadata target. The SAME rules are enforced again, at connection time, on every delivery
+    (services/url_safety.py) — this just gives the admin an immediate, readable error."""
+    try:
+        return validate_webhook_url(url)
+    except UnsafeUrlError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+
 @router.post("/webhooks", response_model=WebhookOut)
 def create_webhook(payload: WebhookCreate, db: Session = Depends(get_db), current_user: UserDB = Depends(require_dispatcher_or_admin)):
     bad_events = set(payload.subscribed_events) - WEBHOOK_EVENTS
@@ -120,11 +131,10 @@ def create_webhook(payload: WebhookCreate, db: Session = Depends(get_db), curren
         raise HTTPException(status_code=400, detail=f"Unknown event(s): {sorted(bad_events)}. Valid events: {sorted(WEBHOOK_EVENTS)}.")
     if not payload.subscribed_events:
         raise HTTPException(status_code=400, detail="Subscribe to at least one event.")
-    if not (payload.url.startswith("http://") or payload.url.startswith("https://")):
-        raise HTTPException(status_code=400, detail="url must be a valid http(s) URL.")
+    safe_url = _validated_url_or_400(payload.url)
 
     webhook = WebhookDB(
-        org_id=current_user.org_id, url=payload.url, secret=generate_webhook_secret(),
+        org_id=current_user.org_id, url=safe_url, secret=generate_webhook_secret(),
         subscribed_events=",".join(payload.subscribed_events), created_by_user_id=current_user.id,
     )
     db.add(webhook)
@@ -154,9 +164,7 @@ def update_webhook(webhook_id: str, payload: WebhookUpdate, db: Session = Depend
             raise HTTPException(status_code=400, detail=f"Unknown event(s): {sorted(bad_events)}.")
         webhook.subscribed_events = ",".join(payload.subscribed_events)
     if payload.url is not None:
-        if not (payload.url.startswith("http://") or payload.url.startswith("https://")):
-            raise HTTPException(status_code=400, detail="url must be a valid http(s) URL.")
-        webhook.url = payload.url
+        webhook.url = _validated_url_or_400(payload.url)
     if payload.is_active is not None:
         webhook.is_active = payload.is_active
     db.commit()

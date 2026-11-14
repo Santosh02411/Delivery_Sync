@@ -102,6 +102,10 @@ class WebhookDeliveryDB(Base):
     attempt_count = Column(Integer, nullable=False, default=0)
     last_attempted_at = Column(DateTime, nullable=True)
     next_retry_at = Column(DateTime, nullable=True)  # None once status is success/failed
+    # Why the most recent attempt failed, in plain words for the admin, plus a machine-readable code
+    # ("blocked_address", "redirect_not_followed", "http_error", "network_error", ...). Cleared on success.
+    last_error = Column(String, nullable=True)
+    failure_code = Column(String, nullable=True)
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
@@ -177,6 +181,8 @@ class WebhookDeliveryOut(BaseModel):
     attempt_count: int
     last_attempted_at: Optional[datetime] = None
     next_retry_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+    failure_code: Optional[str] = None
     created_at: datetime
 
     class Config:

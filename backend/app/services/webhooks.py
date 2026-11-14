@@ -6,6 +6,11 @@ refund, or delivery-status-update request); a background scheduler
 (services/webhook_scheduler.py, same interval-loop shape as
 services/reminder_scheduler.py) picks up pending/due deliveries and
 actually sends them.
+
+SECURITY: every outbound request goes through services/url_safety.safe_post(), which refuses
+private / loopback / link-local / metadata targets, pins the connection to the validated IP
+(DNS-rebinding safe), and never follows redirects. See that module and
+docs/WEBHOOK_EGRESS_HARDENING.md.
 """
 
 import hashlib
@@ -15,10 +20,10 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-import requests
 from sqlalchemy.orm import Session
 
 from app.models.webhook import WebhookDB, WebhookDeliveryDB
+from app.services.url_safety import safe_post
 
 logger = logging.getLogger(__name__)
 
@@ -79,31 +84,49 @@ def attempt_delivery(db: Session, delivery: WebhookDeliveryDB, webhook: Optional
     if not webhook or not webhook.is_active:
         delivery.status = "failed"
         delivery.next_retry_at = None
+        delivery.failure_code = "webhook_inactive"
+        delivery.last_error = "The webhook was deactivated or deleted, so this delivery was not sent."
         db.commit()
         return False
 
     signature = compute_signature(webhook.secret, delivery.payload_json)
-    try:
-        response = requests.post(
-            webhook.url, data=delivery.payload_json,
-            headers={
-                "Content-Type": "application/json",
-                "X-Webhook-Signature": signature,
-                "X-Webhook-Event": delivery.event_type,
-            },
-            timeout=REQUEST_TIMEOUT_SECONDS,
-        )
-        delivery.response_status_code = response.status_code
-        if 200 <= response.status_code < 300:
-            delivery.status = "success"
-            delivery.next_retry_at = None
-            db.commit()
-            return True
-    except requests.RequestException as error:
-        logger.info("Webhook delivery %s attempt %d failed: %s", delivery.id, delivery.attempt_count, error)
-        delivery.response_status_code = None
+    result = safe_post(
+        webhook.url, delivery.payload_json,
+        headers={
+            "Content-Type": "application/json",
+            "X-Webhook-Signature": signature,
+            "X-Webhook-Event": delivery.event_type,
+        },
+        timeout=REQUEST_TIMEOUT_SECONDS,
+    )
+    delivery.response_status_code = result.status_code
 
-    # Failed (bad status code or a network/timeout error) — schedule a retry, or give up.
+    if result.ok:
+        delivery.status = "success"
+        delivery.next_retry_at = None
+        delivery.last_error = None
+        delivery.failure_code = None
+        db.commit()
+        return True
+
+    # Record WHY it failed, so the admin sees a reason rather than just "failed".
+    if result.error_code:
+        delivery.failure_code = result.error_code
+        delivery.last_error = result.error_message
+    elif result.status_code is not None:
+        delivery.failure_code = "http_error"
+        delivery.last_error = f"The endpoint answered with HTTP {result.status_code}."
+    logger.info("Webhook delivery %s attempt %d failed (%s): %s", delivery.id, delivery.attempt_count,
+                delivery.failure_code, delivery.last_error)
+
+    # A blocked target or a redirect can never succeed by waiting: stop now instead of retrying 5 times.
+    if result.permanent:
+        delivery.status = "failed"
+        delivery.next_retry_at = None
+        db.commit()
+        return False
+
+    # Retryable failure (bad status code, network error, timeout, DNS not resolving yet) — back off, or give up.
     if delivery.attempt_count >= MAX_DELIVERY_ATTEMPTS:
         delivery.status = "failed"
         delivery.next_retry_at = None

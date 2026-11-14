@@ -32,7 +32,17 @@ def record_delivery_attempt(
     reason_label: Optional[str] = None,
     notes: Optional[str] = None,
     attempted_at: Optional[datetime] = None,
+    commit: bool = True,
+    run_rto_check: bool = True,
 ) -> DeliveryAttemptDB:
+    """
+    `commit=False` leaves the attempt (and the delivery's attempt_count) pending in the caller's transaction
+    so they are saved together with the rest of the change (offline sync, see services/conflict_resolver.py).
+    The RTO eligibility check commits and broadcasts by itself, so a caller that passes commit=False must pass
+    run_rto_check=False too and call check_rto_eligibility() AFTER its own commit.
+    """
+    if not commit and run_rto_check:
+        raise ValueError("commit=False requires run_rto_check=False (the RTO check commits on its own).")
     db_record.attempt_count = (db_record.attempt_count or 0) + 1
     entry = DeliveryAttemptDB(
         delivery_id=db_record.id,
@@ -46,6 +56,9 @@ def record_delivery_attempt(
         attempted_at=attempted_at or datetime.utcnow(),
     )
     db.add(entry)
+    if not commit:
+        db.flush()  # the caller owns the transaction: make the row visible to its queries, but don't end it
+        return entry
     db.commit()
     db.refresh(db_record)
 
@@ -54,7 +67,7 @@ def record_delivery_attempt(
     # and the offline-sync conflict resolver all call this function) —
     # so this is also the one place RTO eligibility needs to be checked,
     # rather than duplicating the check at each call site.
-    if outcome == "failed_attempt":
+    if outcome == "failed_attempt" and run_rto_check:
         from app.models.failed_delivery_reason import FailedDeliveryReasonDB
         from app.services.rto import check_rto_eligibility
         reason = db.query(FailedDeliveryReasonDB).filter(FailedDeliveryReasonDB.id == reason_code_id).first() if reason_code_id else None

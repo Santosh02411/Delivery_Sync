@@ -19,7 +19,11 @@ def record_history_entry(
     new_status,
     changed_at,
     note: str = None,
+    commit: bool = True,
 ):
+    """`commit=False` leaves the entry pending in the caller's transaction, so it is saved (or discarded)
+    together with the change it describes — used by the offline-sync path, where the delivery update, this
+    history entry, the attempt and the audit row must all-or-nothing (services/conflict_resolver.py)."""
     entry = DeliveryHistoryDB(
         delivery_id=delivery_id,
         changed_by_user_id=changed_by_user_id,
@@ -30,4 +34,6 @@ def record_history_entry(
         note=note,
     )
     db.add(entry)
-    db.commit()
+    if commit:
+        db.commit()
+    return entry

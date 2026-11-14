@@ -23,6 +23,7 @@ from app.models.user import UserDB, UserRole, UserOut
 from app.models.organization import OrganizationDB, OrganizationOut
 from app.models.delivery import DeliveryRecordDB
 from app.models.delivery_history import DeliveryHistoryDB
+from app.models.delivery_audit import DeliveryChangeAuditDB, DeliveryChangeAuditOut
 from app.models.action_log import ActionLogDB, ActionLogOut
 from app.routes.auth import get_current_user
 from app.services.auth import hash_password
@@ -225,6 +226,32 @@ def get_audit_log(
         )
         for history, order_id_value in rows
     ]
+
+
+@router.get("/delivery-change-audit", response_model=List[DeliveryChangeAuditOut])
+def get_delivery_change_audit(
+    outcome: Optional[str] = Query(None, description="accepted, reconciled or rejected"),
+    delivery_id: Optional[str] = Query(None),
+    code: Optional[str] = Query(None, description="e.g. stale_version, transition_not_allowed, not_assigned"),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_admin),
+):
+    """
+    Every decision the server made about delivery changes from devices and the online status endpoint:
+    accepted, reconciled (applied although based on an older version) and rejected (with why),
+    newest first. Use it to answer "why does the app show delivered when I marked it failed?" or to
+    spot a device that keeps sending stale or forbidden changes. See models/delivery_audit.py.
+    """
+    query = db.query(DeliveryChangeAuditDB).filter(DeliveryChangeAuditDB.org_id == current_user.org_id)
+    if outcome:
+        query = query.filter(DeliveryChangeAuditDB.outcome == outcome)
+    if delivery_id:
+        query = query.filter(DeliveryChangeAuditDB.delivery_id == delivery_id)
+    if code:
+        query = query.filter(DeliveryChangeAuditDB.code == code)
+    return query.order_by(DeliveryChangeAuditDB.recorded_at.desc()).offset(offset).limit(limit).all()
 
 
 # ---------- General admin action log (users, products, coupons, store settings) ----------

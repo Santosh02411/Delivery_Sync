@@ -1,20 +1,31 @@
 """
 Conflict resolution logic for syncing offline delivery records.
 
-Strategy: last-write-wins based on `updated_at` timestamp.
-See docs/TECHNICAL_ARCHITECTURE.md for the full reasoning and known
-limitations of this approach.
+Which change wins is decided by the server-managed delivery `version` and the central transition policy
+(not by timestamps) — see resolve_record() below. The transaction contract (each record all-or-nothing,
+batch partial-success, idempotent per event_id) is in services/sync_support.py and docs/SYNC_CONTRACT.md.
 """
 
+import json
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from typing import List, Optional
+
 from sqlalchemy.orm import Session
 from app.models.delivery import DeliveryRecordDB, DeliveryStatus
 from app.models.delivery_history import DeliveryHistoryDB
 from app.models.failed_delivery_reason import FailedDeliveryReasonDB
 from app.models.user import UserDB, UserRole
+from app.services.delivery_audit import record_change_decision
+from app.services.delivery_policy import FINAL_STATUSES, STALE_VERSION, check_transition, check_stale_change
 from app.services.history import record_history_entry
 from app.services.delivery_attempts import record_delivery_attempt, ATTEMPT_OUTCOMES
+from app.models.sync_event import SyncEventDB
 from app.services.notifications import notify_customer_of_status_change
+from app.services.sync_support import (
+    FollowUp, run_follow_ups,
+    OUTCOME_APPLIED, OUTCOME_RECONCILED, OUTCOME_ALREADY_APPLIED, OUTCOME_REJECTED,
+)
 from app.services.returns_workflow import handle_return_pickup_completion
 from app.services.websocket_manager import broadcast_sync, tracking_room
 from app.models.organization import OrganizationDB
@@ -22,19 +33,20 @@ from app.services.pod import org_requires_any_pod, pod_exists_for_delivery
 from app.services.sla import assign_sla, classify_on_completion
 
 
-def _log_synced_attempt(db: Session, db_record: DeliveryRecordDB, agent_id: str, status, is_partial: bool, reason_code_id: str | None, notes: str | None, attempted_at: datetime) -> None:
+def _log_synced_attempt(db: Session, db_record: DeliveryRecordDB, agent_id: str, status, is_partial: bool, reason_code_id: str | None, notes: str | None, attempted_at: datetime):
     """
-    Shared by both branches of resolve_and_apply() below (new record,
-    and an incoming-wins update) — logs a delivery_attempts row for a
-    real attempt outcome synced from offline, mirroring what
-    update_delivery() does for the online path. See
-    routes/sync.py's SyncRecordIn docstring for why reason_code_id
-    isn't hard-enforced here the way it is online.
+    Logs a delivery_attempts row for a real attempt outcome synced from offline, mirroring what
+    update_delivery() does for the online path. See routes/sync.py's SyncRecordIn docstring for why
+    reason_code_id isn't hard-enforced here the way it is online.
+
+    It joins the CALLER'S transaction (nothing is committed here) so the attempt is saved or discarded
+    together with the delivery change. The RTO eligibility check commits and broadcasts on its own, so it is
+    NOT run here: the caller runs it after its own commit, using the returned (logged, reason, outcome).
     """
     status_value = status.value if hasattr(status, "value") else status
     outcome = "partial_delivery" if (status_value == "delivered" and is_partial) else status_value
     if outcome not in ATTEMPT_OUTCOMES:
-        return
+        return False, None, outcome
 
     reason = None
     if reason_code_id:
@@ -48,7 +60,9 @@ def _log_synced_attempt(db: Session, db_record: DeliveryRecordDB, agent_id: str,
         reason_code_id=reason.id if reason else None,
         reason_label=reason.label if reason else None,
         notes=notes, attempted_at=attempted_at,
+        commit=False, run_rto_check=False,
     )
+    return True, reason, outcome
 
 
 # ---------------------------------------------------------------------------
@@ -76,32 +90,24 @@ def _log_synced_attempt(db: Session, db_record: DeliveryRecordDB, agent_id: str,
 # "other org's" so the endpoint can't be used to probe which delivery
 # IDs exist elsewhere.
 
-# Statuses an agent may set from the field. `pending` (unassigned pool)
-# and `cancelled` are dispatcher/customer-side states. (An agent CAN move
-# a delivery assigned to them FROM `pending` — ownership is checked first.)
-AGENT_SETTABLE_STATUSES = {
-    DeliveryStatus.picked_up,
-    DeliveryStatus.out_for_delivery,
-    DeliveryStatus.delivered,
-    DeliveryStatus.failed_attempt,
-}
-# An agent can't move a delivery OUT of these (a dispatcher can).
-AGENT_LOCKED_STATUSES = {DeliveryStatus.delivered, DeliveryStatus.cancelled}
-
 # Offline devices can have wrong clocks; tolerate some skew, but never let
 # a record claim to be from the future — last-write-wins would otherwise
 # let one forged far-future timestamp beat every legitimate update.
 MAX_CLOCK_SKEW = timedelta(minutes=15)
 
 
-class SyncAuthorizationError(ValueError):
-    """A record was refused for authorization/validation reasons. Subclasses
-    ValueError so the per-record `except ValueError` in routes/sync.py
-    keeps working; `code` is machine-readable for clients and logs."""
+class SyncRecordRefused(ValueError):
+    """A record can't be considered right now. Subclasses ValueError so existing `except ValueError`
+    handling keeps working; `code` is machine-readable for clients and logs. The base class is for refusals
+    that are about the STATE of the world and may clear up on their own (e.g. `pod_required`)."""
 
     def __init__(self, message: str, code: str):
         super().__init__(message)
         self.code = code
+
+
+class SyncAuthorizationError(SyncRecordRefused):
+    """A record was refused for authorization/validation reasons (not yours, wrong org, invalid agent...)."""
 
 
 _NOT_ASSIGNED_MSG = "This delivery isn't assigned to you."
@@ -134,25 +140,6 @@ def _authorize_sync_record(db: Session, actor: UserDB, record_data: dict, existi
         )
 
 
-def _check_status_transition(actor: UserDB, old_status, new_status) -> None:
-    """Agents may only make field-realistic moves. Offline queues can skip
-    steps (picked_up -> delivered with nothing in between), so this is an
-    allow-list of settable statuses + locked source states, not a strict
-    state machine. Dispatchers/admins are not restricted."""
-    if actor.role != UserRole.agent or old_status == new_status:
-        return
-    if old_status in AGENT_LOCKED_STATUSES:
-        raise SyncAuthorizationError(
-            f"A delivery that is '{getattr(old_status, 'value', old_status)}' can only be changed by a dispatcher.",
-            "transition_not_allowed",
-        )
-    if new_status not in AGENT_SETTABLE_STATUSES:
-        raise SyncAuthorizationError(
-            f"Agents can't set a delivery to '{getattr(new_status, 'value', new_status)}'.",
-            "transition_not_allowed",
-        )
-
-
 def _clamp_future(dt: datetime) -> datetime:
     """Naive-UTC datetime -> no later than now (+ nothing) if it's beyond the skew allowance."""
     now = datetime.utcnow()
@@ -176,185 +163,309 @@ def _normalize_to_naive_utc(dt: datetime) -> datetime:
     return dt
 
 
-def resolve_and_apply(record_data: dict, db: Session, actor: UserDB) -> tuple[DeliveryRecordDB, dict | None]:
-    """
-    Given an incoming record from a client's offline sync batch, decide
-    whether to insert it, update the existing one, or discard it (because
-    the server's existing version is newer).
+normalize_to_naive_utc = _normalize_to_naive_utc  # public name for routes/sync.py
 
-    Returns a (record, conflict) tuple. `record` is the FINAL resolved
-    record as stored in the database — the client should overwrite its
-    local copy with this, in case the server's version won the conflict.
-    `conflict` is None unless the incoming change was actually discarded
-    in favor of a newer server-side change, in which case it's a dict
-    describing what was overridden and by whom — see routes/sync.py,
-    which surfaces this to the client so a discarded change is never
-    silent (previously: the caller had no way to tell "my change was
-    applied" apart from "my change was silently dropped").
 
-    `actor` is the AUTHENTICATED caller (from the access token), never
-    derived from the payload. Raises ValueError (SyncAuthorizationError for
-    authorization failures) for any record that can't be applied — the
-    caller (routes/sync.py) catches this per-record so one bad record in
-    a batch can't take down the whole sync request.
+def _event_time(client_time: datetime, clock_offset: timedelta | None) -> datetime:
     """
-    # Normalize incoming timestamps immediately so everything downstream
-    # (comparisons AND storage) is consistently naive UTC, and refuse
-    # far-future timestamps (see MAX_CLOCK_SKEW).
-    record_data["created_at"] = _clamp_future(_normalize_to_naive_utc(record_data["created_at"]))
-    record_data["updated_at"] = _clamp_future(_normalize_to_naive_utc(record_data["updated_at"]))
+    The REAL time an offline event happened, as best the server can tell.
+
+    A device that was offline reports the time on ITS clock, which may be minutes or hours off.
+    routes/sync.py compares the device's clock at upload time with the server's and passes the
+    difference as `clock_offset`; adding it back gives the event's real time. (Within a minute the
+    device clock is trusted as-is.) Never later than now. This is only a description of when the
+    event occurred — it plays no part in deciding which change wins (versions do).
+    """
+    now = datetime.utcnow()
+    if clock_offset is not None:
+        corrected = client_time + clock_offset
+        return min(corrected, now)
+    return _clamp_future(client_time)
+
+
+def _winner_name(db: Session, delivery_id: str) -> str | None:
+    entry = (
+        db.query(DeliveryHistoryDB)
+        .filter(DeliveryHistoryDB.delivery_id == delivery_id)
+        .order_by(DeliveryHistoryDB.changed_at.desc())
+        .first()
+    )
+    return entry.changed_by_display_name if entry else None
+
+
+def _status_value(status):
+    return status.value if hasattr(status, "value") else status
+
+
+@dataclass
+class SyncResolution:
+    """The decision for ONE record, after its transaction has committed."""
+    record: DeliveryRecordDB
+    conflict: Optional[dict]
+    outcome: str                                   # applied | reconciled | already_applied | rejected
+    follow_ups: List[FollowUp] = field(default_factory=list)   # best-effort actions to run now that it is committed
+
+
+def _check_rto(db: Session, record: DeliveryRecordDB, reason) -> None:
+    """Imported lazily, like services/delivery_attempts.py does, to avoid a circular import."""
+    from app.services.rto import check_rto_eligibility
+    check_rto_eligibility(db, record, reason)
+
+
+def _record_event(db: Session, *, event_id: Optional[str], actor: UserDB, delivery_id: str, outcome: str, result: Optional[dict] = None) -> None:
+    """Adds the idempotency-ledger row to the CURRENT transaction (it commits, or rolls back, with the change)."""
+    if not event_id:
+        return
+    db.add(SyncEventDB(
+        org_id=actor.org_id, actor_user_id=actor.id, event_id=event_id, delivery_id=delivery_id,
+        outcome=outcome, result_json=json.dumps(result) if result else None,
+    ))
+
+
+def resolve_record(
+    record_data: dict,
+    db: Session,
+    actor: UserDB,
+    clock_offset: timedelta | None = None,
+    event_id: str | None = None,
+) -> SyncResolution:
+    """
+    Decide what to do with ONE record from a client's offline sync batch, and save the decision.
+
+    WHICH CHANGE WINS is decided by the server-managed `version`, never by comparing timestamps:
+
+      * `base_version` (required for existing deliveries) is the version the client last READ.
+      * base_version == current version  -> nothing changed since: apply, if the central transition
+        policy (services/delivery_policy.py) allows it.            [audit outcome: accepted]
+      * base_version != current version  -> the delivery changed since the client looked. The change is
+        applied only if it is still valid against the CURRENT state and doesn't try to move a final
+        (delivered/cancelled) delivery — e.g. an agent who was offline while a dispatcher cancelled
+        the delivery cannot bring it back.                         [audit outcome: reconciled]
+      * otherwise the change is refused and returned as a structured conflict (code, message, the
+        versions involved, who made the winning change); the server's copy is returned so the client
+        replaces its local one.                                    [audit outcome: rejected]
+
+    TRANSACTION: whichever way it goes, everything this record writes — the delivery change, its history
+    entry, the delivery attempt, the audit decision and the idempotency-ledger row — is committed in ONE
+    transaction at the end, or (on any exception, which is re-raised) not at all; the caller rolls back.
+    Nothing here commits in the middle. Side effects that talk to the outside world or run their own
+    transactions (customer notification, live-tracking broadcast, return-pickup completion, RTO check) are
+    NOT done here: they are returned as `follow_ups` for the caller to run after the commit, so a failure in
+    one of them can never leave the delivery half-updated.
+
+    Timestamps still describe WHEN the event happened (corrected for a wrong device clock, see
+    _event_time) and are stored on the record, history and audit log.
+
+    Returns a SyncResolution. `record` is the FINAL stored record (the client overwrites its local copy
+    with it); `conflict` is None unless the change was refused. `actor` is the AUTHENTICATED caller, never
+    taken from the payload. Raises ValueError (SyncAuthorizationError / SyncRecordRefused for refusals) for a
+    record that can't be considered at all — services/sync_processor.py reports those per record.
+    """
+    client_updated_at = _normalize_to_naive_utc(record_data["updated_at"])
+    client_created_at = _normalize_to_naive_utc(record_data["created_at"])
+    record_data["created_at"] = _event_time(client_created_at, clock_offset)
+    record_data["updated_at"] = occurred_at = _event_time(client_updated_at, clock_offset)
+    offset_seconds = clock_offset.total_seconds() if clock_offset is not None else None
+
+    base_version = record_data.pop("base_version", None)
 
     existing = db.query(DeliveryRecordDB).filter(
         DeliveryRecordDB.id == record_data["id"]
     ).first()
 
-    # SECURITY: identity and tenant come from the authenticated `actor`,
-    # never from the payload. Authorization happens before anything about
-    # the existing record can influence (or be returned in) the response.
+    # SECURITY: identity and tenant come from the authenticated `actor`, never from the payload.
+    # Authorization happens before anything about the existing record can influence (or be
+    # returned in) the response.
     _authorize_sync_record(db, actor, record_data, existing)
+
+    if existing is not None and base_version is None:
+        raise SyncAuthorizationError(
+            "base_version is required: send the `version` of the delivery you last read.", "base_version_required"
+        )
 
     agent_name = actor.display_name
     # org_id is NEVER trusted from the client — always the actor's own org.
     record_data["org_id"] = actor.org_id
-    # Sync never reassigns: an existing delivery keeps its current agent.
-    # For a new (dispatcher-created) record, the validated payload agent_id
-    # is the assignee. History is attributed to the real actor either way.
+    # Sync never reassigns: an existing delivery keeps its current agent. For a new (dispatcher-created)
+    # record, the validated payload agent_id is the assignee. History is attributed to the real actor.
     if existing is not None:
         record_data["agent_id"] = existing.agent_id
     attempt_agent_id = record_data["agent_id"] or actor.id
 
-    # reason_code_id isn't a column on DeliveryRecordDB (it lives on the
-    # delivery_attempts log instead) — pull it out before constructing/
-    # updating the record with the rest of record_data.
+    # reason_code_id isn't a column on DeliveryRecordDB (it lives on the delivery_attempts log).
     reason_code_id = record_data.pop("reason_code_id", None)
 
-    # ENFORCEMENT (Phase 1 — Proof of Delivery): this is the OTHER place
-    # (besides routes/deliveries.py's online PATCH) a delivery can end
-    # up "delivered" — an agent completing a delivery while offline,
-    # synced here later. Same rule, same org opt-in: if the org requires
-    # POD and none has been captured for this delivery yet, the record
-    # is rejected (ValueError -> routes/sync.py's per-record `errors`
-    # list) rather than silently marked delivered. It stays "pending" on
-    # the client and retries on the next sync — which succeeds once the
-    # agent's queued POD capture (see frontend services/podOfflineQueue.js)
-    # has synced first. This never blocks orgs that haven't opted into
-    # any pod_require_* setting.
+    def audit(outcome, *, code=None, message=None, before=None, after=None, status_before=None, status_after=None, delivery=None):
+        record_change_decision(
+            db, org_id=actor.org_id, delivery_id=record_data["id"], order_id=(delivery.order_id if delivery else record_data.get("order_id")),
+            outcome=outcome, source="offline_sync", actor=actor, code=code, message=message,
+            base_version=base_version, version_before=before, version_after=after,
+            status_before=status_before, status_after=status_after,
+            occurred_at=occurred_at, client_occurred_at=client_updated_at, clock_offset_seconds=offset_seconds,
+            commit=False,  # part of this record's transaction; committed once, below
+        )
+
+    # ENFORCEMENT (Proof of Delivery): the OTHER place (besides routes/deliveries.py's online PATCH) a
+    # delivery can end up "delivered". If the org requires POD and none has been captured yet, the
+    # record is refused (reported per record, stays pending on the client) until POD has synced. This is a
+    # refusal that clears up on its own, so it has its own code (`pod_required`) and is retryable.
     if record_data.get("status") == DeliveryStatus.delivered:
         org = db.query(OrganizationDB).filter(OrganizationDB.id == actor.org_id).first()
         if org and org_requires_any_pod(org) and not pod_exists_for_delivery(db, record_data["id"], actor.org_id):
-            raise ValueError(
+            raise SyncRecordRefused(
                 "Proof of delivery is required before this delivery can be marked as delivered. "
-                "It will sync automatically once proof of delivery has been captured."
+                "It will sync automatically once proof of delivery has been captured.",
+                "pod_required",
             )
 
     if not existing:
-        # No conflict — this is a new record, just insert it
+        # A new record (dispatcher/admin only — see _authorize_sync_record): just insert it.
         new_record = DeliveryRecordDB(**record_data)
-        assign_sla(db, new_record)  # SLA (Phase 2): compute a deadline for this newly-synced delivery too
+        assign_sla(db, new_record)
         if new_record.status == DeliveryStatus.delivered:
             classify_on_completion(new_record, new_record.updated_at)
         db.add(new_record)
-        db.commit()
-        db.refresh(new_record)
+        db.flush()  # assigns the version / defaults; still inside this record's transaction
 
         record_history_entry(
-            db,
-            delivery_id=new_record.id,
-            changed_by_user_id=actor.id,
-            changed_by_display_name=agent_name,
-            old_status=None,
-            new_status=new_record.status,
-            changed_at=new_record.created_at,
-            note="Created via offline sync",
+            db, delivery_id=new_record.id, changed_by_user_id=actor.id, changed_by_display_name=agent_name,
+            old_status=None, new_status=new_record.status, changed_at=new_record.created_at,
+            note="Created via offline sync", commit=False,
         )
-        _log_synced_attempt(
+        logged, reason, attempt_outcome = _log_synced_attempt(
             db, new_record, agent_id=attempt_agent_id, status=new_record.status,
             is_partial=record_data.get("is_partial", False), reason_code_id=reason_code_id,
             notes=record_data.get("notes") or record_data.get("partial_notes"),
             attempted_at=new_record.created_at,
         )
-        return new_record, None
+        audit("accepted", message="Created via offline sync", after=new_record.version,
+              status_after=new_record.status, delivery=new_record)
+        _record_event(db, event_id=event_id, actor=actor, delivery_id=new_record.id, outcome=OUTCOME_APPLIED)
+        db.commit()  # <- the ONE commit for this record
+        db.refresh(new_record)
 
-    # Conflict case: record already exists on the server.
-    # Compare timestamps — whichever is later wins. Both sides are now
-    # guaranteed naive UTC, so this comparison is safe.
-    incoming_updated_at = record_data["updated_at"]
-    if incoming_updated_at > existing.updated_at:
-        # Incoming (client) change is newer — apply it, but only if the
-        # actor is allowed to make this particular status change.
-        _check_status_transition(actor, existing.status, record_data["status"])
-        old_status = existing.status
-        existing.status = record_data["status"]
-        existing.notes = record_data.get("notes")
-        existing.location_note = record_data.get("location_note")
-        existing.updated_at = incoming_updated_at
-        if record_data.get("proof_of_delivery") is not None:
-            existing.proof_of_delivery = record_data.get("proof_of_delivery")
-        if existing.status == DeliveryStatus.delivered:
-            existing.is_partial = record_data.get("is_partial", False)
-            existing.partial_notes = record_data.get("partial_notes") if existing.is_partial else None
-            classify_on_completion(existing, incoming_updated_at)
-        db.commit()
-        db.refresh(existing)
+        follow_ups = []
+        if logged and attempt_outcome == "failed_attempt":
+            follow_ups.append(FollowUp("rto_eligibility", lambda: _check_rto(db, new_record, reason)))
+        return SyncResolution(new_record, None, OUTCOME_APPLIED, follow_ups)
 
-        if old_status != existing.status:
-            record_history_entry(
-                db,
-                delivery_id=existing.id,
-                changed_by_user_id=actor.id,
-                changed_by_display_name=agent_name,
-                old_status=old_status,
-                new_status=existing.status,
-                changed_at=incoming_updated_at,
-                note="Updated via offline sync",
-            )
-            notify_customer_of_status_change(
-                db,
-                delivery_id=existing.id,
-                order_id=existing.order_id,
-                new_status=existing.status.value if hasattr(existing.status, "value") else existing.status,
-                customer_email=existing.customer_email,
-                customer_phone=existing.customer_phone,
-                customer_id=existing.customer_id,
-            )
-            broadcast_sync(tracking_room(existing.id), {
-                "event": "status_changed",
-                "status": existing.status.value if hasattr(existing.status, "value") else existing.status,
-            })
-            if existing.status == DeliveryStatus.delivered:
-                # Same return/exchange completion hook as the online PATCH
-                # path (routes/deliveries.py) — an agent completing a
-                # return pickup while offline still needs to trigger the
-                # refund/exchange once it syncs back.
-                handle_return_pickup_completion(db, existing)
-            _log_synced_attempt(
-                db, existing, agent_id=attempt_agent_id, status=existing.status,
-                is_partial=record_data.get("is_partial", False), reason_code_id=reason_code_id,
-                notes=record_data.get("notes") or record_data.get("partial_notes"),
-                attempted_at=incoming_updated_at,
-            )
-        return existing, None
-    else:
-        # Server's existing version is newer or equal — keep it, discard
-        # incoming. This is the exact case that used to be silent: the
-        # client's change is thrown away with no signal anywhere. Now we
-        # build a conflict record describing what got overridden and (if
-        # we can tell from the history log) who made the winning change,
-        # so routes/sync.py can hand this back to the client to surface.
-        winning_entry = (
-            db.query(DeliveryHistoryDB)
-            .filter(DeliveryHistoryDB.delivery_id == existing.id)
-            .order_by(DeliveryHistoryDB.changed_at.desc())
-            .first()
-        )
+    # ---------- The record exists: decide by VERSION and the central policy ----------
+    version_before = existing.version
+    status_before = existing.status
+    incoming_status = record_data["status"]
+    actor_kind = _status_value(actor.role)
+    stale = base_version != version_before
+
+    verdict = (
+        check_stale_change(actor_kind, status_before, incoming_status)
+        if stale else check_transition(actor_kind, status_before, incoming_status)
+    )
+
+    if not verdict.allowed:
+        audit("rejected", code=verdict.code, message=verdict.message, before=version_before, after=version_before,
+              status_before=status_before, status_after=incoming_status, delivery=existing)
         conflict = {
             "id": existing.id,
             "order_id": existing.order_id,
-            "your_status": record_data["status"].value if hasattr(record_data["status"], "value") else record_data["status"],
-            "your_updated_at": incoming_updated_at.isoformat(),
-            "kept_status": existing.status.value if hasattr(existing.status, "value") else existing.status,
+            "code": verdict.code,
+            "message": verdict.message,
+            "your_status": _status_value(incoming_status),
+            "your_updated_at": occurred_at.isoformat(),
+            "kept_status": _status_value(existing.status),
             "kept_updated_at": existing.updated_at.isoformat(),
-            "kept_by": winning_entry.changed_by_display_name if winning_entry else None,
+            "kept_by": _winner_name(db, existing.id),
+            "base_version": base_version,
+            "current_version": version_before,
         }
-        return existing, conflict
+        # A refusal is a DECISION about this event: remember it, so a resend gets the same answer.
+        _record_event(db, event_id=event_id, actor=actor, delivery_id=existing.id, outcome=OUTCOME_REJECTED, result={"conflict": conflict})
+        db.commit()
+        return SyncResolution(existing, conflict, OUTCOME_REJECTED)
 
+    if stale and incoming_status == status_before and status_before in FINAL_STATUSES:
+        # A re-send of something already applied (e.g. the response was lost): nothing to do, and
+        # re-applying would only re-run side effects. Report the server's copy back, no conflict.
+        audit("reconciled", code="already_applied", message="This change had already been applied.",
+              before=version_before, after=version_before, status_before=status_before,
+              status_after=incoming_status, delivery=existing)
+        _record_event(db, event_id=event_id, actor=actor, delivery_id=existing.id, outcome=OUTCOME_ALREADY_APPLIED)
+        db.commit()
+        return SyncResolution(existing, None, OUTCOME_ALREADY_APPLIED)
+
+    # ---------- Apply ----------
+    old_status = existing.status
+    existing.status = incoming_status
+    existing.notes = record_data.get("notes")
+    existing.location_note = record_data.get("location_note")
+    # "latest event time" never moves backwards, even if this (delayed) event happened earlier.
+    existing.updated_at = max(existing.updated_at, occurred_at)
+    if record_data.get("proof_of_delivery") is not None:
+        existing.proof_of_delivery = record_data.get("proof_of_delivery")
+    if existing.status == DeliveryStatus.delivered:
+        existing.is_partial = record_data.get("is_partial", False)
+        existing.partial_notes = record_data.get("partial_notes") if existing.is_partial else None
+        classify_on_completion(existing, occurred_at)  # SLA met/missed uses when it REALLY happened
+    db.flush()  # writes the UPDATE (version-checked) and bumps `version` exactly once for this transaction
+
+    status_changed = old_status != existing.status
+    logged, reason, attempt_outcome = False, None, None
+    if status_changed:
+        record_history_entry(
+            db, delivery_id=existing.id, changed_by_user_id=actor.id, changed_by_display_name=agent_name,
+            old_status=old_status, new_status=existing.status, changed_at=occurred_at,
+            note="Updated via offline sync" if not stale else "Updated via offline sync (reconciled with newer changes)",
+            commit=False,
+        )
+        logged, reason, attempt_outcome = _log_synced_attempt(
+            db, existing, agent_id=attempt_agent_id, status=existing.status,
+            is_partial=record_data.get("is_partial", False), reason_code_id=reason_code_id,
+            notes=record_data.get("notes") or record_data.get("partial_notes"),
+            attempted_at=occurred_at,
+        )
+
+    outcome = OUTCOME_RECONCILED if stale else OUTCOME_APPLIED
+    audit(
+        "reconciled" if stale else "accepted",
+        code=STALE_VERSION if stale else None,
+        message=(f"Based on version {base_version}; the delivery was at version {version_before}, "
+                 "and the change is still valid against its current state.") if stale else None,
+        before=version_before, after=existing.version, status_before=status_before,
+        status_after=existing.status, delivery=existing,
+    )
+    _record_event(db, event_id=event_id, actor=actor, delivery_id=existing.id, outcome=outcome)
+    db.commit()  # <- the ONE commit for this record
+    db.refresh(existing)
+
+    follow_ups: List[FollowUp] = []
+    if status_changed:
+        new_status_value = _status_value(existing.status)
+        follow_ups.append(FollowUp("customer_notification", lambda: notify_customer_of_status_change(
+            db, delivery_id=existing.id, order_id=existing.order_id, new_status=new_status_value,
+            customer_email=existing.customer_email, customer_phone=existing.customer_phone,
+            customer_id=existing.customer_id,
+        )))
+        follow_ups.append(FollowUp("tracking_broadcast", lambda: broadcast_sync(
+            tracking_room(existing.id), {"event": "status_changed", "status": new_status_value})))
+        if existing.status == DeliveryStatus.delivered:
+            # Same return/exchange completion hook as the online PATCH path: an agent completing a
+            # return pickup while offline still needs to trigger the refund/exchange once it syncs.
+            follow_ups.append(FollowUp("return_pickup_completion", lambda: handle_return_pickup_completion(db, existing)))
+        if logged and attempt_outcome == "failed_attempt":
+            follow_ups.append(FollowUp("rto_eligibility", lambda: _check_rto(db, existing, reason)))
+    return SyncResolution(existing, None, outcome, follow_ups)
+
+
+def resolve_and_apply(
+    record_data: dict,
+    db: Session,
+    actor: UserDB,
+    clock_offset: timedelta | None = None,
+) -> tuple[DeliveryRecordDB, dict | None]:
+    """
+    Backwards-compatible wrapper: resolve one record and run its follow-ups, returning (record, conflict).
+    New code should use services/sync_processor.process_sync_record(), which adds idempotency and reports
+    an explicit outcome, replay flag and follow-up results per record.
+    """
+    resolution = resolve_record(record_data, db, actor, clock_offset)
+    run_follow_ups(resolution.follow_ups)
+    return resolution.record, resolution.conflict

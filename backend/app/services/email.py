@@ -55,6 +55,21 @@ SMTP_PASSWORD = re.sub(r"\s+", "", _env("SMTP_PASSWORD") or "") or None
 FROM_EMAIL = _env("FROM_EMAIL") or SMTP_USERNAME or "noreply@deliverysync.local"
 APP_URL = _env("FRONTEND_URL", "http://localhost:3700")
 FROM_NAME = _env("FROM_NAME", "Delivery Sync")
+
+
+def _public_app_url() -> str | None:
+    """The app link to show in emails, or None. A link to http://localhost (or any non-https
+    address) is a classic spam signal and is useless to the recipient anyway, so links only
+    appear once FRONTEND_URL is a real https:// address."""
+    url = APP_URL or ""
+    if url.lower().startswith("https://") and not any(h in url.lower() for h in ("localhost", "127.0.0.1", "0.0.0.0")):
+        return url
+    return None
+
+
+def _login_line(label: str = "Log in") -> str:
+    link = _public_app_url()
+    return f"\n\n{label}: {link}\n" if link else "\n"
 SMTP_DEBUG = (_env("SMTP_DEBUG", "") or "").lower() in ("1", "true", "yes")
 
 
@@ -116,20 +131,17 @@ def _welcome_intro(welcome: dict) -> list[str]:
     org_name = welcome.get("org_name")
     if not org_name:  # customer
         return [f"Hi {name},",
-                f"Congratulations, {name}! You've successfully created your Delivery Sync account.",
+                f"Welcome to Delivery Sync, {name}. Your account is ready.",
                 "You can now browse stores, place orders, and track every delivery live from your dashboard."]
     if welcome.get("is_new_org"):
         lines = [f"Hi {name},",
-                 f"Congratulations, {name}! You've successfully created your Delivery Sync account, "
-                 f"and your organization \"{org_name}\" is live with you as its admin."]
+                 f"Welcome to Delivery Sync. Your account is ready, and your organization \"{org_name}\" is set up with you as its admin."]
         if welcome.get("invite_code"):
-            lines.append("Share this invite code with your team so agents and dispatchers can join from the Sign Up screen: "
-                         f"{welcome['invite_code']}")
+            lines.append(f"Your team invite code (for agents and dispatchers joining from the Sign Up screen) is {welcome['invite_code']}.")
         return lines
     role_label = "a dispatcher" if welcome.get("role") == "dispatcher" else "an agent"
     return [f"Hi {name},",
-            f"Congratulations, {name}! You've successfully created your Delivery Sync account "
-            f"and joined \"{org_name}\" as {role_label}."]
+            f"Welcome to Delivery Sync. Your account is ready and you've joined \"{org_name}\" as {role_label}."]
 
 
 def _send_verification_code(to_email: str, code: str, who: str, welcome: dict | None = None) -> None:
@@ -139,16 +151,19 @@ def _send_verification_code(to_email: str, code: str, who: str, welcome: dict | 
     by the mail provider. A later 'resend code' passes no `welcome` and sends just the code."""
     tail = ["It expires in 10 minutes and can be used once. Never share this code with anyone.",
             f"If you didn't create a Delivery Sync {who}, you can safely ignore this email."]
+    subject = f"Your Delivery Sync verification code: {code}"
+    link = _public_app_url()
     if welcome:
+        # Same subject and same plain layout as a normal code email, with a short greeting
+        # on top: the code-only email reaches the inbox, so this stays as close to it as it can.
         intro = _welcome_intro(welcome)
-        subject = f"Welcome to Delivery Sync - your verification code is {code}"
-        body = "\n\n".join(intro) + f"\n\nTo finish setting up, verify your email with this code:\n\n    {code}\n\n" + "\n".join(tail) + f"\n\nLog in: {APP_URL}\n"
+        body = "\n\n".join(intro) + f"\n\nYour verification code is:\n\n    {code}\n\n" + "\n".join(tail) + _login_line()
         _send_email(to_email, subject, body, html_body=_html_email(
-            "Congratulations — your account is ready!", intro + ["To finish setting up, verify your email with this code:"],
-            highlight=code, after=tail, button_label="Open Delivery Sync", button_url=APP_URL,
+            "Welcome to Delivery Sync", intro + ["Your verification code is:"],
+            highlight=code, after=tail,
+            button_label="Open Delivery Sync" if link else None, button_url=link,
         ))
         return
-    subject = f"Your Delivery Sync verification code: {code}"
     body = (
         f"Your Delivery Sync verification code is:\n\n    {code}\n\n"
         f"Enter it in the app to verify your email address. It expires in 10 minutes and works once.\n"
@@ -201,8 +216,8 @@ def send_org_welcome_email(to_email: str, display_name: str, org_name: str, invi
     this text inside the verification email instead; this one is used for Google sign-ups.)"""
     subject = f"Welcome to Delivery Sync - {org_name} is ready"
     intro = _welcome_intro({"name": display_name, "org_name": org_name, "is_new_org": True, "invite_code": invite_code})
-    _send_email(to_email, subject, "\n\n".join(intro) + f"\n\nLog in: {APP_URL}\n", html_body=_html_email(
-        "Congratulations — your account is ready!", intro, button_label="Open Delivery Sync", button_url=APP_URL,
+    _send_email(to_email, subject, "\n\n".join(intro) + _login_line(), html_body=_html_email(
+        "Welcome to Delivery Sync", intro, button_label="Open Delivery Sync" if _public_app_url() else None, button_url=_public_app_url(),
     ))
 
 
@@ -210,8 +225,8 @@ def send_staff_welcome_email(to_email: str, display_name: str, org_name: str, ro
     """Stand-alone congratulations for an agent/dispatcher who joined via invite code (Google sign-ups)."""
     subject = f"Welcome to {org_name} on Delivery Sync"
     intro = _welcome_intro({"name": display_name, "org_name": org_name, "is_new_org": False, "role": role})
-    _send_email(to_email, subject, "\n\n".join(intro) + f"\n\nLog in: {APP_URL}\n", html_body=_html_email(
-        "Congratulations — welcome aboard!", intro, button_label="Log in to Delivery Sync", button_url=APP_URL,
+    _send_email(to_email, subject, "\n\n".join(intro) + _login_line(), html_body=_html_email(
+        "Welcome aboard", intro, button_label="Log in to Delivery Sync" if _public_app_url() else None, button_url=_public_app_url(),
     ))
 
 
@@ -219,8 +234,8 @@ def send_customer_welcome_email(to_email: str, display_name: str) -> None:
     """Stand-alone congratulations for a new customer (Google sign-ups; email signups get it inside the verification email)."""
     subject = "Welcome to Delivery Sync - your account is ready"
     intro = _welcome_intro({"name": display_name})
-    _send_email(to_email, subject, "\n\n".join(intro) + f"\n\nOpen Delivery Sync: {APP_URL}\n", html_body=_html_email(
-        "Congratulations — your account is ready!", intro, button_label="Open Delivery Sync", button_url=APP_URL,
+    _send_email(to_email, subject, "\n\n".join(intro) + _login_line("Open Delivery Sync"), html_body=_html_email(
+        "Welcome to Delivery Sync", intro, button_label="Open Delivery Sync" if _public_app_url() else None, button_url=_public_app_url(),
     ))
 
 

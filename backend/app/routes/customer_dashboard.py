@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.db.session import get_db
+from app.services.delivery_policy import check_transition
 from app.models.delivery import DeliveryRecordDB, DeliveryRecordOut, ClaimOrderRequest, DeliveryStatus
 from app.models.delivery_history import DeliveryHistoryDB, DeliveryHistoryOut
 from app.models.customer import CustomerDB
@@ -35,7 +36,7 @@ router = APIRouter(prefix="/customer", tags=["customer-dashboard"])
 # Statuses a customer is still allowed to back out of. Once an agent has
 # physically picked the order up, cancelling stops being self-serve —
 # same rule any real delivery/e-commerce app applies.
-CANCELLABLE_STATUSES = {DeliveryStatus.picked_up, DeliveryStatus.pending}
+# Which statuses a customer may cancel from lives in services/delivery_policy.py (one place for every actor).
 
 
 def _normalize_phone(raw: str) -> str:
@@ -199,11 +200,9 @@ def cancel_my_delivery(
     if not delivery:
         raise HTTPException(status_code=404, detail="Delivery not found.")
 
-    if delivery.status not in CANCELLABLE_STATUSES:
-        raise HTTPException(
-            status_code=400,
-            detail="This order can no longer be cancelled — it's already out for delivery or further along.",
-        )
+    verdict = check_transition("customer", delivery.status, DeliveryStatus.cancelled)
+    if not verdict.allowed:
+        raise HTTPException(status_code=400, detail=verdict.message)
 
     old_status = delivery.status
     delivery.status = DeliveryStatus.cancelled

@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
+from app.services.object_storage import uploads_root
 from app.db.session import get_db
 from app.models.user import UserDB, UserRole
 from app.models.customer import CustomerDB
@@ -34,7 +35,7 @@ from app.services.action_log import record_action
 customer_router = APIRouter(prefix="/customer/support", tags=["support"])
 admin_router = APIRouter(prefix="/admin/support", tags=["support"])
 
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads", "support")
+UPLOAD_DIR = os.path.join(uploads_root(), "support")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ALLOWED_ATTACHMENT_TYPES = {

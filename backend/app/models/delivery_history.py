@@ -30,6 +30,9 @@ class DeliveryHistoryDB(Base):
     new_status = Column(String, nullable=False)
     changed_at = Column(DateTime, nullable=False)
     note = Column(String, nullable=True)  # e.g. "Created and assigned", or the delivery note at that time
+    # changed_at = when the change HAPPENED (for an offline change: when the agent did it, corrected for
+    # a wrong device clock). recorded_at = when the SERVER saved it — always the real server time.
+    recorded_at = Column(DateTime, nullable=True, default=datetime.utcnow)
 
 
 class DeliveryHistoryOut(BaseModel):
@@ -39,6 +42,7 @@ class DeliveryHistoryOut(BaseModel):
     old_status: Optional[str] = None
     new_status: str
     changed_at: datetime
+    recorded_at: Optional[datetime] = None
     note: Optional[str] = None
 
     class Config:

@@ -12,6 +12,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.services.object_storage import uploads_root
 from app.models.financial_document import FinancialDocumentDB
 from app.models.organization import OrganizationDB
 
@@ -20,7 +21,7 @@ DOCUMENT_PREFIXES = {
     "credit_note": "CN", "debit_note": "DN",
 }
 
-PDF_OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads", "finance")
+PDF_OUTPUT_DIR = os.path.join(uploads_root(), "finance")
 os.makedirs(PDF_OUTPUT_DIR, exist_ok=True)
 
 

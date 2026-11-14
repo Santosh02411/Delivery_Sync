@@ -52,6 +52,10 @@ from app.services.webhooks import emit_event
 
 REAL_ROUTING_TOP_K = 3  # how many top-tier candidates get a real routing call, per suggested-agents/auto-assign request
 from app.routes.auth import get_current_user
+from sqlalchemy.orm.exc import StaleDataError
+from app.models.delivery_audit import DeliveryChangeAuditDB, DeliveryChangeAuditOut
+from app.services.delivery_audit import record_change_decision
+from app.services.delivery_policy import check_transition, check_stale_change
 
 router = APIRouter(prefix="/deliveries", tags=["deliveries"])
 
@@ -813,6 +817,16 @@ def update_delivery(
     flow — offline updates go through the /sync batch endpoint instead).
     Scoped to the caller's own organization, so a user from one
     organization can never update a delivery belonging to another.
+
+    The SAME rules as offline sync apply (services/delivery_policy.py):
+    - an agent can only update a delivery assigned to them;
+    - the status change must be allowed for the caller's role (an agent can't cancel, or
+      reopen a delivered/cancelled delivery);
+    - if the client sends `base_version` (the version it last read) and the delivery has changed
+      since, the change is reconciled or refused with a structured 409 — never silently applied
+      over newer changes.
+    The time recorded is the SERVER's real time: this is a live call, so the client's clock (which
+    may be wrong) isn't trusted for it.
     """
     db_record = db.query(DeliveryRecordDB).filter(
         DeliveryRecordDB.id == delivery_id,
@@ -821,7 +835,33 @@ def update_delivery(
     if not db_record:
         raise HTTPException(status_code=404, detail="Delivery record not found")
 
+    # Same ownership rule as POST /sync: an agent acts only on their own deliveries (404, not 403,
+    # so it doesn't confirm that someone else's delivery exists).
+    if current_user.role == UserRole.agent and db_record.agent_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Delivery record not found")
+
+    now = datetime.utcnow()
+    version_before = db_record.version
     old_status = db_record.status
+    stale = update.base_version is not None and update.base_version != version_before
+    verdict = (
+        check_stale_change(current_user.role.value, old_status, update.status)
+        if stale else check_transition(current_user.role.value, old_status, update.status)
+    )
+    if not verdict.allowed:
+        record_change_decision(
+            db, org_id=current_user.org_id, delivery_id=db_record.id, order_id=db_record.order_id,
+            outcome="rejected", source="online", actor=current_user, code=verdict.code, message=verdict.message,
+            base_version=update.base_version, version_before=version_before, version_after=version_before,
+            status_before=old_status, status_after=update.status, occurred_at=now,
+        )
+        if stale:
+            raise HTTPException(status_code=409, detail={
+                "code": verdict.code, "message": verdict.message,
+                "base_version": update.base_version, "current_version": version_before,
+                "server_record": DeliveryRecordOut.model_validate(db_record).model_dump(mode="json"),
+            })
+        raise HTTPException(status_code=403, detail=verdict.message)
 
     # ENFORCEMENT: a failed_attempt update must carry a real, active
     # reason code — this is what makes the delivery-attempts log
@@ -862,16 +902,34 @@ def update_delivery(
     db_record.status = update.status
     db_record.notes = update.notes
     db_record.location_note = update.location_note
-    db_record.updated_at = update.updated_at
+    db_record.updated_at = now
     if update.proof_of_delivery is not None:
         db_record.proof_of_delivery = update.proof_of_delivery
     if update.status == DeliveryStatus.delivered:
         db_record.is_partial = update.is_partial
         db_record.partial_notes = update.partial_notes if update.is_partial else None
-        classify_on_completion(db_record, update.updated_at)
+        classify_on_completion(db_record, now)
 
-    db.commit()
+    try:
+        db.commit()
+    except StaleDataError:
+        # Someone else changed this delivery at the very same moment (the database's version check
+        # refused our write). Nothing was applied; the client should re-read and decide again.
+        db.rollback()
+        raise HTTPException(status_code=409, detail={
+            "code": "concurrent_update",
+            "message": "This delivery was just changed by someone else. Reload it and try again.",
+        })
     db.refresh(db_record)
+    record_change_decision(
+        db, org_id=current_user.org_id, delivery_id=db_record.id, order_id=db_record.order_id,
+        outcome="reconciled" if stale else "accepted", source="online", actor=current_user,
+        code="stale_version" if stale else None,
+        message=(f"Based on version {update.base_version}; the delivery was at version {version_before} "
+                 "and the change is still valid against its current state.") if stale else None,
+        base_version=update.base_version, version_before=version_before, version_after=db_record.version,
+        status_before=old_status, status_after=db_record.status, occurred_at=now,
+    )
 
     if old_status != update.status:
         record_history_entry(
@@ -881,7 +939,7 @@ def update_delivery(
             changed_by_display_name=current_user.display_name,
             old_status=old_status,
             new_status=update.status,
-            changed_at=update.updated_at,
+            changed_at=now,
             note=(f"Failed: {reason.label}" if reason else (
                 "Partially delivered" if (update.status == DeliveryStatus.delivered and update.is_partial) else None
             )),
@@ -1074,6 +1132,27 @@ def update_delivery_priority(
 
     broadcast_sync(dispatcher_queue_room(current_user.org_id), {"event": "queue_changed", "reason": "priority_changed"})
     return db_record
+
+
+@router.get("/{delivery_id}/change-audit", response_model=List[DeliveryChangeAuditOut])
+def get_delivery_change_audit(
+    delivery_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserDB = Depends(require_dispatcher),
+):
+    """
+    Dispatcher/admin: every decision the server made about changes to this delivery that came from a
+    device or the online status endpoint — accepted, reconciled (applied although based on an older
+    version) and rejected (with the reason) — oldest first. Complements /history, which lists only
+    the status changes that were applied. `occurred_at` is when it happened; `recorded_at` is the
+    server's real time when it was decided; `version_before` -> `version_after` is the true order.
+    """
+    return (
+        db.query(DeliveryChangeAuditDB)
+        .filter(DeliveryChangeAuditDB.delivery_id == delivery_id, DeliveryChangeAuditDB.org_id == current_user.org_id)
+        .order_by(DeliveryChangeAuditDB.recorded_at.asc())
+        .all()
+    )
 
 
 @router.get("/{delivery_id}/attempts", response_model=List[DeliveryAttemptOut])
