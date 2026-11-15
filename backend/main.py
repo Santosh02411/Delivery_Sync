@@ -35,6 +35,10 @@ import time
 
 from app.db.session import Base, engine
 from app.db.migrate import run_lightweight_migrations
+from app.db.migrations import apply_startup_policy
+from app.services.image_upload import MAX_IMAGE_BYTES
+from app.services.object_storage import uploads_root
+from app.services.upload_limits import BodySizeLimitMiddleware
 from app.services.rate_limiter import limiter
 from app.routes import deliveries, sync, auth, users, bulk_import, admin, export, messages, tracking, customer_auth, customer_dashboard, customer_privacy, stores, products, cart, checkout, reviews, coupons, analytics, slots, zones, returns, websockets, subscriptions, failed_delivery_reasons, workforce, pod, sla, warehouse, rbac, reconciliation, customer_messages, rto, scan, route_analytics, notification_templates, fleet, support, finance, webhooks, public_api, advanced_analytics, organization, monitoring
 from app.db.session import SessionLocal
@@ -45,13 +49,20 @@ from app.services import monitoring as monitoring_svc
 from app.services.webhook_scheduler import start_webhook_scheduler
 from app.services.backup_scheduler import start_backup_scheduler
 from app.services.demo_reset_scheduler import start_demo_reset_scheduler
-# Create all database tables on startup (if they don't already exist),
-# then catch up any EXISTING table to the model's current columns — see
-# app/db/migrate.py's module docstring for why both steps are needed:
-# create_all() alone only handles brand-new tables, never adds columns
-# to ones that already exist from a previous run.
-Base.metadata.create_all(bind=engine)
-run_lightweight_migrations(engine, Base)
+# ---------- Database schema ----------
+# Production/development: the schema is managed by ALEMBIC (alembic/versions/, docs/MIGRATIONS.md). At startup the
+# app upgrades the database to the latest revision (DB_AUTO_MIGRATE=0 turns that off for teams that run
+# `alembic upgrade head` as a release step; DB_REQUIRE_HEAD=1 then refuses to start on an out-of-date schema).
+# An existing database created by the old create_all() + lightweight migrator joins the history automatically:
+# the baseline revision only ADDS what is missing and never drops or alters anything.
+#
+# The TEST SUITE keeps the old behaviour on purpose: it builds its own throwaway databases from the models
+# (tests/conftest.py), and the migrations themselves are tested separately (tests/test_migrations.py).
+if os.environ.get("TESTING") == "1":
+    Base.metadata.create_all(bind=engine)
+    run_lightweight_migrations(engine, Base)
+else:
+    apply_startup_policy(engine)
 
 # ENVIRONMENT selects a few real, safety-relevant behaviors — not just
 # a label. "development" (the default, zero-config) keeps everything
@@ -104,6 +115,17 @@ elif IS_PRODUCTION:
 else:
     allowed_origins = ["*"]
 
+# The framework parses a whole multipart body before a route runs, so the upload size limit has to be
+# enforced here, before parsing: oversized bodies are refused with 413 without being read, and anonymous
+# requests (no Authorization header) are refused with 401 before any body byte is accepted.
+# Added BEFORE CORSMiddleware on purpose: the last-added middleware is the outermost, and these refusals must
+# still pass through CORS so the browser can read the 413/401 message instead of reporting a network error.
+app.add_middleware(
+    BodySizeLimitMiddleware,
+    limits={"/admin/products/upload-image": MAX_IMAGE_BYTES + 256 * 1024},  # + multipart framing overhead
+    require_authorization_header=True,
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -112,14 +134,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serves uploaded product images back out at /uploads/products/<file>.
-# Created on demand by routes/products.py's upload endpoint, so it may
-# not exist yet on a completely fresh checkout — create it here too so
-# the mount never fails on a clean clone.
-UPLOAD_ROOT = os.path.join(os.path.dirname(__file__), "uploads")
+# ---------- Uploaded files ----------
+# Served back out at /uploads/<folder>/<file>. UPLOAD_DIR (default: ./uploads) is where they live; in
+# production point it at a PERSISTENT disk, or use UPLOAD_STORAGE=s3 for product images (see
+# docs/UPLOADS_AND_STORAGE.md) — a container's own filesystem is wiped on every deploy.
+UPLOAD_ROOT = uploads_root()
 os.makedirs(os.path.join(UPLOAD_ROOT, "products"), exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=UPLOAD_ROOT), name="uploads")
 
+
+class SafeStaticFiles(StaticFiles):
+    """
+    Static files with the headers that make user-uploaded content safe to serve from the API's own origin:
+    `nosniff` (the browser must trust the Content-Type — which comes from the validated file extension — and
+    never guess "this looks like HTML"), a CSP that forbids scripts and sandboxes the document if someone
+    opens an image URL directly, and, for product images whose names are random and never reused,
+    long-lived immutable caching.
+    """
+
+    def __init__(self, *args, immutable: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._immutable = immutable
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"
+        response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"  # the frontend is on another origin and shows these images
+        if self._immutable:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
+# Product images: public-read by design (a shop front displays them). Mounted BEFORE the general /uploads
+# mount so these stricter headers apply to them. Only exists when images are on local disk.
+app.mount("/uploads/products", SafeStaticFiles(directory=os.path.join(UPLOAD_ROOT, "products"), immutable=True), name="product-images")
+app.mount("/uploads", SafeStaticFiles(directory=UPLOAD_ROOT), name="uploads")
 
 # ---------- Timestamps: always send UTC with an explicit "Z" ----------
 # Every datetime in the database is naive UTC (datetime.utcnow()), and

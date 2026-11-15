@@ -15,7 +15,14 @@ pyotp
 python-dotenv
 requests
 psycopg2-binary
+# Versioned database migrations (alembic/, docs/MIGRATIONS.md)
+alembic
 qrcode
+# Image upload validation/re-encoding (services/image_upload.py). Pillow was previously only an indirect
+# dependency of reportlab; it is used directly now, so it is listed explicitly.
+pillow
+# Optional: only for UPLOAD_STORAGE=s3 (S3/R2/MinIO object storage). Uncomment when you enable it.
+# boto3
 
 # ---- Test suite (backend/tests/) ----
 pytest
