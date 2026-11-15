@@ -101,7 +101,7 @@ def test_agent_can_delete_and_their_name_is_removed_from_history(client, db_engi
     # The agent completes it via offline sync (writes a history row under their name).
     now = datetime.utcnow()
     sync = client.post("/sync", json={"records": [{
-        "id": delivery_id, "agent_id": agent_id, "order_id": "ORD-X", "status": "delivered",
+        "id": delivery_id, "agent_id": agent_id, "order_id": "ORD-X", "status": "delivered", "base_version": 1,
         "created_at": now.isoformat(), "updated_at": (now + timedelta(minutes=1)).isoformat(),
     }]}, headers=agent_headers)
     assert sync.status_code == 200 and sync.json()["errors"] == [], sync.text

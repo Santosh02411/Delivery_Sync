@@ -38,14 +38,14 @@ def test_combined_email_has_congratulations_code_and_invite_code(monkeypatch):
         "name": "Asha <b>", "org_name": "Acme", "role": "admin", "is_new_org": True, "invite_code": "ABCD1234",
     })
     to, subject, body, html_body = sent[0]
-    assert "482913" in subject and "!" not in subject  # calm, transactional subject (hype words trip spam filters)
-    assert "Congratulations" in body and "482913" in body and "ABCD1234" in body and "Acme" in body
+    assert subject == "Your Delivery Sync verification code: 482913"  # same subject as a plain code email
+    assert "Welcome to Delivery Sync" in body and "482913" in body and "ABCD1234" in body and "Acme" in body
     assert "ABCD1234" in html_body and "<b>" not in html_body and "&lt;b&gt;" in html_body  # escaped
 
     # a plain resend has no greeting
     sent.clear()
     email_svc.send_verification_email("a@example.com", "111222")
-    assert "Congratulations" not in sent[0][2]
+    assert "Welcome to Delivery Sync" not in sent[0][2]
 
 
 def test_joiner_and_customer_greetings(monkeypatch):
@@ -67,7 +67,7 @@ def test_standalone_welcome_emails_still_exist_for_google_signups(monkeypatch):
     email_svc.send_org_welcome_email("a@example.com", "Asha", "Acme", "ABCD1234")
     email_svc.send_staff_welcome_email("g@example.com", "Gita", "Acme", "dispatcher")
     email_svc.send_customer_welcome_email("c@example.com", "Ravi")
-    assert all("Congratulations" in body for _, body in sent) and "ABCD1234" in sent[0][1]
+    assert all("Welcome" in body for _, body in sent) and "ABCD1234" in sent[0][1]
     assert all("!" not in subject for subject, _ in sent)
 
 
@@ -144,3 +144,20 @@ def test_message_has_the_headers_that_help_inbox_placement(monkeypatch):
     assert message["Date"] and message["Message-ID"].endswith("@example.com>")
     assert message["Auto-Submitted"] == "auto-generated"
     assert [p.get_content_type() for p in message.get_payload()] == ["text/plain", "text/html"]
+
+
+def test_emails_never_contain_a_localhost_or_http_link(monkeypatch):
+    from app.services import email as email_svc
+
+    sent = []
+    monkeypatch.setattr(email_svc, "_send_email", lambda to, subject, body, html_body=None: sent.append((body, html_body)))
+
+    monkeypatch.setattr(email_svc, "APP_URL", "http://localhost:3700")
+    email_svc.send_verification_email("a@example.com", "123456", welcome={"name": "A", "org_name": "Acme", "is_new_org": True, "invite_code": "X"})
+    email_svc.send_customer_welcome_email("c@example.com", "C")
+    assert all("localhost" not in body and "http" not in (html or "") for body, html in sent)
+
+    sent.clear()
+    monkeypatch.setattr(email_svc, "APP_URL", "https://app.example.com")  # a real public https address is allowed
+    email_svc.send_customer_welcome_email("c@example.com", "C")
+    assert "https://app.example.com" in sent[0][0] and 'href="https://app.example.com"' in sent[0][1]

@@ -258,6 +258,7 @@ def test_offline_sync_path_also_enforces_pod_requirement(client, signed_up_admin
             "id": delivery_id,
             "agent_id": agent_id,
             "order_id": "SYNC-ORDER",
+            "base_version": 1,
             "status": "delivered",
             "created_at": now,
             "updated_at": now,
@@ -268,6 +269,10 @@ def test_offline_sync_path_also_enforces_pod_requirement(client, signed_up_admin
     body = resp.json()
     assert len(body["errors"]) == 1
     assert "Proof of delivery is required" in body["errors"][0]["error"]
+    # It is a refusal that clears up on its own, so it has its own code and is reported as retryable — a client
+    # must keep the record waiting (not treat it as permanently invalid).
+    assert body["errors"][0]["code"] == "pod_required"
+    assert (body["results"][0]["outcome"], body["results"][0]["retryable"]) == ("error", True)
 
     # capture POD, then the exact same sync payload succeeds
     resp = client.post(

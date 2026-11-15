@@ -32,7 +32,7 @@ def _create_delivery(client, auth_headers, agent_id):
     return delivery_id
 
 
-def _record(delivery_id, agent_id, status="out_for_delivery", minutes=1, **extra):
+def _record(delivery_id, agent_id, status="out_for_delivery", minutes=1, base_version=1, **extra):
     now = datetime.utcnow()
     return {
         "id": delivery_id,
@@ -41,8 +41,14 @@ def _record(delivery_id, agent_id, status="out_for_delivery", minutes=1, **extra
         "status": status,
         "created_at": now.isoformat(),
         "updated_at": (now + timedelta(minutes=minutes)).isoformat(),
+        "base_version": base_version,  # the server version this device last read (a fresh delivery is at version 1)
         **extra,
     }
+
+
+def _version(client, auth_headers, delivery_id):
+    """The delivery's current server-managed version (what a device would have read)."""
+    return client.get(f"/deliveries/{delivery_id}", headers=auth_headers).json()["version"]
 
 
 def _sync(client, records, headers=None):
@@ -200,19 +206,26 @@ def test_agent_cannot_cancel_or_unassign_via_sync(client, signed_up_admin, auth_
     agent_id, agent_headers = _signup_agent(client, signed_up_admin["org_invite_code"], "sync_cancel_agent")
     delivery_id = _create_delivery(client, auth_headers, agent_id)
     assert _sync(client, [_record(delivery_id, agent_id, "out_for_delivery", minutes=1)], agent_headers).json()["errors"] == []
+    current = _version(client, auth_headers, delivery_id)  # what an up-to-date device has read
     for i, forbidden in enumerate(("cancelled", "pending")):
-        body = _sync(client, [_record(delivery_id, agent_id, forbidden, minutes=5 + i)], agent_headers).json()
-        assert body["resolved_records"] == []
-        assert body["errors"][0]["code"] == "transition_not_allowed"
+        body = _sync(client, [_record(delivery_id, agent_id, forbidden, minutes=5 + i, base_version=current)], agent_headers).json()
+        assert body["errors"] == []
+        assert body["conflicts"][0]["code"] == "transition_not_allowed"
+        assert body["resolved_records"][0]["status"] == "out_for_delivery"  # the server's copy comes back
 
 
 def test_agent_cannot_reopen_a_delivered_delivery(client, signed_up_admin, auth_headers):
     agent_id, agent_headers = _signup_agent(client, signed_up_admin["org_invite_code"], "sync_reopen_agent")
     delivery_id = _create_delivery(client, auth_headers, agent_id)
     assert _sync(client, [_record(delivery_id, agent_id, "delivered", minutes=1)], agent_headers).json()["errors"] == []
-    body = _sync(client, [_record(delivery_id, agent_id, "out_for_delivery", minutes=5)], agent_headers).json()
-    assert body["resolved_records"] == []
-    assert body["errors"][0]["code"] == "transition_not_allowed"
+    # Up to date and trying to reopen it -> the policy says no.
+    current = _version(client, auth_headers, delivery_id)
+    body = _sync(client, [_record(delivery_id, agent_id, "out_for_delivery", minutes=5, base_version=current)], agent_headers).json()
+    assert body["conflicts"][0]["code"] == "transition_not_allowed"
+    assert body["resolved_records"][0]["status"] == "delivered"
+    # Out of date (version 1) and trying to reopen it -> refused as stale.
+    body = _sync(client, [_record(delivery_id, agent_id, "out_for_delivery", minutes=6, base_version=1)], agent_headers).json()
+    assert body["conflicts"][0]["code"] == "stale_version"
 
 
 def test_sync_never_reassigns_an_existing_delivery(client, signed_up_admin, auth_headers):
@@ -279,3 +292,28 @@ def test_rejected_records_are_audited(client, signed_up_admin, auth_headers):
 
     events = client.get("/auth/security-events", headers=attacker_headers).json()
     assert any(e["event_type"] == "sync_rejected" and "identity_mismatch" in (e["detail"] or "") for e in events)
+
+
+# ---------- local_revision echo (lost-update protection for the clients) ----------
+
+def test_local_revision_is_acknowledged_and_never_stored(client, signed_up_admin, auth_headers):
+    agent_id, agent_headers = _signup_agent(client, signed_up_admin["org_invite_code"], "sync_rev_agent")
+    delivery_id = _create_delivery(client, auth_headers, agent_id)
+    good = _record(delivery_id, agent_id, "out_for_delivery", local_revision=7)
+    bad = _record(str(uuid.uuid4()), agent_id, "delivered", local_revision=3)  # not theirs -> refused
+    body = _sync(client, [good, bad], agent_headers).json()
+    assert body["acknowledged"] == [{"id": delivery_id, "local_revision": 7}]  # only for resolved records
+    assert len(body["errors"]) == 1
+
+
+def test_records_without_a_revision_still_sync(client, signed_up_admin, auth_headers):
+    agent_id, agent_headers = _signup_agent(client, signed_up_admin["org_invite_code"], "sync_norev_agent")
+    delivery_id = _create_delivery(client, auth_headers, agent_id)
+    body = _sync(client, [_record(delivery_id, agent_id, "out_for_delivery")], agent_headers).json()
+    assert body["errors"] == [] and body["acknowledged"] == []
+
+
+def test_negative_revision_is_rejected(client, signed_up_admin):
+    agent_id, agent_headers = _signup_agent(client, signed_up_admin["org_invite_code"], "sync_negrev_agent")
+    resp = _sync(client, [_record(str(uuid.uuid4()), agent_id, local_revision=-1)], agent_headers)
+    assert resp.status_code == 422

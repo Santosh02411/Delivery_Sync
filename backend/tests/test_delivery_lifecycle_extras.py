@@ -424,7 +424,7 @@ def test_sync_logs_failed_attempt_with_reason_and_partial_delivery(client, db_en
     # Second sync (later timestamp) marks it failed_attempt with a reason code.
     later = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
     resp = client.post("/sync", json={"records": [{
-        **base, "status": "failed_attempt", "updated_at": later, "reason_code_id": reason["id"],
+        **base, "status": "failed_attempt", "updated_at": later, "reason_code_id": reason["id"], "base_version": 1,
         "notes": "No one home",
     }]}, headers=agent_headers)
     assert resp.status_code == 200, resp.text
@@ -436,10 +436,11 @@ def test_sync_logs_failed_attempt_with_reason_and_partial_delivery(client, db_en
     assert attempts[0]["outcome"] == "failed_attempt"
     assert attempts[0]["reason_label"] == "Failed via sync"
 
-    # Third sync (even later) marks it delivered, partially.
+    # Third sync (even later) marks it delivered, partially. The device uses the version it last got back.
+    current_version = client.get(f"/deliveries/{delivery_id}", headers=auth_headers).json()["version"]
     even_later = (datetime.utcnow() + timedelta(minutes=10)).isoformat()
     resp = client.post("/sync", json={"records": [{
-        **base, "status": "delivered", "updated_at": even_later,
+        **base, "status": "delivered", "updated_at": even_later, "base_version": current_version,
         "is_partial": True, "partial_notes": "Missing one item",
     }]}, headers=agent_headers)
     assert resp.status_code == 200, resp.text
