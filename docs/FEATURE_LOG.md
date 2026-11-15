@@ -4549,3 +4549,57 @@ Touched: `routes/sync.py`, `services/conflict_resolver.py`, web
   code, instead of two emails sent back-to-back (the second wasn't arriving for some mail
   providers). Google sign-ups still get a stand-alone welcome email. SMTP sending also
   retries once on a temporary (4xx) error.
+
+## Admin guide and email deliverability
+
+- Added `docs/ADMIN_INFO.md`: roles and permissions, what an admin can do, every admin sidebar
+  option explained, product CSV import, limits, and a first-day setup checklist.
+- Emails: the signup email now uses the same subject/layout as the plain verification-code email,
+  and never contains a link unless `FRONTEND_URL` is a public https address (a localhost/http link
+  is a spam signal). Standard sender headers added (name, Date, Message-ID, Reply-To).
+
+## Sync: prevent concurrent requests from overwriting newer local edits
+
+Single-flight sync (Web Locks across tabs + service worker), `local_revision` on every local edit,
+revision sent with `/sync` and echoed back in `acknowledged`, guarded write-back in one transaction,
+fresh queue read before every retry, bounded follow-up passes, and a serialized mobile store.
+Details in docs/SECURITY_AND_ACCESS.md ("Offline sync: lost-update protection").
+
+## Version-based conflict resolution, central transition policy, change audit, real-time capture
+
+Server-managed `version` per delivery; clients send `base_version`; stale changes are reconciled or
+rejected (structured conflict / 409) by one transition policy shared by sync, online PATCH and customer
+cancel; every accepted/reconciled/rejected decision is audited (Audit Log > Sync Decisions); event times are
+corrected for device clock skew and server time is always recorded. See docs/SECURITY_AND_ACCESS.md.
+
+## Security: outbound webhooks protected against SSRF
+
+HTTPS-only by default; private/loopback/link-local/metadata/reserved addresses refused at save time and again at
+connection time (DNS-rebinding safe, connection pinned to the validated IP); redirects never followed; blocked
+deliveries fail fast with a visible reason. Network-level second layer documented in
+docs/WEBHOOK_EGRESS_HARDENING.md. Details in docs/SECURITY_AND_ACCESS.md.
+
+## Sync: explicit outcomes, blocked queue, and no swallowed background failures
+
+`success` / `partial_success` / `failed` outcomes; permanent vs retryable error classification; blocked (dead-letter)
+and conflicted states with reasons and recovery actions; poisoned batches isolated instead of blocking everything;
+pending / syncing / synced / conflicted / blocked counts in the web and mobile UI; service worker now propagates
+retryable failures so the browser retries. Details in docs/SECURITY_AND_ACCESS.md.
+
+## Hardened product image uploads
+
+Bounded chunked reads (413 before parsing, anonymous uploads refused before the body is read), real-format detection from
+the file's bytes, dimension/decompression-bomb limits checked from the header, full decode, metadata stripping via re-encode,
+random object names, public-read-by-design with nosniff/CSP headers, and durable storage (persistent disk or S3-compatible).
+See docs/UPLOADS_AND_STORAGE.md.
+
+## Versioned database migrations (Alembic)
+
+Frozen baseline + revision chain, idempotent helpers, automatic startup upgrade (with SQLite backup and a Postgres advisory
+lock), `scripts/verify_upgrade.py`, drift-guard tests. See docs/MIGRATIONS.md.
+
+## Sync: per-record transactions and idempotency
+
+Each /sync record is all-or-nothing, the batch is partial-success with an explicit result per record, `event_id` makes
+retries idempotent (`sync_events` ledger), follow-ups run after the commit. See docs/SYNC_CONTRACT.md.
+

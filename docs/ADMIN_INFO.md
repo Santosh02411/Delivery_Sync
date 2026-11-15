@@ -258,9 +258,10 @@ Is the system healthy?
 - **Database Backups:** create a backup, list backups, and **Verify** one.
 
 #### Audit Log (admin only)
-Two tabs:
+Three tabs:
 - **Delivery Status Changes:** who changed a delivery's status and when.
 - **Admin Actions:** user management (deactivate, reactivate, password reset), product, coupon and store-setting changes, product CSV imports. Filters and **Load more**.
+- **Sync Decisions:** every decision the server made about changes coming from agents' devices (and the online status endpoint): **Accepted**, **Applied (older version)** and **Rejected**, with the reason, the version numbers (what the device had read → what the server had → what it became), when it *happened* (corrected if the device clock was wrong) and when it was *decided*. Use it to answer "why does the app show delivered when I marked it failed?" — for example an agent who was offline while you cancelled a delivery cannot bring it back, and the rejection is listed here.
 
 #### My Account
 Edit your name and email, **change your password** (or **set one** if you signed up with Google), and **Delete Account**.
@@ -289,6 +290,7 @@ Rules: prices may be written like `₹1,299.50`; stock must be a whole number; `
 - **Password resets are manual:** *Reset Password* sets a new password directly; you tell the person. (Normal "forgot password" emails exist for users themselves.)
 - **Email:** welcome, verification codes and password resets are only emailed once SMTP is configured in `backend/.env`; otherwise they are printed in the backend console. See the README's "Real emails" section.
 - **Verification does not block login:** a new account can use the app before verifying its email; verification is by a 6-digit code.
+- **Which change wins:** the server compares *versions*, not timestamps. A delivery that was cancelled or completed cannot be changed by an out-of-date device, and agents can only make the status changes listed in `SECURITY_AND_ACCESS.md`.
 - **Offline sync is authenticated:** agents' offline changes are accepted only for deliveries assigned to them; dispatchers/admins can sync within their own organization (see `SECURITY_AND_ACCESS.md`).
 - **Stock numbers:** product stock (used at checkout) and warehouse stock are separate until you use the sync action.
 - **Suspending the organization** pauses it and blocks new joiners; **reactivate** to resume.
