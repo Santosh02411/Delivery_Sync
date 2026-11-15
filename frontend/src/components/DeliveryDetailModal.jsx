@@ -6,6 +6,7 @@ import DeliveryMessages from "./DeliveryMessages";
 import CodCollectionWidget from "./CodCollectionWidget";
 import PackageScanWidget from "./PackageScanWidget";
 import RouteInsightsWidget from "./RouteInsightsWidget";
+import { describeSyncProblem } from "../services/syncOutcome";
 
 const STATUS_LABELS = {
   picked_up: "Picked Up",
@@ -37,6 +38,15 @@ const ATTEMPT_OUTCOME_LABELS = {
   partial_delivery: "Partially Delivered",
   failed_attempt: "Failed Attempt",
 };
+
+/** Plain-words sync state for the detail view: for blocked / conflicted / retrying records it says WHY. */
+function syncStatusText(delivery) {
+  const problem = describeSyncProblem(delivery);
+  if (problem && problem.state === "blocked") return `Blocked — ${problem.detail}`;
+  if (problem && problem.state === "conflicted") return `Conflict — ${problem.detail}`;
+  if (problem && problem.state === "pending") return `Saved locally — ${problem.detail}`;
+  return delivery.sync_status === "synced" ? "Synced" : "Saved locally (not yet synced)";
+}
 
 /**
  * Modal showing full details of a single delivery record, PLUS its full
@@ -301,7 +311,7 @@ export default function DeliveryDetailModal({
           {delivery.sync_status && (
             <DetailRow
               label="Sync Status"
-              value={delivery.sync_status === "synced" ? "Synced" : "Saved locally (not yet synced)"}
+              value={syncStatusText(delivery)}
             />
           )}
         </div>

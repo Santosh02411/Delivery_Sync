@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { fetchAuditLog, fetchActionLog, fetchOrganizationUsers } from "../services/api";
+import { fetchAuditLog, fetchActionLog, fetchOrganizationUsers, fetchDeliveryChangeAudit } from "../services/api";
 
 const PAGE_SIZE = 50;
 
@@ -14,6 +14,10 @@ const PAGE_SIZE = 50;
  *    create/update/delete, coupon create/update/delete, and store
  *    settings changes (visibility/pricing/slots/profile). Backed by
  *    the new ActionLogDB / GET /admin/action-log.
+ *  - "Sync Decisions": every decision the server made about changes
+ *    coming from agents' devices (and the online status endpoint) —
+ *    accepted, reconciled (applied although based on an older version)
+ *    and rejected, with the reason. Backed by GET /admin/delivery-change-audit.
  */
 export default function AuditLogViewer() {
   const [activeTab, setActiveTab] = useState("deliveries");
@@ -45,9 +49,22 @@ export default function AuditLogViewer() {
         >
           Admin Actions
         </button>
+        <button
+          className="btn"
+          style={{
+            borderRadius: "6px 6px 0 0",
+            borderBottom: activeTab === "decisions" ? "2px solid var(--accent-color, #4f8cff)" : "2px solid transparent",
+            fontWeight: activeTab === "decisions" ? 600 : 400,
+          }}
+          onClick={() => setActiveTab("decisions")}
+        >
+          Sync Decisions
+        </button>
       </div>
 
-      {activeTab === "deliveries" ? <DeliveryStatusAuditLog /> : <AdminActionLog />}
+      {activeTab === "deliveries" && <DeliveryStatusAuditLog />}
+      {activeTab === "actions" && <AdminActionLog />}
+      {activeTab === "decisions" && <SyncDecisionsLog />}
     </div>
   );
 }
@@ -329,6 +346,94 @@ function AdminActionLog() {
 
       {hasMore && (
         <button className="btn" style={{ marginTop: "12px" }} onClick={handleLoadMore} disabled={isLoading}>
+          {isLoading ? "Loading..." : "Load more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+
+const OUTCOME_LABELS = { accepted: "Accepted", reconciled: "Applied (older version)", rejected: "Rejected" };
+const OUTCOME_COLORS = { accepted: "var(--status-delivered)", reconciled: "var(--warning, #b45309)", rejected: "var(--danger)" };
+
+/**
+ * "Sync Decisions" tab. Each row is one decision about one change that came from a device (or the
+ * online status endpoint). `Happened` is when it occurred (corrected for a wrong device clock);
+ * `Decided` is the server's real time; Version shows what the device had read -> what the server
+ * had -> what it became, which is the true order of changes (timestamps only describe when).
+ */
+function SyncDecisionsLog() {
+  const { token } = useAuth();
+  const { showToast } = useToast();
+  const [entries, setEntries] = useState([]);
+  const [outcome, setOutcome] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasMore, setHasMore] = useState(false);
+
+  async function load(reset) {
+    setIsLoading(true);
+    try {
+      const offset = reset ? 0 : entries.length;
+      const rows = await fetchDeliveryChangeAudit(token, { outcome: outcome || undefined, limit: PAGE_SIZE, offset });
+      setEntries(reset ? rows : [...entries, ...rows]);
+      setHasMore(rows.length === PAGE_SIZE);
+    } catch (err) {
+      showToast(err.message, "error");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  useEffect(() => { load(true); }, [outcome]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "12px", flexWrap: "wrap" }}>
+        <label style={{ fontSize: "13px" }}>
+          Outcome{" "}
+          <select className="input" value={outcome} onChange={(e) => setOutcome(e.target.value)}>
+            <option value="">All</option>
+            <option value="accepted">Accepted</option>
+            <option value="reconciled">Applied (older version)</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </label>
+        <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+          Every change from an agent's device is checked by version and the status rules, never just by timestamp.
+        </span>
+      </div>
+
+      {entries.length === 0 && !isLoading ? (
+        <p style={{ color: "var(--text-muted)" }}>No sync decisions recorded yet.</p>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="data-table" style={{ width: "100%", fontSize: "12.5px" }}>
+            <thead>
+              <tr><th>Decided</th><th>Happened</th><th>By</th><th>Outcome</th><th>Change</th><th>Version</th><th>Why</th></tr>
+            </thead>
+            <tbody>
+              {entries.map((e) => (
+                <tr key={e.id}>
+                  <td>{new Date(e.recorded_at).toLocaleString()}</td>
+                  <td>
+                    {e.occurred_at ? new Date(e.occurred_at).toLocaleString() : "—"}
+                    {e.clock_offset_seconds ? <div style={{ color: "var(--text-muted)" }}>device clock was off, corrected</div> : null}
+                  </td>
+                  <td>{e.actor_display_name || "—"}</td>
+                  <td style={{ color: OUTCOME_COLORS[e.outcome], fontWeight: 600 }}>{OUTCOME_LABELS[e.outcome] || e.outcome}</td>
+                  <td>{e.order_id || e.delivery_id}: {e.status_before || "—"} → {e.status_after || "—"}</td>
+                  <td className="mono">{e.base_version ?? "—"} → {e.version_before ?? "—"} → {e.version_after ?? "—"}</td>
+                  <td>{e.message || e.code || ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {hasMore && (
+        <button className="btn" style={{ marginTop: "12px" }} onClick={() => load(false)} disabled={isLoading}>
           {isLoading ? "Loading..." : "Load more"}
         </button>
       )}

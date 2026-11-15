@@ -253,7 +253,14 @@ export default function ApiWebhooksManager() {
                   {deliveries.map((d) => (
                     <tr key={d.id}>
                       <td>{d.event_type}</td>
-                      <td>{d.status}</td>
+                      <td>
+                        {d.status}
+                        {d.last_error && d.status !== "success" && (
+                          <div style={{ fontSize: "11px", color: "var(--text-secondary)", maxWidth: "280px" }} title={d.failure_code || undefined}>
+                            {d.last_error}
+                          </div>
+                        )}
+                      </td>
                       <td>{d.attempt_count}</td>
                       <td>{d.response_status_code || "—"}</td>
                       <td>

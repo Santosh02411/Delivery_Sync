@@ -7,7 +7,9 @@ import {
   setActiveUser,
   queueLocationPing,
 } from "../services/indexedDb";
-import { startAutoSync, runSync, describeConflict } from "../services/syncEngine";
+import { startAutoSync, runSync } from "../services/syncEngine";
+import { summarizeRunResult, describeSyncProblem } from "../services/syncOutcome";
+import useSyncingIds from "../hooks/useSyncingIds";
 import { startPodSync, queuePod, countQueuedPod } from "../services/podOfflineQueue";
 import { startLocationPingAutoSync } from "../services/locationSyncEngine";
 import { writeSyncContext } from "../services/backgroundSyncContext";
@@ -17,6 +19,7 @@ import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import DeliveryStatusUpdater from "./DeliveryStatusUpdater";
 import SyncStatusBadge from "./SyncStatusBadge";
+import SyncStatusPanel from "./SyncStatusPanel";
 import StatusBadge from "./StatusBadge";
 import DeliveryDetailModal from "./DeliveryDetailModal";
 import Pagination from "./Pagination";
@@ -51,7 +54,7 @@ export default function AgentDeliveryList() {
   const [areaSuggestions, setAreaSuggestions] = useState([]);
   const [manualAreaInput, setManualAreaInput] = useState("");
   const [isSettingArea, setIsSettingArea] = useState(false);
-  const [conflictNotices, setConflictNotices] = useState([]);
+  const syncingIds = useSyncingIds();
   const [reschedulingId, setReschedulingId] = useState(null);
   const [rescheduleDate, setRescheduleDate] = useState("");
   const [rescheduleReason, setRescheduleReason] = useState("");
@@ -69,12 +72,29 @@ export default function AgentDeliveryList() {
     pullAssignedDeliveries();
     fetchAreaSuggestions(token).then(setAreaSuggestions).catch(() => {});
 
+    // The service worker's background sync can finish while this screen is open (or between visits): reload from
+    // local storage so the counts and badges reflect what it settled, blocked or kept for a retry.
+    const onBackgroundSync = () => loadFromLocalStorage();
+    window.addEventListener("background-sync-complete", onBackgroundSync);
+
     const stopAutoSync = startAutoSync((result) => {
-      if (result.success && result.syncedCount > 0) {
-        loadFromLocalStorage();
+      // Any run that did something — synced, blocked, counted a retry, or stored a conflict — changed what is
+      // stored on this device, so the screen is reloaded from it (a pure local read). Records the server
+      // refused are NOT silent: they show up in the Sync status panel with a reason.
+      if (!result.skipped) loadFromLocalStorage();
+      if (result.conflictCount > 0) {
+        showToast(
+          result.conflictCount === 1
+            ? "One of your updates was overridden by a newer change — see Sync status."
+            : `${result.conflictCount} of your updates were overridden by newer changes — see Sync status.`,
+          "error"
+        );
       }
-      if (result.conflicts && result.conflicts.length > 0) {
-        recordConflicts(result.conflicts);
+      if (result.blockedCount > 0) {
+        showToast(
+          `${result.blockedCount} update${result.blockedCount === 1 ? " couldn't" : "s couldn't"} be synced and ${result.blockedCount === 1 ? "needs" : "need"} your attention — see Sync status.`,
+          "error"
+        );
       }
     });
 
@@ -90,6 +110,7 @@ export default function AgentDeliveryList() {
     }, PULL_INTERVAL_MS);
 
     return () => {
+      window.removeEventListener("background-sync-complete", onBackgroundSync);
       stopAutoSync();
       stopLocationSync();
       stopPodSync();
@@ -367,60 +388,23 @@ export default function AgentDeliveryList() {
 
   async function handleManualSync() {
     const result = await runSync();
-    if (result.success) {
-      if (result.syncedCount > 0) {
-        showToast(`Synced ${result.syncedCount} record(s).`, "success");
-      } else {
-        showToast("Already up to date.", "info");
-      }
-      if (result.errorCount > 0) {
-        showToast(
-          `${result.errorCount} record(s) couldn't sync — they may not belong to your account.`,
-          "error"
-        );
-      }
-      if (result.conflicts && result.conflicts.length > 0) {
-        recordConflicts(result.conflicts);
-      }
-      // CRITICAL: reload the UI from IndexedDB directly, unconditionally —
-      // this is a pure local read and needs no network at all. The
-      // previous version called pullAssignedDeliveries() here instead,
-      // which ALSO tries to fetch new assignments from the server and
-      // bails out early if navigator.onLine is false. That early return
-      // was silently skipping the local-only UI refresh too, so a
-      // successful sync (which DID update IndexedDB to "synced" — the
-      // toast above was accurate) could still show stale "Saved locally"
-      // badges on screen if the browser reported offline at that exact
-      // moment. Splitting these two concerns fixes that: the local
-      // reload always happens, and pulling new assignments is attempted
-      // separately as a best-effort, network-dependent step.
-      await loadFromLocalStorage();
-      await pullAssignedDeliveries();
-    } else {
-      showToast(`Sync failed: ${result.error}`, "error");
-    }
-  }
+    const { tone, message } = summarizeRunResult(result);
+    showToast(message, tone);
 
-  function recordConflicts(conflicts) {
-    // Durable banner (not just a toast) — a discarded offline change is
-    // exactly the kind of thing an agent shouldn't have to catch in a
-    // 3.5-second popup. It stays visible until they dismiss it.
-    const withIds = conflicts.map((c) => ({ ...c, _noticeId: `${c.id}-${c.your_updated_at}` }));
-    setConflictNotices((prev) => {
-      const existingIds = new Set(prev.map((n) => n._noticeId));
-      const fresh = withIds.filter((n) => !existingIds.has(n._noticeId));
-      return [...prev, ...fresh];
-    });
-    showToast(
-      conflicts.length === 1
-        ? "One of your updates was overridden by a newer change — see details below."
-        : `${conflicts.length} of your updates were overridden by newer changes — see details below.`,
-      "error"
-    );
-  }
-
-  function dismissConflictNotice(noticeId) {
-    setConflictNotices((prev) => prev.filter((n) => n._noticeId !== noticeId));
+    // CRITICAL: reload the UI from IndexedDB directly, unconditionally —
+    // this is a pure local read and needs no network at all. The
+    // previous version called pullAssignedDeliveries() here instead,
+    // which ALSO tries to fetch new assignments from the server and
+    // bails out early if navigator.onLine is false. That early return
+    // was silently skipping the local-only UI refresh too, so a
+    // successful sync (which DID update IndexedDB to "synced" — the
+    // toast above was accurate) could still show stale "Saved locally"
+    // badges on screen if the browser reported offline at that exact
+    // moment. Splitting these two concerns fixes that: the local
+    // reload always happens, and pulling new assignments is attempted
+    // separately as a best-effort, network-dependent step.
+    await loadFromLocalStorage();
+    if (!result.requestFailed) await pullAssignedDeliveries();
   }
 
   const filteredDeliveries = deliveries.filter((d) =>
@@ -435,25 +419,7 @@ export default function AgentDeliveryList() {
     <div>
       <h2 className="page-title">My Deliveries</h2>
 
-      {conflictNotices.length > 0 && (
-        <div style={{ marginBottom: "14px", display: "grid", gap: "8px" }}>
-          {conflictNotices.map((c) => (
-            <div
-              key={c._noticeId}
-              className="card"
-              style={{ borderColor: "var(--danger)", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "10px" }}
-            >
-              <div style={{ fontSize: "12.5px" }}>
-                <strong style={{ color: "var(--danger)" }}>Update overridden — </strong>
-                {describeConflict(c)}
-              </div>
-              <button className="btn" style={{ fontSize: "11px", flexShrink: 0 }} onClick={() => dismissConflictNotice(c._noticeId)}>
-                Dismiss
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <SyncStatusPanel deliveries={deliveries} syncingIds={syncingIds} onChanged={loadFromLocalStorage} />
 
       <SuggestedRoute deliveries={deliveries} token={token} />
 
@@ -578,7 +544,11 @@ export default function AgentDeliveryList() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span className="delivery-card-order-id">{delivery.order_id}</span>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <SyncStatusBadge status={delivery.sync_status} />
+              <SyncStatusBadge
+                status={delivery.sync_status}
+                syncing={syncingIds.has(delivery.id)}
+                title={describeSyncProblem(delivery)?.detail}
+              />
               <button className="btn-info-outline" onClick={() => setSelectedDelivery(delivery)}>
                 Details
               </button>
