@@ -7,6 +7,7 @@ import "fake-indexeddb/auto";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../backgroundSync", () => ({ requestBackgroundSync: vi.fn() }));
+import { requestBackgroundSync } from "../backgroundSync";
 
 import {
   setActiveUser,
@@ -18,7 +19,13 @@ import {
   storeServerRecord,
   mergeAssignedDeliveries,
   deleteDeliveryLocally,
+  markBlockedIfUnchanged,
+  markRetryableFailureIfUnchanged,
+  markConflictedIfUnchanged,
+  retryBlockedRecord,
+  acknowledgeConflict,
 } from "../indexedDb";
+import { classifyRecordError, MAX_RECORD_ATTEMPTS } from "../syncOutcome";
 
 let userCounter = 0;
 beforeEach(() => {
@@ -108,5 +115,129 @@ describe("pulling records from the server never clobbers a pending local edit", 
     await mergeAssignedDeliveries([{ ...base, status: "picked_up" }]);
     const [stored] = await getAllLocalDeliveries();
     expect(stored).toMatchObject({ status: "delivered", sync_status: "pending" });
+  });
+});
+
+describe("blocked records (the dead-letter queue)", () => {
+  const notAssigned = classifyRecordError({ code: "not_assigned", error: "This delivery isn't assigned to you." });
+
+  it("a blocked record leaves the sync queue but stays stored, with its reason and its data untouched", async () => {
+    const saved = await saveDeliveryLocally({ ...base, status: "delivered" });
+    const result = await markBlockedIfUnchanged("d1", notAssigned, saved.local_revision);
+
+    expect(result).toMatchObject({ applied: true, blocked: true });
+    expect(await getPendingDeliveries()).toEqual([]); // never re-sent
+    const [stored] = await getAllLocalDeliveries();
+    expect(stored).toMatchObject({ id: "d1", status: "delivered", sync_status: "blocked", sync_error: { code: "not_assigned" } });
+  });
+
+  it("does NOT block a record the agent edited again while the request was in flight (the edit may fix it)", async () => {
+    const first = await saveDeliveryLocally(base);
+    await saveDeliveryLocally({ ...base, status: "delivered" }); // newer edit
+    const result = await markBlockedIfUnchanged("d1", notAssigned, first.local_revision);
+
+    expect(result).toEqual({ applied: false, reason: "changed_during_sync" });
+    expect((await getPendingDeliveries())).toHaveLength(1);
+  });
+
+  it("a fresh edit of a blocked record clears the old error and queues it again", async () => {
+    const saved = await saveDeliveryLocally(base);
+    await markBlockedIfUnchanged("d1", notAssigned, saved.local_revision);
+    const [blocked] = await getAllLocalDeliveries();
+
+    const edited = await saveDeliveryLocally({ ...blocked, status: "delivered" }); // the stale React copy still carries sync_error
+    expect(edited).toMatchObject({ sync_status: "pending", local_revision: 2 });
+    expect(edited).not.toHaveProperty("sync_error");
+    expect(await getPendingDeliveries()).toHaveLength(1);
+  });
+
+  it("retryBlockedRecord puts it back in the queue with a clean slate and asks for a background sync", async () => {
+    const saved = await saveDeliveryLocally(base);
+    await markBlockedIfUnchanged("d1", notAssigned, saved.local_revision);
+    requestBackgroundSync.mockClear();
+
+    expect(await retryBlockedRecord("d1")).toMatchObject({ applied: true });
+    const [stored] = await getAllLocalDeliveries();
+    expect(stored).toMatchObject({ sync_status: "pending" });
+    expect(stored).not.toHaveProperty("sync_error");
+    expect(requestBackgroundSync).toHaveBeenCalled();
+    expect(await retryBlockedRecord("d1")).toEqual({ applied: false, reason: "not_blocked" }); // already pending
+  });
+
+  it("a routine pull from the server does not erase a blocked record", async () => {
+    const saved = await saveDeliveryLocally({ ...base, status: "delivered" });
+    await markBlockedIfUnchanged("d1", notAssigned, saved.local_revision);
+    await mergeAssignedDeliveries([{ ...base, status: "picked_up" }]);
+
+    const [stored] = await getAllLocalDeliveries();
+    expect(stored).toMatchObject({ status: "delivered", sync_status: "blocked" });
+  });
+
+  it("discarding removes only the local copy", async () => {
+    const saved = await saveDeliveryLocally(base);
+    await markBlockedIfUnchanged("d1", notAssigned, saved.local_revision);
+    await deleteDeliveryLocally("d1");
+    expect(await getAllLocalDeliveries()).toEqual([]);
+  });
+});
+
+describe("retryable failures are counted, then blocked — never an endless loop", () => {
+  const busy = classifyRecordError({ code: "concurrent_update", error: "busy" });
+
+  it(`stays pending (with a visible counter) until attempt ${MAX_RECORD_ATTEMPTS}, then is blocked`, async () => {
+    const saved = await saveDeliveryLocally(base);
+    for (let attempt = 1; attempt < MAX_RECORD_ATTEMPTS; attempt += 1) {
+      const result = await markRetryableFailureIfUnchanged("d1", busy, saved.local_revision);
+      expect(result).toMatchObject({ applied: true, blocked: false });
+      const [stored] = await getAllLocalDeliveries();
+      expect(stored).toMatchObject({ sync_status: "pending", sync_attempts: attempt });
+    }
+    const last = await markRetryableFailureIfUnchanged("d1", busy, saved.local_revision);
+    expect(last).toMatchObject({ applied: true, blocked: true });
+    expect(await getPendingDeliveries()).toEqual([]);
+    const [stored] = await getAllLocalDeliveries();
+    expect(stored).toMatchObject({ sync_status: "blocked", sync_error: { code: "retry_exhausted" } });
+  });
+});
+
+describe("conflicted records", () => {
+  const conflict = { id: "d1", order_id: "ORD-1", code: "stale_version", message: "Cancelled after you last synced.", your_status: "delivered", kept_status: "cancelled" };
+
+  it("stores the server's copy flagged conflicted with the explanation; acknowledging makes it plain synced", async () => {
+    const saved = await saveDeliveryLocally({ ...base, status: "delivered" });
+    const result = await markConflictedIfUnchanged("d1", { ...base, status: "cancelled", version: 5 }, conflict, saved.local_revision);
+    expect(result.applied).toBe(true);
+    expect(await getPendingDeliveries()).toEqual([]);
+    const [stored] = await getAllLocalDeliveries();
+    expect(stored).toMatchObject({ status: "cancelled", version: 5, sync_status: "conflicted", sync_conflict: { message: "Order ORD-1: Cancelled after you last synced." } });
+
+    await acknowledgeConflict("d1");
+    const [after] = await getAllLocalDeliveries();
+    expect(after).toMatchObject({ status: "cancelled", sync_status: "synced" });
+    expect(after).not.toHaveProperty("sync_conflict");
+  });
+
+  it("a pull refreshes a conflicted record's data but keeps the notice until it is acknowledged", async () => {
+    const saved = await saveDeliveryLocally({ ...base, status: "delivered" });
+    await markConflictedIfUnchanged("d1", { ...base, status: "cancelled", version: 5 }, conflict, saved.local_revision);
+    await mergeAssignedDeliveries([{ ...base, status: "cancelled", version: 6 }]);
+
+    const [stored] = await getAllLocalDeliveries();
+    expect(stored).toMatchObject({ version: 6, sync_status: "conflicted", sync_conflict: { message: expect.any(String) } });
+  });
+});
+
+describe("event_id — the idempotency key of each local edit", () => {
+  it("every edit gets its own event_id, and 'try again' on a blocked record keeps the original one", async () => {
+    const first = await saveDeliveryLocally(base);
+    expect(first.event_id).toBeTruthy();
+    const second = await saveDeliveryLocally({ ...base, status: "delivered" });
+    expect(second.event_id).toBeTruthy();
+    expect(second.event_id).not.toBe(first.event_id);          // a new edit is a new event
+
+    await markBlockedIfUnchanged("d1", classifyRecordError({ code: "not_assigned" }), second.local_revision);
+    await retryBlockedRecord("d1");
+    const [retried] = await getAllLocalDeliveries();
+    expect(retried.event_id).toBe(second.event_id);            // the SAME edit is retried: same key, so it can't be applied twice
   });
 });
