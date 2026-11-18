@@ -9,6 +9,7 @@ import {
 } from "../locationTask";
 import { getPendingCount } from "../services/offlineStore";
 import { runSync } from "../services/offlineSync";
+import { summarizeRunResult } from "../services/syncOutcome";
 import { colors } from "../theme";
 
 export default function SettingsScreen() {
@@ -34,14 +35,10 @@ export default function SettingsScreen() {
     try {
       const result = await runSync();
       setPendingCount(await getPendingCount());
-      if (result.success) {
-        Alert.alert(
-          "Sync complete",
-          result.syncedCount > 0 ? `Synced ${result.syncedCount} update(s).` : "Nothing to sync — you're up to date."
-        );
-      } else {
-        Alert.alert("Sync failed", result.error || "Couldn't reach the server. Still saved on this device.");
-      }
+      // Honest wording for every outcome: a run in which the server refused records is not "complete".
+      const { message } = summarizeRunResult(result);
+      const titles = { success: "Sync complete", partial_success: "Synced with problems", failed: "Sync failed", skipped: "Sync already running" };
+      Alert.alert(titles[result.outcome] || "Sync", message);
     } finally {
       setIsSyncing(false);
     }

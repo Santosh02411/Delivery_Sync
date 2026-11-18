@@ -1,8 +1,12 @@
-import React, { useCallback, useState } from "react";
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl } from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl, Alert } from "react-native";
 import { useFocusEffect } from "@react-navigation/native";
 import { fetchMyDeliveries } from "../services/api";
-import { getPendingCount } from "../services/offlineStore";
+import { getCachedDeliveries } from "../services/offlineStore";
+import { getSyncingIds, subscribeSyncState, retryBlocked, discardBlocked, acknowledgeConflictNotice, runSync } from "../services/offlineSync";
+import { mergeLocalSyncState } from "../services/syncView";
+import { summarizeSyncStates, describeSyncProblem } from "../services/syncOutcome";
+import SyncStatusPanel from "../components/SyncStatusPanel";
 import { useAuth } from "../context/AuthContext";
 import { colors, statusLabels, statusColors } from "../theme";
 
@@ -12,7 +16,7 @@ export default function DeliveryListScreen({ navigation }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState("");
   const [isOffline, setIsOffline] = useState(false);
-  const [pendingCount, setPendingCount] = useState(0);
+  const [syncingIds, setSyncingIds] = useState(() => getSyncingIds());
 
   const load = useCallback(async () => {
     setError("");
@@ -28,8 +32,9 @@ export default function DeliveryListScreen({ navigation }) {
         if (aDone !== bDone) return aDone ? 1 : -1;
         return new Date(b.updated_at) - new Date(a.updated_at);
       });
-      setDeliveries(activeFirst);
-      setPendingCount(await getPendingCount());
+      // Overlay what is stored on this device: the agent's own unsent / blocked / conflicted changes must be
+      // visible (and a blocked record for a delivery that is no longer theirs must not silently disappear).
+      setDeliveries(mergeLocalSyncState(activeFirst, await getCachedDeliveries()));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -43,7 +48,30 @@ export default function DeliveryListScreen({ navigation }) {
     }, [load])
   );
 
+  // Reload whenever a sync starts, finishes, or a recovery action is taken, and track what is in flight right now.
+  useEffect(() => subscribeSyncState(() => { setSyncingIds(getSyncingIds()); load(); }), [load]);
+
+  const summary = summarizeSyncStates(deliveries, syncingIds);
+
+  function handleRecoveryAction(record, actionId) {
+    if (actionId === "retry") {
+      retryBlocked(record.id).then(() => runSync()).then(load);
+    } else if (actionId === "acknowledge") {
+      acknowledgeConflictNotice(record.id).then(load);
+    } else if (actionId === "discard") {
+      Alert.alert(
+        "Discard your change?",
+        `Your unsent change to ${record.order_id} will be removed from this phone. The delivery on the server is not affected.`,
+        [
+          { text: "Keep", style: "cancel" },
+          { text: "Discard", style: "destructive", onPress: () => discardBlocked(record.id).then(load) },
+        ]
+      );
+    }
+  }
+
   function renderItem({ item }) {
+    const problem = describeSyncProblem(item);
     return (
       <TouchableOpacity style={styles.card} onPress={() => navigation.navigate("DeliveryDetail", { deliveryId: item.id })}>
         <View style={styles.cardHeader}>
@@ -54,9 +82,16 @@ export default function DeliveryListScreen({ navigation }) {
             </Text>
           </View>
         </View>
-        {item.sync_status === "pending" && (
-          <Text style={styles.pendingTag}>⏳ Saved offline — will sync automatically</Text>
-        )}
+        {problem ? (
+          <Text style={[styles.pendingTag, problem.state === "blocked" && { color: colors.danger }]}>
+            {problem.state === "blocked" ? "⛔ Can't sync: " : problem.state === "conflicted" ? "⚠ " : "⏳ "}
+            {problem.detail}
+          </Text>
+        ) : item.sync_status === "pending" ? (
+          <Text style={styles.pendingTag}>
+            {syncingIds.has(item.id) ? "🔄 Syncing…" : "⏳ Saved offline — will sync automatically"}
+          </Text>
+        ) : null}
         {item.location_note ? <Text style={styles.meta}>{item.location_note}</Text> : null}
         {item.expected_by ? (
           <Text style={styles.meta}>Expected by {new Date(item.expected_by).toLocaleString()}</Text>
@@ -71,17 +106,11 @@ export default function DeliveryListScreen({ navigation }) {
         <View style={styles.offlineBanner}>
           <Text style={styles.offlineBannerText}>
             Working offline — showing your last synced deliveries
-            {pendingCount > 0 ? ` (${pendingCount} update${pendingCount === 1 ? "" : "s"} queued to sync)` : ""}
+            {summary.pending > 0 ? ` (${summary.pending} update${summary.pending === 1 ? "" : "s"} queued to sync)` : ""}
           </Text>
         </View>
       )}
-      {!isOffline && pendingCount > 0 && (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineBannerText}>
-            {pendingCount} update{pendingCount === 1 ? "" : "s"} waiting to sync…
-          </Text>
-        </View>
-      )}
+      <SyncStatusPanel records={deliveries} syncingIds={syncingIds} onAction={handleRecoveryAction} />
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <FlatList
         data={deliveries}

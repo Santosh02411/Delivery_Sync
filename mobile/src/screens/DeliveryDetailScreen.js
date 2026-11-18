@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator
 import { useFocusEffect } from "@react-navigation/native";
 import { getDelivery, updateDeliveryStatus } from "../services/api";
 import { colors, statusLabels, statusColors } from "../theme";
+import { describeSyncProblem } from "../services/syncOutcome";
 
 // Which status a simple one-tap "Mark as..." button moves a delivery
 // to next. Notably, "delivered" and "failed_attempt" are NOT in this
@@ -99,7 +100,17 @@ export default function DeliveryDetailScreen({ route, navigation }) {
       )}
       {delivery.sync_status === "pending" && (
         <View style={styles.offlineBanner}>
-          <Text style={styles.offlineBannerText}>⏳ This update is saved on this device and waiting to sync</Text>
+          <Text style={styles.offlineBannerText}>
+            {describeSyncProblem(delivery)?.detail || "⏳ This update is saved on this device and waiting to sync"}
+          </Text>
+        </View>
+      )}
+      {(delivery.sync_status === "blocked" || delivery.sync_status === "conflicted") && (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineBannerText}>
+            {delivery.sync_status === "blocked" ? "⛔ Can't sync: " : "⚠ "}
+            {describeSyncProblem(delivery)?.detail} Go back to the delivery list to resolve it.
+          </Text>
         </View>
       )}
       {queuedNotice ? (
