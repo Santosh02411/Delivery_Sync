@@ -15,6 +15,7 @@ import ForgotPasswordPage from "./components/ForgotPasswordPage";
 import ResetPasswordPage from "./components/ResetPasswordPage";
 import TrackingPage from "./components/TrackingPage";
 import CustomerDashboard from "./components/CustomerDashboard";
+import { summarizeBackgroundSync } from "./services/syncOutcome";
 
 // Everything below this line is a role-gated admin/dispatcher "settings
 // & reports" page reached only via a specific Sidebar nav click — never
@@ -170,7 +171,8 @@ function RootRouter() {
     // including one that happened while every tab was closed, the
     // moment this tab is next open to show it.
     function handleBackgroundSync(event) {
-      showToast(`Synced ${event.detail.syncedCount} item(s) that were queued while offline.`, "info");
+      const summary = summarizeBackgroundSync(event.detail);
+      if (summary) showToast(summary.message, summary.tone);
     }
     window.addEventListener("background-sync-complete", handleBackgroundSync);
     return () => window.removeEventListener("background-sync-complete", handleBackgroundSync);

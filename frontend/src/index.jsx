@@ -24,7 +24,9 @@ if ("serviceWorker" in navigator) {
   // tree (before ToastProvider mounts) — App.jsx listens for it and
   // shows a real toast once the tree is up.
   navigator.serviceWorker.addEventListener("message", (event) => {
-    if (event.data?.type === "background-sync-complete" && event.data.syncedCount > 0) {
+    const data = event.data;
+    const worthShowing = data && (data.syncedCount > 0 || data.blockedCount > 0 || data.retryCount > 0 || data.authExpired);
+    if (data?.type === "background-sync-complete" && worthShowing) {
       window.dispatchEvent(new CustomEvent("background-sync-complete", { detail: event.data }));
     }
   });
