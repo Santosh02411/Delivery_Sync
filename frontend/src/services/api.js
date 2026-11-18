@@ -945,6 +945,21 @@ export async function disableTwoFactor(token, password) {
 
 // ---------- Admin audit log ----------
 
+export async function fetchDeliveryChangeAudit(token, { outcome, code, limit, offset } = {}) {
+  const params = new URLSearchParams();
+  if (outcome) params.set("outcome", outcome);
+  if (code) params.set("code", code);
+  if (limit) params.set("limit", limit);
+  if (offset) params.set("offset", offset);
+
+  const response = await fetch(`${API_BASE_URL}/admin/delivery-change-audit?${params.toString()}`, {
+    headers: authHeaders(token),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.detail || "Failed to load sync decisions");
+  return data;
+}
+
 export async function fetchAuditLog(token, { dateFrom, dateTo, changedByUserId, orderId, limit, offset } = {}) {
   const params = new URLSearchParams();
   if (dateFrom) params.set("date_from", dateFrom);
@@ -1219,11 +1234,20 @@ export async function syncPendingDeliveries(pendingRecords) {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ records: pendingRecords }),
+    // client_sent_at = this device's clock right now. The server compares it with its own clock to learn how
+    // far off the device is, and uses that to record the REAL time of events that happened while offline.
+    body: JSON.stringify({ records: pendingRecords, client_sent_at: new Date().toISOString() }),
   });
   if (!response.ok) {
     const error = new Error(response.status === 401 ? "Session expired — sign in again to sync." : "Sync request failed");
     error.status = response.status;
+    // The server's explanation (FastAPI puts it in `detail`: a string, or a list naming the invalid
+    // records by position). The sync engine uses it to find and block the one record that is at fault.
+    try {
+      error.detail = (await response.json()).detail;
+    } catch {
+      error.detail = undefined;
+    }
     throw error;
   }
   return response.json();

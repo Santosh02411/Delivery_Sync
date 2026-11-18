@@ -23,6 +23,11 @@ const PINGS_STORE = "location_pings";
 const MAX_QUEUED_PINGS = 30; // caps how large a gap of missed pings we'll try to replay — old enough entries get dropped rather than growing unbounded over a long offline stretch
 
 import { requestBackgroundSync } from "./backgroundSync";
+import { nextRevision, decideSyncedWrite, decideServerRecordWrite } from "./syncRevision";
+import {
+  decideBlockedWrite, decideRetryableFailureWrite, decideConflictWrite,
+  decideRetryBlocked, decideAcknowledgeConflict, withoutLocalSyncFields, newEventId,
+} from "./syncOutcome";
 
 let activeDbName = null;
 
@@ -35,6 +40,15 @@ let activeDbName = null;
  */
 export function setActiveUser(userId) {
   activeDbName = `delivery_sync_db_${userId}`;
+}
+
+/**
+ * Name of the cross-tab lock that guards syncing for the active user. The web page, other
+ * tabs, and the service worker (public/sw.js builds the identical string) all take this same
+ * lock, so only one of them uploads a given user's queue at a time.
+ */
+export function getSyncLockName() {
+  return `delivery-sync:${activeDbName}`;
 }
 
 /**
@@ -78,11 +92,19 @@ export async function saveDeliveryLocally(record) {
   const saved = await new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
     const store = tx.objectStore(STORE_NAME);
-    const recordToSave = { ...record, sync_status: "pending" };
-    const request = store.put(recordToSave);
-
-    request.onsuccess = () => resolve(recordToSave);
-    request.onerror = (event) => reject(event.target.error);
+    // Read-then-write inside ONE transaction, so two quick edits can never be given the same
+    // revision. The revision comes from what is stored, never from the (possibly stale)
+    // record object the caller passed in.
+    const getRequest = store.get(record.id);
+    getRequest.onsuccess = () => {
+      // A fresh local edit starts a clean slate: any earlier "blocked" / "conflicted" / retry bookkeeping
+      // belonged to the OLD revision, so it is cleared and the edit gets its own chance to sync.
+      const recordToSave = { ...withoutLocalSyncFields(record), sync_status: "pending", local_revision: nextRevision(getRequest.result), event_id: newEventId() };
+      const putRequest = store.put(recordToSave);
+      putRequest.onsuccess = () => resolve(recordToSave);
+      putRequest.onerror = (event) => reject(event.target.error);
+    };
+    getRequest.onerror = (event) => reject(event.target.error);
   });
 
   // Ask the browser to wake the service worker and sync this the moment
@@ -118,20 +140,111 @@ export async function getPendingDeliveries() {
 }
 
 /**
- * Marks a local record as synced after the server confirms it.
- * If the server returned a different final version (due to conflict
- * resolution), we store that version instead of our local one.
+ * Marks a local record as synced after the server answered for the version we SENT.
+ * Stores the server's resolved version (it may differ because of conflict resolution) — but
+ * ONLY if the record is still at `submittedRevision`. If the agent edited it again while the
+ * request was in flight, the newer edit is kept as "pending" and nothing is overwritten.
+ *
+ * The compare and the write happen in a single readwrite transaction, so nothing can slip in
+ * between them. Resolves to { applied: boolean, reason?: string }.
  */
-export async function markAsSynced(id, resolvedRecord) {
+export async function markAsSyncedIfUnchanged(id, resolvedRecord, submittedRevision) {
   const db = await openDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE_NAME, "readwrite");
     const store = tx.objectStore(STORE_NAME);
-    const finalRecord = { ...resolvedRecord, sync_status: "synced" };
-    const request = store.put(finalRecord);
+    const getRequest = store.get(id);
+    getRequest.onsuccess = () => {
+      const decision = decideSyncedWrite(getRequest.result, resolvedRecord, submittedRevision);
+      if (!decision.write) {
+        resolve({ applied: false, reason: decision.reason });
+        return;
+      }
+      const putRequest = store.put(decision.record);
+      putRequest.onsuccess = () => resolve({ applied: true });
+      putRequest.onerror = (event) => reject(event.target.error);
+    };
+    getRequest.onerror = (event) => reject(event.target.error);
+  });
+}
 
-    request.onsuccess = () => resolve(finalRecord);
-    request.onerror = (event) => reject(event.target.error);
+/**
+ * Generic "read the record, let a pure decision function say what to write, write it" — all in ONE
+ * readwrite transaction, so nothing can slip in between the check and the write. Resolves to
+ * { applied, reason?, blocked? } exactly like markAsSyncedIfUnchanged.
+ */
+function applyDecision(id, decide) {
+  return openDb().then(
+    (db) =>
+      new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, "readwrite");
+        const store = tx.objectStore(STORE_NAME);
+        const getRequest = store.get(id);
+        getRequest.onsuccess = () => {
+          const decision = decide(getRequest.result);
+          if (!decision.write) {
+            resolve({ applied: false, reason: decision.reason });
+            return;
+          }
+          const putRequest = store.put(decision.record);
+          putRequest.onsuccess = () => resolve({ applied: true, blocked: Boolean(decision.blocked), record: decision.record });
+          putRequest.onerror = (event) => reject(event.target.error);
+        };
+        getRequest.onerror = (event) => reject(event.target.error);
+      })
+  );
+}
+
+/** The server refused this revision for good: quarantine it with its reason (the dead-letter queue). */
+export function markBlockedIfUnchanged(id, errorInfo, submittedRevision) {
+  return applyDecision(id, (current) => decideBlockedWrite(current, errorInfo, submittedRevision));
+}
+
+/** A retryable failure for this record: counts the attempt; blocks it after too many. */
+export function markRetryableFailureIfUnchanged(id, errorInfo, submittedRevision) {
+  return applyDecision(id, (current) => decideRetryableFailureWrite(current, errorInfo, submittedRevision));
+}
+
+/** The server did not apply this change: store ITS copy, flagged "conflicted", with the explanation. */
+export function markConflictedIfUnchanged(id, resolvedRecord, conflict, submittedRevision) {
+  return applyDecision(id, (current) => decideConflictWrite(current, resolvedRecord, conflict, submittedRevision));
+}
+
+/** Recovery: put a blocked record back into the sync queue. */
+export function retryBlockedRecord(id) {
+  return applyDecision(id, decideRetryBlocked).then((outcome) => {
+    if (outcome.applied) requestBackgroundSync();
+    return outcome;
+  });
+}
+
+/** Recovery: the agent has seen a conflict notice. */
+export function acknowledgeConflict(id) {
+  return applyDecision(id, decideAcknowledgeConflict);
+}
+
+/**
+ * Stores a record that came FROM the server (not one we just uploaded), unless there is an
+ * unsynced local edit for it — checked inside the same transaction as the write, so an edit
+ * made a moment ago can't be clobbered by an older server copy.
+ */
+export async function storeServerRecord(id, serverRecord) {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    const store = tx.objectStore(STORE_NAME);
+    const getRequest = store.get(id);
+    getRequest.onsuccess = () => {
+      const decision = decideServerRecordWrite(getRequest.result, serverRecord);
+      if (!decision.write) {
+        resolve({ applied: false, reason: decision.reason });
+        return;
+      }
+      const putRequest = store.put(decision.record);
+      putRequest.onsuccess = () => resolve({ applied: true });
+      putRequest.onerror = (event) => reject(event.target.error);
+    };
+    getRequest.onerror = (event) => reject(event.target.error);
   });
 }
 
@@ -162,21 +275,11 @@ export async function deleteDeliveryLocally(id) {
  * "synced" (meaning there's no unsynced local edit to protect).
  */
 export async function mergeAssignedDeliveries(serverRecords) {
-  const existingLocal = await getAllLocalDeliveries();
-  const existingById = new Map(existingLocal.map((r) => [r.id, r]));
-
   for (const serverRecord of serverRecords) {
-    const local = existingById.get(serverRecord.id);
-    if (!local || local.sync_status === "synced") {
-      // markAsSynced (not saveDeliveryLocally) is used deliberately here —
-      // saveDeliveryLocally always marks records "pending", which would
-      // incorrectly queue this freshly-pulled, already-synced record to be
-      // uploaded again on the next sync.
-      await markAsSynced(serverRecord.id, serverRecord);
-    }
-    // If local exists and is "pending", skip — don't clobber an unsynced
-    // local edit. The next push-sync will reconcile it against the server
-    // using the existing last-write-wins conflict logic.
+    // storeServerRecord checks "is there an unsynced local edit?" INSIDE the write transaction
+    // (the old version read everything first and wrote later, so an edit made in between was
+    // lost). It never marks the record "pending", so a freshly-pulled record isn't re-uploaded.
+    await storeServerRecord(serverRecord.id, serverRecord);
   }
 }
 
