@@ -803,6 +803,31 @@ a, button, .btn, select, input {
 
 .sync-badge.synced { background-color: rgba(61,214,140,0.15); color: var(--success); }
 .sync-badge.pending { background-color: rgba(242,169,59,0.15); color: var(--status-out-for-delivery); }
+.sync-badge.syncing { background-color: rgba(79,163,247,0.15); color: var(--info); }
+.sync-badge.conflicted { background-color: rgba(242,169,59,0.22); color: var(--status-out-for-delivery); border: 1px solid currentColor; }
+.sync-badge.blocked { background-color: rgba(239,83,80,0.15); color: var(--danger); border: 1px solid currentColor; }
+
+/* ---------- Sync status panel ---------- */
+
+.sync-panel { margin-bottom: 14px; }
+.sync-panel-title { font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 10px; }
+.sync-counters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.sync-counter { display: flex; flex-direction: column; align-items: center; padding: 8px 4px; border-radius: 8px; background: rgba(128,128,128,0.08); color: var(--text-secondary); }
+.sync-counter-number { font-size: 18px; font-weight: 700; line-height: 1.1; }
+.sync-counter-label { font-size: 11px; }
+.sync-counter.syncing.active { background: rgba(79,163,247,0.15); color: var(--info); }
+.sync-counter.pending.active { background: rgba(242,169,59,0.15); color: var(--status-out-for-delivery); }
+.sync-counter.synced.active { background: rgba(61,214,140,0.15); color: var(--success); }
+.sync-counter.conflicted.active { background: rgba(242,169,59,0.22); color: var(--status-out-for-delivery); }
+.sync-counter.blocked.active { background: rgba(239,83,80,0.15); color: var(--danger); }
+.sync-problems { margin-top: 12px; display: grid; gap: 8px; }
+.sync-problem { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-color); font-size: 12.5px; }
+.sync-problem.danger { border-color: var(--danger); }
+.sync-problem.warning { border-color: var(--status-out-for-delivery); }
+.sync-problem-detail { margin-top: 3px; }
+.sync-problem-hint { margin-top: 3px; color: var(--text-secondary); font-size: 12px; }
+.sync-problem-actions { display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 520px) { .sync-counters { grid-template-columns: repeat(3, minmax(0, 1fr)); } .sync-problem { flex-direction: column; } }
 
 /* ---------- Table ---------- */
 
