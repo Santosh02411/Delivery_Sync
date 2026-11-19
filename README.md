@@ -518,6 +518,7 @@ instructions, and an honest list of what this app does and doesn't
 The `docs/` folder is more thorough than most student projects
 intentionally:
 - [`TECHNICAL_ARCHITECTURE.md`](docs/TECHNICAL_ARCHITECTURE.md) — architecture and data model
+- [`ADMIN_INFO.md`](docs/ADMIN_INFO.md) — everything an admin can do, and what each admin menu option does
 - [`SECURITY_AND_ACCESS.md`](docs/SECURITY_AND_ACCESS.md) — auth model, known limitations
 - [`FEATURE_LOG.md`](docs/FEATURE_LOG.md) — every feature: what was missing, why it was built, what it does
 - [`PROJECT_WORKFLOW.md`](docs/PROJECT_WORKFLOW.md) — every real bug hit during development and how it was diagnosed/fixed

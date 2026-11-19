@@ -40,7 +40,11 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    volumes:
+      # Uploaded files (product images, support attachments, finance PDFs) survive `docker compose down` / rebuilds.
+      - uploads_data:/data/uploads
     environment:
+      UPLOAD_DIR: /data/uploads
       ENVIRONMENT: production
       DATABASE_URL: postgresql://delivery_sync:delivery_sync_local_only@db:5432/delivery_sync
       # A real random key is required in production (see
@@ -69,6 +73,11 @@ services:
       # fallback otherwise" pattern in Docker as it does locally — set
       # these here (or in a .env file docker compose reads
       # automatically) to turn any of them on for real.
+      # Webhook SSRF protection is built in (https only, public addresses only, no redirects). The
+      # SECOND layer — blocking this container's traffic to private ranges and the cloud metadata
+      # address at the network level — is configuration of the machine/network you deploy on, not
+      # something compose can enforce: see docs/WEBHOOK_EGRESS_HARDENING.md.
+      # WEBHOOK_EGRESS_PROXY: ${WEBHOOK_EGRESS_PROXY:-}
     ports:
       - "8000:8000"
 
@@ -89,3 +98,4 @@ services:
 
 volumes:
   postgres_data:
+  uploads_data:

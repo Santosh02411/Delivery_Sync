@@ -61,7 +61,23 @@ services:
     # in a way that has nothing to do with the messaging code itself.
     plan: 0.5c-512mb
     healthCheckPath: /health
+    # PERSISTENT DISK for uploaded files. A container's own filesystem is wiped on every deploy and restart,
+    # so without this every product image uploaded since the last deploy would disappear (the product keeps
+    # pointing at a file that no longer exists). Files live in /var/data/uploads (UPLOAD_DIR below).
+    # Trade-offs of a Render disk: it can be attached to ONE instance only (no horizontal scaling) and a deploy
+    # briefly stops the old instance first. If you outgrow that, switch product images to object storage
+    # instead (UPLOAD_STORAGE=s3 — see docs/UPLOADS_AND_STORAGE.md) and remove this block.
+    # Database migrations (Alembic): by default the app upgrades its own schema at startup. To run them as a
+    # release step instead (recommended once you have more than one instance), set DB_AUTO_MIGRATE=0 below and
+    # uncomment the next line (Render runs it before the new version receives traffic):
+    # preDeployCommand: alembic upgrade head
+    disk:
+      name: uploads
+      mountPath: /var/data
+      sizeGB: 5
     envVars:
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
       - key: ENVIRONMENT
         value: production
       - key: DATABASE_URL
