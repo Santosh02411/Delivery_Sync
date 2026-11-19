@@ -56,5 +56,17 @@ export function decideServerRecordWrite(current, serverRecord) {
   if (current && current.sync_status === "pending") {
     return { write: false, reason: "local_edit_pending" };
   }
+  if (current && current.sync_status === "blocked") {
+    // The agent's un-sent work is kept exactly as they left it until they choose "try again" or
+    // "discard" (see syncOutcome.js). A routine pull must never erase it silently.
+    return { write: false, reason: "local_edit_blocked" };
+  }
+  if (current && current.sync_status === "conflicted") {
+    // Refresh the data from the server, but keep the conflict notice until the agent has seen it.
+    return {
+      write: true,
+      record: { ...serverRecord, sync_status: "conflicted", sync_conflict: current.sync_conflict, local_revision: revisionOf(current) },
+    };
+  }
   return { write: true, record: { ...serverRecord, sync_status: "synced", local_revision: revisionOf(current) } };
 }

@@ -334,10 +334,19 @@ export async function updateDeliveryStatus(delivery, status, extra = {}) {
     const response = await apiFetch(`${API_BASE_URL}/deliveries/${delivery.id}`, {
       method: "PATCH",
       headers: await authHeaders(),
-      body: JSON.stringify(patch),
+      // base_version = the version of the delivery this screen was showing. If it changed since (a
+      // dispatcher cancelled it, say) the server answers 409 instead of silently overwriting.
+      body: JSON.stringify({ ...patch, base_version: Number.isInteger(delivery.version) ? delivery.version : null }),
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.detail || "Failed to update delivery.");
+    if (response.status === 409 && data.detail && typeof data.detail === "object") {
+      // Structured conflict: replace our stale copy with the server's, and tell the agent why.
+      if (data.detail.server_record) await cacheDeliveries([data.detail.server_record]);
+      const conflictError = new Error(data.detail.message || "This delivery was changed by someone else.");
+      conflictError.conflict = data.detail;
+      throw conflictError;
+    }
+    if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Failed to update delivery.");
     await cacheDeliveries([data]);
     return { queued: false, delivery: data };
   } catch (error) {
